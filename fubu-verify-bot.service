@@ -1,0 +1,20 @@
+[Unit]
+Description=FUBU Verify Bot — archives+locks verification threads after the Verified role is granted
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/apps/fubu-verify-bot
+EnvironmentFile=/home/ubuntu/.fubu_verify_env
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fubu-verify-bot
+
+[Install]
+WantedBy=multi-user.target
