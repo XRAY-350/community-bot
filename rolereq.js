@@ -1,0 +1,92 @@
+// rolereq.js — casual role requests. A member runs /request-role, picks a role, and it goes to a
+// staff-only channel where anyone mod+ can Approve (assigns it) or Deny. Only SAFE/casual roles are
+// requestable — never staff/important roles. A role is refused if it: is @everyone, is a bot/integration
+// (managed) role, sits at/above the bot (unassignable), carries ANY power permission, or is a known
+// system/staff role (mod/admin/owner/trial/verified/unverified/corner/watchlist/strike).
+const fs = require('fs');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
+
+const CONFIG_FILE = process.env.FUBU_ROLEREQ_FILE || '/home/ubuntu/.fubu_rolereq.json';
+const P = PermissionsBitField.Flags;
+// Any of these on a role = "important", not requestable.
+const POWER = [P.Administrator, P.ManageGuild, P.ManageRoles, P.ManageChannels, P.BanMembers, P.KickMembers,
+  P.ModerateMembers, P.ManageMessages, P.MentionEveryone, P.ManageWebhooks, P.ManageEvents, P.ManageThreads,
+  P.ManageNicknames, P.ViewAuditLog, P.ManageGuildExpressions];
+// Known staff/system roles, never requestable (belt-and-suspenders on top of the power check).
+const STAFF = ['1528316361665675316', '1516179051105226833', '1527430885287264438', '1532037321740779860',
+  '1516235123841040394', '1517718734989693038', '1517718258784927814', '1517717893415047328'];
+
+const loadConfig = () => { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; } };
+const saveConfig = c => { try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(c)); } catch (e) { console.error('[rolereq] save:', e.message); } };
+function isConfigured() { return !!loadConfig().channelId; }
+
+function systemRoleIds(config) {
+  return new Set([...STAFF, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
+    config.cornerRoleId, config.watchlistRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
+}
+// Why a role can't be requested (null = it's fine).
+function whyNotRequestable(role, guild, me, config) {
+  if (role.id === guild.id) return 'that’s @everyone';
+  if (role.managed) return 'that’s a bot/integration role';
+  if (role.position >= me.roles.highest.position) return 'that role is above me — I can’t assign it';
+  if (POWER.some(p => role.permissions.has(p))) return 'that’s a staff/permission role — not requestable';
+  if (systemRoleIds(config).has(role.id)) return 'that’s a staff/system role — not requestable';
+  return null;
+}
+
+async function setup(guild, config) {
+  let c = loadConfig();
+  if (c.channelId) { const ex = await guild.channels.fetch(c.channelId).catch(() => null); if (ex) return { channel: ex, created: false }; }
+  const wl = config?.watchLogChannelId ? await guild.channels.fetch(config.watchLogChannelId).catch(() => null) : null;
+  const overwrites = (wl && wl.permissionOverwrites.cache.size)
+    ? [...wl.permissionOverwrites.cache.values()].map(o => ({ id: o.id, allow: o.allow, deny: o.deny, type: o.type }))
+    : [{ id: guild.id, deny: [P.ViewChannel] }];
+  const channel = await guild.channels.create({
+    name: '🎭┆ʀᴏʟᴇ-ʀᴇqᴜᴇsᴛs', type: ChannelType.GuildText,
+    topic: 'Casual role requests from members. Approve to assign, or deny.',
+    permissionOverwrites: overwrites, reason: 'Role requests (owner request)',
+  });
+  c = { ...c, channelId: channel.id }; saveConfig(c);
+  return { channel, created: true };
+}
+
+const btns = (userId, roleId, done, byId, ok) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId(`rolereq_ok:${userId}:${roleId}`).setEmoji('✅').setLabel(done ? (ok ? 'Granted' : 'Approve') : 'Approve').setStyle(ButtonStyle.Success).setDisabled(!!done),
+  new ButtonBuilder().setCustomId(`rolereq_no:${userId}:${roleId}`).setEmoji('❌').setLabel(done ? (!ok ? 'Denied' : 'Deny') : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done));
+
+async function submit(guild, member, role, config) {
+  const c = loadConfig();
+  if (!c.channelId) return { ok: false, msg: 'Role requests aren’t set up yet — an admin needs to run `/request-role-setup`.' };
+  const me = await guild.members.fetchMe();
+  const why = whyNotRequestable(role, guild, me, config);
+  if (why) return { ok: false, msg: `You can’t request that role — ${why}.` };
+  if (member.roles.cache.has(role.id)) return { ok: false, msg: 'You already have that role.' };
+  const channel = await guild.channels.fetch(c.channelId).catch(() => null);
+  if (!channel) return { ok: false, msg: 'The role-requests channel is missing — an admin needs to run `/request-role-setup` again.' };
+  const embed = new EmbedBuilder().setColor(role.color || 0x5865F2).setTitle('🎭 Role request')
+    .setDescription(`<@${member.id}> is requesting the <@&${role.id}> role.`)
+    .setFooter({ text: 'Any mod+ can approve (assigns it) or deny.' }).setTimestamp(new Date());
+  await channel.send({ embeds: [embed], components: [btns(member.id, role.id)], allowedMentions: { parse: [] } });
+  return { ok: true, role: role.name };
+}
+
+// Approve/deny — gated to staff (mods+) in index.js.
+async function handleButton(interaction) {
+  const [action, userId, roleId] = interaction.customId.split(':');
+  const approve = action === 'rolereq_ok';
+  const keep = interaction.message.embeds;
+  const member = await interaction.guild.members.fetch(userId).catch(() => null);
+  const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
+  if (approve) {
+    if (!member) return interaction.reply({ content: 'That member isn’t in the server anymore.', flags: MessageFlags.Ephemeral });
+    if (!role) return interaction.reply({ content: 'That role no longer exists.', flags: MessageFlags.Ephemeral });
+    const ok = await member.roles.add(roleId, `Role request approved by ${interaction.user.tag}`).then(() => true).catch(() => false);
+    if (!ok) return interaction.reply({ content: 'Couldn’t assign it (is it above my role?).', flags: MessageFlags.Ephemeral });
+    await member.send(`✅ Your request for the **${role.name}** role was approved!`).catch(() => {});
+    return interaction.update({ content: `✅ <@${userId}> was given **${role.name}** by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, true, interaction.user.id, true)], allowedMentions: { parse: [] } });
+  }
+  if (member) await member.send(`Your request for the **${role ? role.name : 'requested'}** role was denied.`).catch(() => {});
+  return interaction.update({ content: `❌ <@${userId}>'s request for **${role ? role.name : 'the role'}** was denied by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, true, interaction.user.id, false)], allowedMentions: { parse: [] } });
+}
+
+module.exports = { setup, submit, handleButton, isConfigured, loadConfig, whyNotRequestable };
