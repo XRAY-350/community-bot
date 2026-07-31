@@ -1194,8 +1194,10 @@ async function watchlistAlert(msg, hits, opts = {}) {
   // Smart-watch contextual judge (feature-gated, fail-open). Reads the flagged message in context and
   // either suppresses an obvious false positive (LIVE mode only) or annotates the alert with its verdict.
   // In shadow mode it only annotates + logs; a null/errored verdict falls through to today's behavior.
+  // When the LAB is active the AI moves OUT of the public log entirely — the watch-log reverts to plain
+  // keyword flags and every AI verdict is posted (gradable) in the private admin lab channel instead.
   let smartNote = null;
-  if (features.enabled('smartWatch')) {
+  if (features.enabled('smartWatch') && !features.enabled('smartWatchLab')) {
     try {
       const d = await smartwatch.evaluate(opts.scope || 'strict', msg, hits);
       if (d.ran && d.suppress) return;                 // live mode, high-confidence benign → don't post
@@ -1229,6 +1231,50 @@ async function watchlistAlert(msg, hits, opts = {}) {
       console.error('[watchlist] alert (with files):', e.message);
       await ch.send({ content: ping, embeds: [embed], components, allowedMentions: mentions }).catch(e2 => console.error('[watchlist] alert:', e2.message));
     });
+}
+
+// SMART-WATCH LAB (feature 'smartWatchLab'): run the AI judge on an EXPANDED term set and post its verdict
+// to the private admin-only lab channel, tagged 👁️ would-surface / 🙈 would-hide, with grading buttons
+// (🔨 strike / ⛓️ corner / ⬜ fine). Grading both scores the AI and feeds a calibration example back into
+// the judge prompt. Expanded terms live ONLY here; a real production hit also shows up here with the AI's
+// take, so admins can watch it decide across the full feed. Best-effort, never throws into messageCreate.
+async function labEvaluateAndPost(msg, member) {
+  const ch = await msg.guild.channels.fetch(config.smartWatchLabChannelId).catch(() => null);
+  if (!ch) return;
+  const onWatch = !!(config.watchlistRoleId && member.roles.cache.has(config.watchlistRoleId));
+  const scope = onWatch ? 'strict' : 'loose';
+  // base = the terms production would use for this member; expanded = the lab-only extras. Superset = both.
+  const base = onWatch ? [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])] : watchlist.loadLoose();
+  const expanded = onWatch ? [...watchlist.loadLabStrict(), ...watchlist.loadLabLoose()] : watchlist.loadLabLoose();
+  const all = [...new Set([...base, ...expanded])];
+  if (!all.length) return;
+  const hits = watchlist.matchTerms(msg.content, all);
+  if (!hits.length) return;
+  const d = await smartwatch.evaluate(scope, msg, hits);
+  if (!d.ran || !d.verdict) return;                    // judge unavailable/errored → nothing to grade (shadow log has it)
+  const v = d.verdict;
+  const wouldSurface = !d.wouldSuppress;               // wouldSuppress already applies threshold + NEVER_SUPPRESS
+  const baseSet = new Set(base.map(t => t.toLowerCase()));
+  const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '-').slice(0, 1024); // ⁺ = expansion-only (lab), not in the public list
+  const conf = v.confidence.toFixed(2);
+  const rule = v.likelyRule ? `, Rule ${v.likelyRule}` : '';
+  const verdictText = `${v.surface ? 'looks real' : 'likely false positive'} — ${v.reason} _(conf ${conf}, ${v.category}${rule})_`;
+  const emb = new EmbedBuilder()
+    .setColor(wouldSurface ? 0xE7AC4E : 0x2ECC71)
+    .setTitle(`🧪 Lab — ${scope} candidate`)
+    .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) in <#${msg.channel.id}> · [jump](${msg.url})`)
+    .addFields(
+      { name: 'Matched', value: matchedDisplay },
+      { name: 'Message (saved copy)', value: (msg.content || '_(no text — attachment/embed)_').slice(0, 1024) },
+      { name: `AI verdict — ${wouldSurface ? '👁️ WOULD SURFACE' : '🙈 WOULD HIDE'}`, value: verdictText.slice(0, 1024) })
+    .setFooter({ text: `#${msg.channel?.name || '?'} · flagged ${msg.author.id}` })
+    .setTimestamp(new Date());
+  const aiS = wouldSurface ? '1' : '0';
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`sw_label:strike:${aiS}`).setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`sw_label:corner:${aiS}`).setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`sw_label:fine:${aiS}`).setEmoji('⬜').setLabel('Fine (hide)').setStyle(ButtonStyle.Success));
+  await ch.send({ embeds: [emb], components: [row], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
 }
 
 // Reason+weight modal for a message-based strike. Carries the flagged message ref so the submit
@@ -1377,6 +1423,12 @@ client.on('messageCreate', async (msg) => {
     if (!msg.content) return;
     const member = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
     if (!member) return;
+    // LAB pass (independent, private admin channel) — runs BEFORE the production routing so the watchlist
+    // strict early-return below doesn't skip it. Staff excluded, same population as loose. Own try/catch so
+    // an AI hiccup never blocks the real keyword flags that follow.
+    if (features.enabled('smartWatchLab') && config.smartWatchLabChannelId && !opspanel.memberTier(member)) {
+      try { await labEvaluateAndPost(msg, member); } catch (e) { console.error('[smartwatch-lab]', e.message); }
+    }
     // STRICT: a watchlisted member trips a strict term → mod-announcements alert (ban buttons + ping).
     // Strict ENCOMPASSES loose — a watchlisted member is matched against strict + loose combined, so you
     // only ever add strict-ONLY extras to the strict list (every loose term is auto-included here).
@@ -1472,6 +1524,34 @@ client.on('interactionCreate', async (interaction) => {
       else interaction.reply(msg).catch(() => {});
     }
     return;
+  }
+  // Smart-watch LAB grading (admin-only). customId: sw_label:<strike|corner|fine>:<aiSurface 0/1>. Records
+  // the admin's ground-truth verdict as a calibration example (fed back into the judge prompt) AND scores
+  // the AI's own would-surface call against it, then locks the post with a running-accuracy line.
+  if (interaction.isButton?.() && interaction.customId.startsWith('sw_label:')) {
+    const isAdmin = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)
+      || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
+    if (!isAdmin) return interaction.reply({ content: 'Only admins can grade lab flags.', flags: MessageFlags.Ephemeral });
+    const [, verdict, aiS] = interaction.customId.split(':');
+    const meta = smartwatch.VERDICT_META[verdict];
+    if (!meta) return interaction.reply({ content: 'Unknown label.', flags: MessageFlags.Ephemeral });
+    const aiWouldSurface = aiS === '1';
+    const emb = interaction.message.embeds?.[0];
+    const fieldVal = n => emb?.fields?.find(f => f.name === n || f.name.startsWith(n))?.value || '';
+    const content = fieldVal('Message (saved copy)');
+    const matched = fieldVal('Matched');
+    const footer = emb?.footer?.text || '';
+    const authorId = (footer.match(/flagged (\d+)/) || [])[1] || null;
+    const channelName = (footer.match(/#(\S+)/) || [])[1] || null;
+    smartwatch.addExample({ ts: Date.now(), verdict, content, matchedTerms: matched, channel: channelName,
+      aiWouldSurface, author: authorId, by: interaction.user.id, byTag: interaction.user.tag });
+    const correct = aiWouldSurface === meta.surface;
+    const stats = smartwatch.labStats();
+    const acc = stats.total ? Math.round(100 * stats.right / stats.total) : 0;
+    const e2 = EmbedBuilder.from(emb).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
+      name: 'Labeled ✅', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> — AI was ${correct ? '✅ right' : '❌ wrong'}\n` +
+        `Judge accuracy so far: **${acc}%** (${stats.right}/${stats.total}) · this example now guides the judge.` });
+    return interaction.update({ embeds: [e2], components: [] }).catch(() => {});
   }
   // Rule picker shown before the strike reason+weight modal (watch-log Strike button + right-click Strike) —
   // a modal can't hold a dropdown, so this is a select-then-modal step, same shape as the dashboard's

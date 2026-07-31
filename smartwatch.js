@@ -86,6 +86,7 @@ function systemPrompt() {
     'When genuinely unsure, SURFACE it (do not suppress). Only mark a false positive when clearly confident',
     'it is benign. NEVER suppress: a credible threat of violence, a slur weaponized at a specific person,',
     'hard-R spam, doxxing (Rule 6), or anything touching child safety (Rule 2).',
+    exemplarBlock(),
     '',
     'Respond with ONLY a JSON object (no prose, no markdown fences) of exactly this shape:',
     '{"surface": <bool, true=show a mod / false=benign false positive>, "confidence": <0.0-1.0, how sure of surface>,',
@@ -159,6 +160,47 @@ function logShadow(entry) {
   catch (e) { console.error('[smartwatch] shadow log:', e.message); }
 }
 
+// ---- calibration examples (the human-in-the-loop "training") -------------------------------------
+// When an admin grades a lab post (🔨 strike-worthy / ⛓️ corner-only / ⬜ fine), that message + verdict is
+// appended here. We DON'T fine-tune; instead the most recent labels are injected into the judge prompt as
+// few-shot exemplars, so the model learns THIS community's actual bar. Each grade also tells us whether the
+// AI's own would-surface call matched the admin — that's the accuracy tally the lab reports.
+const EXAMPLES_FILE = process.env.SMARTWATCH_EXAMPLES_FILE || '/home/ubuntu/.fubu_smartwatch_examples.jsonl';
+const EXEMPLARS_IN_PROMPT = Number(process.env.SMARTWATCH_EXEMPLARS || 14) || 14;
+// verdict → (does the community surface it?) + a short label the prompt shows.
+const VERDICT_META = {
+  strike: { surface: true,  label: 'STRIKE-WORTHY (a real violation — surface it)' },
+  corner: { surface: true,  label: 'CORNER-ONLY (minor — surface, a cool-off not a strike)' },
+  fine:   { surface: false, label: 'FINE (benign — a false positive, hide it)' },
+};
+function loadExamples() {
+  try {
+    return fs.readFileSync(EXAMPLES_FILE, 'utf8').split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+}
+function addExample(e) {
+  try { fs.appendFileSync(EXAMPLES_FILE, JSON.stringify(e) + '\n'); return true; }
+  catch (err) { console.error('[smartwatch] example append:', err.message); return false; }
+}
+// Few-shot block from the most recent labels (both directions), for injection into the judge prompt.
+function exemplarBlock() {
+  const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict]).slice(-EXEMPLARS_IN_PROMPT);
+  if (!ex.length) return '';
+  const lines = ex.map(e => `- "${String(e.content || '').replace(/\s+/g, ' ').slice(0, 180)}" -> ${VERDICT_META[e.verdict].label}`);
+  return ['', 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made — match this bar; these override your priors when a new message is similar):', ...lines].join('\n');
+}
+// Accuracy of the AI's own surface/hide call vs. the admin's verdict, over all graded examples.
+function labStats() {
+  const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && typeof e.aiWouldSurface === 'boolean');
+  let right = 0;
+  for (const e of ex) if (e.aiWouldSurface === VERDICT_META[e.verdict].surface) right++;
+  const byVerdict = { strike: 0, corner: 0, fine: 0 };
+  for (const e of ex) if (byVerdict[e.verdict] !== undefined) byVerdict[e.verdict]++;
+  return { total: ex.length, right, wrong: ex.length - right, byVerdict };
+}
+function verdictSurfaces(v) { return VERDICT_META[v]?.surface; }
+
 // ---- public: evaluate one flagged message --------------------------------------------------------
 // Returns { ran, verdict, suppress, note }. On ANY problem returns { ran:false } so the caller posts
 // the flag exactly as it does today (fail-open).
@@ -228,4 +270,5 @@ function status() {
   return { enabled: config.smartWatchLive !== undefined, sdk: !!Anthropic, key: !!API_KEY, live: !!config.smartWatchLive, model: MODEL };
 }
 
-module.exports = { evaluate, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge };
+module.exports = { evaluate, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge,
+  loadExamples, addExample, exemplarBlock, labStats, verdictSurfaces, EXAMPLES_FILE, VERDICT_META };

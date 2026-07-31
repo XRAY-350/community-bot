@@ -84,7 +84,26 @@ function saveWelfare(terms) {
 function addWelfare(term) { const t = loadWelfare(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return saveWelfare(t); }
 function removeWelfare(term) { const v = String(term).trim().toLowerCase(); return saveWelfare(loadWelfare().filter(x => x.toLowerCase() !== v)); }
 
+// LAB expansion lists (feature 'smartWatchLab') — EXTRA strict/loose terms that ONLY feed the private
+// admin eval channel, never the public watch-log. Deliberately broad/noisy: they exist to stress-test the
+// AI judge with more borderline candidates (reclaimed words, benign homonyms, mild profanity) so admins can
+// see whether it correctly hides the false positives and surfaces the real ones. Same matcher, own files.
+const LAB_STRICT_FILE = process.env.FUBU_WATCHLIST_LAB_STRICT_FILE || '/home/ubuntu/.fubu_watchlist_lab_strict.json';
+const LAB_LOOSE_FILE = process.env.FUBU_WATCHLIST_LAB_LOOSE_FILE || '/home/ubuntu/.fubu_watchlist_lab_loose.json';
+function _loadArr(file) { try { const a = JSON.parse(fs.readFileSync(file, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
+function _saveArr(file, terms, label) {
+  const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
+  try { fs.writeFileSync(file, JSON.stringify(clean)); return clean; } catch (e) { console.error(`[watchlist] ${label} save:`, e.message); return _loadArr(file); }
+}
+function loadLabStrict() { return _loadArr(LAB_STRICT_FILE); }
+function loadLabLoose() { return _loadArr(LAB_LOOSE_FILE); }
+function addLabStrict(term) { const t = loadLabStrict(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return _saveArr(LAB_STRICT_FILE, t, 'lab-strict'); }
+function removeLabStrict(term) { const v = String(term).trim().toLowerCase(); return _saveArr(LAB_STRICT_FILE, loadLabStrict().filter(x => x.toLowerCase() !== v), 'lab-strict'); }
+function addLabLoose(term) { const t = loadLabLoose(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return _saveArr(LAB_LOOSE_FILE, t, 'lab-loose'); }
+function removeLabLoose(term) { const v = String(term).trim().toLowerCase(); return _saveArr(LAB_LOOSE_FILE, loadLabLoose().filter(x => x.toLowerCase() !== v), 'lab-loose'); }
+
 module.exports = { loadTerms, saveTerms, addTerm, removeTerm, matchTerms, TERMS_FILE,
   addPending, removePending, isPending, loadPending,
   loadLoose, addLoose, removeLoose, LOOSE_FILE,
-  loadWelfare, addWelfare, removeWelfare, WELFARE_FILE };
+  loadWelfare, addWelfare, removeWelfare, WELFARE_FILE,
+  loadLabStrict, loadLabLoose, addLabStrict, removeLabStrict, addLabLoose, removeLabLoose, LAB_STRICT_FILE, LAB_LOOSE_FILE };

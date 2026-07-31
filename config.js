@@ -193,6 +193,11 @@ const config = {
   // confidence (and never for child-safety/threat/doxxing — enforced in smartwatch.js).
   smartWatchLive: bool('SMARTWATCH_LIVE', false),
   smartWatchSuppressThreshold: num('SMARTWATCH_SUPPRESS_THRESHOLD', 0.85),
+  // Smart-watch LAB (feature 'smartWatchLab'): a private, admin-only evaluation channel. When set (and the
+  // feature is on) the judge runs on an EXPANDED term set and posts its would-hide/would-surface verdict
+  // there for admins to grade — and the public watch-log reverts to plain keyword flags (no AI). Dormant
+  // until an id is given. The expanded terms only feed the lab (see watchlist.js lab lists).
+  smartWatchLabChannelId: opt('SMARTWATCH_LAB_CHANNEL_ID', ''),
 
   // Observe-only: log every intended action but perform none. Default ON so the first
   // live run proves it targets the right threads before anything is actually closed.
