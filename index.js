@@ -608,6 +608,12 @@ client.once('ready', async () => {
 
       new SlashCommandBuilder().setName('apply-mod').setDescription('Apply to become a moderator'),
       new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (admin)'),
+      new SlashCommandBuilder().setName('mod-applications').setDescription('Open or close mod applications when the team is full (admin)')
+        .addSubcommand(s => s.setName('status').setDescription('Are mod applications open or closed right now?'))
+        .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications — accept new /apply-mod again'))
+        .addSubcommand(s => s.setName('close').setDescription('Close mod applications (team full); in-flight applications still finish')
+          .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff census — how many of each tier (deduped by highest)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
@@ -2039,12 +2045,38 @@ client.on('interactionCreate', async (interaction) => {
     if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
     if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t open right now.', flags: MessageFlags.Ephemeral });
+    if (!modapps.applicationsOpen()) return interaction.reply({ content: modapps.closedNotice(), flags: MessageFlags.Ephemeral });
     // If language mini-mods are set up, ask which position first; otherwise go straight to the mod modal.
     if (features.enabled('langMiniMod') && langmods.isConfigured()) {
       return interaction.reply({ content: 'What are you applying for?', components: [modapps.positionRow()], flags: MessageFlags.Ephemeral });
     }
     try { return await interaction.showModal(modapps.buildModal()); }
     catch (e) { console.error(`[modapps] showModal ${e.message}`); }
+    return;
+  }
+  if (name === 'mod-applications') {
+    const mtier = opspanel.memberTier(interaction.member);
+    if (mtier !== 'admin' && mtier !== 'owner' && !interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator))
+      return interaction.reply({ content: 'Only admins can open or close mod applications.', flags: MessageFlags.Ephemeral });
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'status') {
+      const open = modapps.applicationsOpen();
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: open
+        ? '✅ Mod applications are **OPEN**. Members can `/apply-mod`.'
+        : `🚫 Mod applications are **CLOSED**.\nMembers who try to apply see:\n> ${modapps.closedNotice()}` });
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (sub === 'close') {
+      const msg = interaction.options.getString('message');
+      await modapps.setApplicationsOpen(interaction.guild, false, msg);
+      await ownerlog.log(interaction.guild, { emoji: '🚫', title: 'Mod applications CLOSED', color: 0xED4245, detail: `Closed by <@${interaction.user.id}> (team full). New \`/apply-mod\` is turned away; in-flight applications still finish.${msg ? `\nNote to applicants: ${msg}` : ''}` });
+      return interaction.editReply(`🚫 Mod applications are now **CLOSED**. New \`/apply-mod\` attempts are turned away; applications already under review still finish. Reopen anytime with \`/mod-applications open\`.`);
+    }
+    if (sub === 'open') {
+      await modapps.setApplicationsOpen(interaction.guild, true);
+      await ownerlog.log(interaction.guild, { emoji: '✅', title: 'Mod applications REOPENED', color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> — members can \`/apply-mod\` again.` });
+      return interaction.editReply('✅ Mod applications are now **OPEN**. Members can `/apply-mod` again.');
+    }
     return;
   }
   if (name === 'staff') {

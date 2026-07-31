@@ -34,7 +34,7 @@ const REGISTRY = [
     help: { name: '🚩 `/report` · or right-click a message → **Apps → Report**', value: 'Report a member or a specific message to staff **without them knowing it was you**. Right-click any message → Apps → Report to attach it. Staff see what you send — not that it came from you.' } },
   { key: 'modmail',     audience: 'member', built: true,  commands: ['modmail', 'modmail-setup'],
     help: { name: '📨 `/modmail` — message the mods privately', value: 'Send the mod team a private, anonymous note — a question, a concern, or a heads-up you’d rather not say out loud. It lands in a mods-only inbox; you can reply if they follow up.' } },
-  { key: 'modapps',     audience: 'member', built: true,  commands: ['apply-mod', 'apply-mod-setup', 'demote-trial', 'promote-trial', 'promote-mod'],
+  { key: 'modapps',     audience: 'member', built: true,  commands: ['apply-mod', 'apply-mod-setup', 'mod-applications', 'demote-trial', 'promote-trial', 'promote-mod'],
     help: { name: '📋 `/apply-mod` — apply to be a mod', value: 'Want to help run the place? `/apply-mod` opens a short form (age, timezone, why, experience). It creates a private thread where staff can ask follow-ups and you’ll hear back — nothing is public.' } },
   { key: 'rolereq',     audience: 'member', built: true,  commands: ['request-role', 'request-role-setup'],
     help: { name: '🎭 `/request-role` — ask for (or drop) a role', value: 'Ask for a casual role — or hand one back. Staff get your request with one-click approve/deny; if approved it’s added (or removed) for you. Cosmetic/interest roles only — not staff or age roles.' } },

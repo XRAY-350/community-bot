@@ -168,6 +168,7 @@ function answersFromEmbed(e) {
 async function submitFromModal(interaction, config) {
   const c = loadConfig();
   if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: 'Applications aren’t open right now.', flags: MessageFlags.Ephemeral });
+  if (c.applicationsClosed === true) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
   const state = loadState();
   if (Object.values(state.posts).find(p => p.applicantId === interaction.user.id && p.status === 'open'))
     return interaction.reply({ content: 'You already have an application under review — hang tight.', flags: MessageFlags.Ephemeral });
@@ -593,5 +594,27 @@ async function rerender(guild, reviewThreadId) {
   return { ok: true, appThreadId: post.appThreadId };
 }
 
+// --- applications open/closed intake toggle ------------------------------------------------------
+// Close intake when the team is full: new /apply-mod attempts are turned away, but applications ALREADY
+// under review keep going (the gate is only at the entry + modal submit, never on existing threads).
+const DEFAULT_CLOSED_NOTICE = '🚫 Mod applications are currently **closed**. The team is full right now. Thanks for the interest, and keep an eye out for when they reopen!';
+function applicationsOpen() { return loadConfig().applicationsClosed !== true; }
+function closedNotice() { const n = (loadConfig().closedNotice || '').trim(); return n || DEFAULT_CLOSED_NOTICE; }
+async function setApplicationsOpen(guild, open, message) {
+  const c = loadConfig();
+  c.applicationsClosed = !open;
+  if (typeof message === 'string' && message.trim()) c.closedNotice = message.trim();
+  saveConfig(c);
+  // reflect the state on the applicant forum's topic so it's visible at a glance
+  try {
+    const ch = c.appsChannelId && await guild.channels.fetch(c.appsChannelId).catch(() => null);
+    if (ch && ch.setTopic) {
+      const base = 'Apply with /apply-mod. Your application opens as a private thread here that only you + staff can see.';
+      await ch.setTopic(open ? base : `🚫 Applications are CLOSED (team full). ${base}`).catch(() => {});
+    }
+  } catch { /* topic update is best-effort */ }
+  return { open };
+}
+
 module.exports = { setup, buildModal, positionRow, submitFromModal, handleButton, handlePositionSelect, handleAskModal, isConfigured, loadConfig, migrateLegacy, rerender, upgradeLegacyVotes, relayApplicantReply, backfillUndoButtons, sealOwnApplication, archiveOwnApplication,
-  enforceReviewThreadMembers, sweepReviewThreadMembers };
+  enforceReviewThreadMembers, sweepReviewThreadMembers, applicationsOpen, closedNotice, setApplicationsOpen };
