@@ -53,7 +53,7 @@ function communityProfile() {
 }
 
 // ---- prompt (stable core in code; the profile is injected) ---------------------------------------
-function systemPrompt() {
+function systemPrompt(scope) {
   return [
     'You are the moderation-context judge for F.U.B.U. ("For Us By Us") - a Black-only community (Rule 1).',
     'A keyword matcher flagged a message for a watched term. You are NOT the moderator; a human makes every',
@@ -86,7 +86,7 @@ function systemPrompt() {
     'When genuinely unsure, SURFACE it (do not suppress). Only mark a false positive when clearly confident',
     'it is benign. NEVER suppress: a credible threat of violence, a slur weaponized at a specific person,',
     'hard-R spam, doxxing (Rule 6), or anything touching child safety (Rule 2).',
-    exemplarBlock(),
+    exemplarBlock(scope === 'welfare' ? 'welfare' : 'rule'),
     '',
     'Respond with ONLY a JSON object (no prose, no markdown fences) of exactly this shape:',
     '{"surface": <bool, true=show a mod / false=benign false positive>, "confidence": <0.0-1.0, how sure of surface>,',
@@ -146,7 +146,7 @@ async function callJudge(scope, payload) {
   ].join('\n');
   const resp = await c.messages.create({
     model: MODEL, max_tokens: 300,
-    system: systemPrompt(),
+    system: systemPrompt(scope),
     messages: [{ role: 'user', content: user }],
   });
   const textBlock = (resp.content || []).find(b => b.type === 'text');
@@ -167,11 +167,15 @@ function logShadow(entry) {
 // AI's own would-surface call matched the admin — that's the accuracy tally the lab reports.
 const EXAMPLES_FILE = process.env.SMARTWATCH_EXAMPLES_FILE || '/home/ubuntu/.fubu_smartwatch_examples.jsonl';
 const EXEMPLARS_IN_PROMPT = Number(process.env.SMARTWATCH_EXEMPLARS || 14) || 14;
-// verdict → (does the community surface it?) + a short label the prompt shows.
+// verdict → (does the community surface it?) + task it belongs to + a short label the prompt shows.
+// task 'rule' = strict/loose harassment calls; task 'welfare' = distress calls (a different axis, so its
+// labels + exemplars are kept separate so distress calibration never bleeds into rule-violation judgments).
 const VERDICT_META = {
-  strike: { surface: true,  label: 'STRIKE-WORTHY (a real violation — surface it)' },
-  corner: { surface: true,  label: 'CORNER-ONLY (minor — surface, a cool-off not a strike)' },
-  fine:   { surface: false, label: 'FINE (benign — a false positive, hide it)' },
+  strike:    { surface: true,  task: 'rule',    label: 'STRIKE-WORTHY (a real violation — surface it)' },
+  corner:    { surface: true,  task: 'rule',    label: 'CORNER-ONLY (minor — surface, a cool-off not a strike)' },
+  fine:      { surface: false, task: 'rule',    label: 'FINE (benign — a false positive, hide it)' },
+  genuine:   { surface: true,  task: 'welfare', label: 'GENUINE DISTRESS (surface — someone should check in)' },
+  hyperbole: { surface: false, task: 'welfare', label: 'HYPERBOLE (not real distress — hide it)' },
 };
 function loadExamples() {
   try {
@@ -183,20 +187,26 @@ function addExample(e) {
   try { fs.appendFileSync(EXAMPLES_FILE, JSON.stringify(e) + '\n'); return true; }
   catch (err) { console.error('[smartwatch] example append:', err.message); return false; }
 }
-// Few-shot block from the most recent labels (both directions), for injection into the judge prompt.
-function exemplarBlock() {
-  const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict]).slice(-EXEMPLARS_IN_PROMPT);
+const taskOf = v => VERDICT_META[v]?.task || 'rule';
+// Few-shot block from the most recent labels for ONE task (rule vs welfare), for injection into the judge
+// prompt — a welfare call only ever sees welfare exemplars, and vice versa.
+function exemplarBlock(task = 'rule') {
+  const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && taskOf(e.verdict) === task).slice(-EXEMPLARS_IN_PROMPT);
   if (!ex.length) return '';
   const lines = ex.map(e => `- "${String(e.content || '').replace(/\s+/g, ' ').slice(0, 180)}" -> ${VERDICT_META[e.verdict].label}`);
-  return ['', 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made — match this bar; these override your priors when a new message is similar):', ...lines].join('\n');
+  const header = task === 'welfare'
+    ? 'ADMIN-LABELED WELFARE EXAMPLES from THIS community (real distress-vs-hyperbole calls the admins made — match this bar):'
+    : 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made — match this bar; these override your priors when a new message is similar):';
+  return ['', header, ...lines].join('\n');
 }
-// Accuracy of the AI's own surface/hide call vs. the admin's verdict, over all graded examples.
-function labStats() {
-  const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && typeof e.aiWouldSurface === 'boolean');
+// Accuracy of the AI's own surface/hide call vs. the admin's verdict. Pass a task to scope it (rule/welfare).
+function labStats(task) {
+  let ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && typeof e.aiWouldSurface === 'boolean');
+  if (task) ex = ex.filter(e => taskOf(e.verdict) === task);
   let right = 0;
   for (const e of ex) if (e.aiWouldSurface === VERDICT_META[e.verdict].surface) right++;
-  const byVerdict = { strike: 0, corner: 0, fine: 0 };
-  for (const e of ex) if (byVerdict[e.verdict] !== undefined) byVerdict[e.verdict]++;
+  const byVerdict = {};
+  for (const e of ex) byVerdict[e.verdict] = (byVerdict[e.verdict] || 0) + 1;
   return { total: ex.length, right, wrong: ex.length - right, byVerdict };
 }
 function verdictSurfaces(v) { return VERDICT_META[v]?.surface; }
@@ -313,7 +323,7 @@ async function callLabJudge(scope, payload) {
     '{"surface":<bool>,"confidence":<0.0-1.0>,"severity":"none|low|medium|high","likelyRule":<0-11>,"category":"reclaimed|hostile|threat|distress|quote-report|joke-hyperbole|sexual|doxxing|child-safety|spam|non-english|unclear","reason":"<one sentence>",',
     ' "actions":[{"who":"<username from context>","quote":"<short snippet of their offending message>","action":"strike|corner","rule":<1-11>,"reason":"<one sentence>"}]}',
   ].join('\n');
-  const resp = await c.messages.create({ model: MODEL, max_tokens: 700, system: systemPrompt(), messages: [{ role: 'user', content: user }] });
+  const resp = await c.messages.create({ model: MODEL, max_tokens: 700, system: systemPrompt(scope), messages: [{ role: 'user', content: user }] });
   const textBlock = (resp.content || []).find(b => b.type === 'text');
   const raw = textBlock && textBlock.text;
   const verdict = parseVerdict(raw);

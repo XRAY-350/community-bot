@@ -95,15 +95,20 @@ function _saveArr(file, terms, label) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
   try { fs.writeFileSync(file, JSON.stringify(clean)); return clean; } catch (e) { console.error(`[watchlist] ${label} save:`, e.message); return _loadArr(file); }
 }
+const LAB_WELFARE_FILE = process.env.FUBU_WATCHLIST_LAB_WELFARE_FILE || '/home/ubuntu/.fubu_watchlist_lab_welfare.json';
 function loadLabStrict() { return _loadArr(LAB_STRICT_FILE); }
 function loadLabLoose() { return _loadArr(LAB_LOOSE_FILE); }
+function loadLabWelfare() { return _loadArr(LAB_WELFARE_FILE); }
 function addLabStrict(term) { const t = loadLabStrict(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return _saveArr(LAB_STRICT_FILE, t, 'lab-strict'); }
 function removeLabStrict(term) { const v = String(term).trim().toLowerCase(); return _saveArr(LAB_STRICT_FILE, loadLabStrict().filter(x => x.toLowerCase() !== v), 'lab-strict'); }
 function addLabLoose(term) { const t = loadLabLoose(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return _saveArr(LAB_LOOSE_FILE, t, 'lab-loose'); }
 function removeLabLoose(term) { const v = String(term).trim().toLowerCase(); return _saveArr(LAB_LOOSE_FILE, loadLabLoose().filter(x => x.toLowerCase() !== v), 'lab-loose'); }
+function addLabWelfare(term) { const t = loadLabWelfare(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return _saveArr(LAB_WELFARE_FILE, t, 'lab-welfare'); }
+function removeLabWelfare(term) { const v = String(term).trim().toLowerCase(); return _saveArr(LAB_WELFARE_FILE, loadLabWelfare().filter(x => x.toLowerCase() !== v), 'lab-welfare'); }
 
 module.exports = { loadTerms, saveTerms, addTerm, removeTerm, matchTerms, TERMS_FILE,
   addPending, removePending, isPending, loadPending,
   loadLoose, addLoose, removeLoose, LOOSE_FILE,
   loadWelfare, addWelfare, removeWelfare, WELFARE_FILE,
-  loadLabStrict, loadLabLoose, addLabStrict, removeLabStrict, addLabLoose, removeLabLoose, LAB_STRICT_FILE, LAB_LOOSE_FILE };
+  loadLabStrict, loadLabLoose, loadLabWelfare, addLabStrict, removeLabStrict, addLabLoose, removeLabLoose, addLabWelfare, removeLabWelfare,
+  LAB_STRICT_FILE, LAB_LOOSE_FILE, LAB_WELFARE_FILE };

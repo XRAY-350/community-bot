@@ -1243,6 +1243,15 @@ async function labEvaluateAndPost(msg, member) {
   const ch = await msg.guild.channels.fetch(config.smartWatchLabChannelId).catch(() => null);
   if (!ch) return;
   const onWatch = !!(config.watchlistRoleId && member.roles.cache.has(config.watchlistRoleId));
+  // WELFARE takes priority (mirrors production): a non-watchlisted member's distress signal gets a welfare
+  // card with distress-appropriate grading (🫂 genuine / ⬜ hyperbole) and no multi-action — punishment
+  // verdicts don't apply to someone's wellbeing.
+  if (!onWatch) {
+    const wBase = watchlist.loadWelfare();
+    const wAll = [...new Set([...wBase, ...watchlist.loadLabWelfare()])];
+    const wHits = wAll.length ? watchlist.matchTerms(msg.content, wAll) : [];
+    if (wHits.length) return await postWelfareLabCard(msg, ch, wHits, wBase);
+  }
   const scope = onWatch ? 'strict' : 'loose';
   // base = the terms production would use for this member; expanded = the lab-only extras. Superset = both.
   const base = onWatch ? [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])] : watchlist.loadLoose();
@@ -1296,6 +1305,35 @@ async function labEvaluateAndPost(msg, member) {
       new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success));
     await ch.send({ embeds: [aEmb], components: [aRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
   }
+}
+
+// Welfare lab card: distress is a different axis from rule-breaking, so it uses the welfare scope/rubric
+// and 🫂 genuine / ⬜ hyperbole grading (surface = "someone should check in"), never strike/corner and no
+// multi-action. Its labels train ONLY the welfare judgments (separate exemplar pool in smartwatch.js).
+async function postWelfareLabCard(msg, ch, hits, base) {
+  const d = await smartwatch.evaluate('welfare', msg, hits);
+  if (!d.ran || !d.verdict) return;
+  const v = d.verdict;
+  const wouldSurface = !d.wouldSuppress;                 // surface = worth a check-in
+  const baseSet = new Set(base.map(t => t.toLowerCase()));
+  const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '-').slice(0, 1024);
+  const sev = (v.severity && v.severity !== 'none') ? ` · urgency ${v.severity}` : '';
+  const verdictText = `${wouldSurface ? 'genuine distress — worth a check-in' : 'likely hyperbole / venting'} — ${v.reason} _(conf ${v.confidence.toFixed(2)}${sev})_`;
+  const emb = new EmbedBuilder()
+    .setColor(wouldSurface ? 0x5DADE2 : 0x2ECC71)
+    .setTitle('🫂 Lab — welfare candidate')
+    .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) in <#${msg.channel.id}> · [jump](${msg.url})`)
+    .addFields(
+      { name: 'Matched', value: matchedDisplay },
+      { name: 'Message (saved copy)', value: (msg.content || '_(no text — attachment/embed)_').slice(0, 1024) },
+      { name: `AI verdict — ${wouldSurface ? '🫂 WOULD SURFACE (check in)' : '🙈 WOULD HIDE (hyperbole)'}`, value: verdictText.slice(0, 1024) })
+    .setFooter({ text: `#${msg.channel?.name || '?'} · welfare · flagged ${msg.author.id}` })
+    .setTimestamp(new Date());
+  const aiS = wouldSurface ? '1' : '0';
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`sw_label:genuine:${aiS}`).setEmoji('🫂').setLabel('Genuine distress').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`sw_label:hyperbole:${aiS}`).setEmoji('⬜').setLabel('Hyperbole (hide)').setStyle(ButtonStyle.Success));
+  await ch.send({ embeds: [emb], components: [row], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] welfare send:', e.message));
 }
 
 // Reason+weight modal for a message-based strike. Carries the flagged message ref so the submit
@@ -1563,9 +1601,9 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
-  // Smart-watch LAB grading (admin-only). customId: sw_label:<strike|corner|fine>:<aiSurface 0/1>. Records
-  // the admin's ground-truth verdict as a calibration example (fed back into the judge prompt) AND scores
-  // the AI's own would-surface call against it, then locks the post with a running-accuracy line.
+  // Smart-watch LAB grading (admin-only). customId: sw_label:<strike|corner|fine|genuine|hyperbole>:<aiSurface 0/1>.
+  // Records the admin's ground-truth verdict as a calibration example (fed back into the judge prompt, scoped
+  // by task) AND scores the AI's own would-surface call, then locks the post with a task-specific accuracy line.
   if (interaction.isButton?.() && interaction.customId.startsWith('sw_label:')) {
     const isAdmin = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)
       || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
@@ -1581,14 +1619,14 @@ client.on('interactionCreate', async (interaction) => {
     const footer = emb?.footer?.text || '';
     const authorId = (footer.match(/flagged (\d+)/) || [])[1] || null;
     const channelName = (footer.match(/#(\S+)/) || [])[1] || null;
-    smartwatch.addExample({ ts: Date.now(), verdict, content, matchedTerms: matched, channel: channelName,
+    smartwatch.addExample({ ts: Date.now(), verdict, task: meta.task, content, matchedTerms: matched, channel: channelName,
       aiWouldSurface, author: authorId, by: interaction.user.id, byTag: interaction.user.tag });
     const correct = aiWouldSurface === meta.surface;
-    const stats = smartwatch.labStats();
+    const stats = smartwatch.labStats(meta.task);          // accuracy scoped to this task (rule vs welfare)
     const acc = stats.total ? Math.round(100 * stats.right / stats.total) : 0;
     const e2 = EmbedBuilder.from(emb).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
       name: 'Labeled ✅', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> — AI was ${correct ? '✅ right' : '❌ wrong'}\n` +
-        `Judge accuracy so far: **${acc}%** (${stats.right}/${stats.total}) · this example now guides the judge.` });
+        `Judge accuracy so far (${meta.task}): **${acc}%** (${stats.right}/${stats.total}) · this example now guides the ${meta.task} judge.` });
     return interaction.update({ embeds: [e2], components: [] }).catch(() => {});
   }
   // Rule picker shown before the strike reason+weight modal (watch-log Strike button + right-click Strike) —
