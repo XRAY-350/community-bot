@@ -29,7 +29,7 @@ const MODEL = process.env.SMARTWATCH_MODEL || 'claude-haiku-4-5';
 const API_KEY = (process.env.ANTHROPIC_API_KEY || process.env.SMARTWATCH_API_KEY || '').trim();
 const PROFILE_FILE = process.env.FUBU_COMMUNITY_PROFILE_FILE || '/home/ubuntu/.fubu_community_profile.txt';
 const SHADOW_LOG = process.env.SMARTWATCH_SHADOW_LOG || '/home/ubuntu/.fubu_smartwatch_shadow.jsonl';
-const CTX_MESSAGES = Number(process.env.SMARTWATCH_CONTEXT_MSGS || 5) || 5;
+const CTX_MESSAGES = Number(process.env.SMARTWATCH_CONTEXT_MSGS || 10) || 10;
 // Categories the judge is NEVER allowed to auto-suppress, even at high confidence — belt-and-suspenders
 // beyond the system-prompt instruction.
 const NEVER_SUPPRESS = new Set(['child-safety', 'threat', 'doxxing']);
@@ -126,13 +126,14 @@ async function callJudge(scope, payload) {
   const c = getClient();
   if (!c) return null;
   const rubric = SCOPE_RUBRIC[scope] || SCOPE_RUBRIC.loose;
-  const ctx = (payload.context || []).map(m => `${m.who}: ${m.text}`).join('\n') || '(no prior context)';
+  const ctx = (payload.context || []).map(m => `${m.reply ? '↳ ' : ''}${m.who}: ${m.text}`).join('\n') || '(no prior context)';
   const user = [
     rubric, '',
     `CHANNEL: #${payload.channelName}`,
     `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff} · joined ~${payload.joinedDaysAgo ?? '?'}d ago`,
     `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
-    '', 'RECENT CONTEXT (older → newer):', ctx, '',
+    '', 'RECENT CONTEXT (older → newer; "↳" marks messages in the reply chain the flagged message is answering):', ctx, '',
+    ...(payload.replyingTo ? [`NOTE: the flagged message is a REPLY to ${payload.replyingTo.who}: "${(payload.replyingTo.text || '').slice(0, 300)}"`, ''] : []),
     '>>> FLAGGED MESSAGE (most recent, from AUTHOR above):',
     payload.content || '(no text - attachment/embed only)',
     '', 'Return only the JSON verdict.',
@@ -159,19 +160,33 @@ function logShadow(entry) {
 async function evaluate(scope, msg, matchedTerms) {
   try {
     if (!available()) return { ran: false };
-    // gather a little context + who the author is
-    let context = [];
+    // gather context: (a) the N messages right before the flagged one, and (b) if it's a reply, the reply
+    // chain up to N hops back (following each message's referenced parent). Merge + dedupe by id (the two
+    // can overlap), oldest -> newest; reply-chain messages are marked so the judge sees what's being answered.
+    let context = [], replyingTo = null;
     try {
-      const prior = await msg.channel.messages.fetch({ limit: CTX_MESSAGES, before: msg.id });
-      context = [...prior.values()].reverse().map(m => ({
+      const byId = new Map();
+      const fmt = m => ({ id: m.id, ts: m.createdTimestamp, reply: false,
         who: m.author?.bot ? `${m.author.username}(bot)` : (m.author?.username || 'user'),
-        text: (m.content || '[embed/attachment]').replace(/\s+/g, ' ').slice(0, 300),
-      }));
+        text: (m.content || '[embed/attachment]').replace(/\s+/g, ' ').slice(0, 300) });
+      const prior = await msg.channel.messages.fetch({ limit: CTX_MESSAGES, before: msg.id }).catch(() => null);
+      if (prior) for (const m of prior.values()) byId.set(m.id, fmt(m));
+      let ref = msg.reference, hops = 0;
+      while (ref && ref.messageId && hops < CTX_MESSAGES) {
+        const rch = ref.channelId === msg.channelId ? msg.channel
+          : await msg.client.channels.fetch(ref.channelId).catch(() => null);
+        const rm = rch && rch.messages ? await rch.messages.fetch(ref.messageId).catch(() => null) : null;
+        if (!rm) break;
+        const e = byId.get(rm.id) || fmt(rm); e.reply = true; byId.set(rm.id, e);
+        if (hops === 0) replyingTo = { who: e.who, text: e.text };   // the message THIS one directly replies to
+        ref = rm.reference; hops++;
+      }
+      context = [...byId.values()].sort((a, b) => a.ts - b.ts);
     } catch { /* context is best-effort */ }
     const member = msg.member;
     const payload = {
       content: (msg.content || '').slice(0, 1500),
-      matchedTerms, channelName: msg.channel?.name || 'unknown',
+      matchedTerms, channelName: msg.channel?.name || 'unknown', replyingTo,
       onWatchlist: !!(config.watchlistRoleId && member?.roles?.cache?.has(config.watchlistRoleId)),
       isStaff: !!opspanel.memberTier(member),
       joinedDaysAgo: member?.joinedTimestamp ? Math.round((Date.now() - member.joinedTimestamp) / 86400000) : null,
