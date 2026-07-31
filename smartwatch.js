@@ -173,6 +173,7 @@ const EXEMPLARS_IN_PROMPT = Number(process.env.SMARTWATCH_EXEMPLARS || 14) || 14
 const VERDICT_META = {
   strike:    { surface: true,  task: 'rule',    label: 'STRIKE-WORTHY (a real violation — surface it)' },
   corner:    { surface: true,  task: 'rule',    label: 'CORNER-ONLY (minor — surface, a cool-off not a strike)' },
+  glance:    { surface: true,  task: 'rule',    label: 'SURFACE, NO ACTION (worth a mod glance, but not a strike/corner)' },
   fine:      { surface: false, task: 'rule',    label: 'FINE (benign — a false positive, hide it)' },
   genuine:   { surface: true,  task: 'welfare', label: 'GENUINE DISTRESS (surface — someone should check in)' },
   hyperbole: { surface: false, task: 'welfare', label: 'HYPERBOLE (not real distress — hide it)' },

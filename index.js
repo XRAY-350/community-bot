@@ -1283,6 +1283,7 @@ async function labEvaluateAndPost(msg, member) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`sw_label:strike:${aiS}`).setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`sw_label:corner:${aiS}`).setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`sw_label:glance:${aiS}`).setEmoji('👁️').setLabel('Surface, no action').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`sw_label:fine:${aiS}`).setEmoji('⬜').setLabel('Fine (hide)').setStyle(ButtonStyle.Success));
   await ch.send({ embeds: [emb], components: [row], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
   // Multi-action prototype: the judge may also propose strikes/corners on OTHER messages in the read
@@ -1302,6 +1303,7 @@ async function labEvaluateAndPost(msg, member) {
     const aRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('sw_label:strike:1').setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('sw_label:corner:1').setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('sw_label:glance:1').setEmoji('👁️').setLabel('Surface, no action').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success));
     await ch.send({ embeds: [aEmb], components: [aRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
   }
