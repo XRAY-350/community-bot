@@ -1300,11 +1300,15 @@ async function labEvaluateAndPost(msg, member) {
         { name: 'Message (saved copy)', value: (a.quote || '_(no text)_').slice(0, 1024) },
         { name: `AI proposes — ${a.action.toUpperCase()}${aRule}`, value: (a.reason || '-').slice(0, 1024) })
       .setFooter({ text: `#${msg.channel?.name || '?'} · proposal` }).setTimestamp(new Date());
-    const aRow = new ActionRowBuilder().addComponents(
+    const aButtons = [
       new ButtonBuilder().setCustomId('sw_label:strike:1').setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('sw_label:corner:1').setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('sw_label:glance:1').setEmoji('👁️').setLabel('Surface, no action').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success));
+      new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success)];
+    // Jump to the exact message the proposal is about (a DIFFERENT message than the flag). Link button when
+    // we resolved it back to a real message; else a description link is impossible so we just skip it.
+    if (a.url) aButtons.push(new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(a.url).setEmoji('🔗').setLabel('Jump'));
+    const aRow = new ActionRowBuilder().addComponents(...aButtons);
     await ch.send({ embeds: [aEmb], components: [aRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
   }
 }
@@ -1629,7 +1633,10 @@ client.on('interactionCreate', async (interaction) => {
     const e2 = EmbedBuilder.from(emb).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
       name: 'Labeled ✅', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> — AI was ${correct ? '✅ right' : '❌ wrong'}\n` +
         `Judge accuracy so far (${meta.task}): **${acc}%** (${stats.right}/${stats.total}) · this example now guides the ${meta.task} judge.` });
-    return interaction.update({ embeds: [e2], components: [] }).catch(() => {});
+    // Drop the grade buttons but KEEP any Link (jump) button so the card stays navigable after grading.
+    const links = (interaction.message.components?.[0]?.components || []).filter(b => b.style === ButtonStyle.Link);
+    const comps = links.length ? [new ActionRowBuilder().addComponents(...links.map(b => ButtonBuilder.from(b)))] : [];
+    return interaction.update({ embeds: [e2], components: comps }).catch(() => {});
   }
   // Rule picker shown before the strike reason+weight modal (watch-log Strike button + right-click Strike) —
   // a modal can't hold a dropdown, so this is a select-then-modal step, same shape as the dashboard's

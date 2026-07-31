@@ -219,7 +219,7 @@ async function gatherContext(msg) {
   let context = [], replyingTo = null;
   try {
     const byId = new Map();
-    const fmt = m => ({ id: m.id, ts: m.createdTimestamp, reply: false,
+    const fmt = m => ({ id: m.id, channelId: m.channelId, ts: m.createdTimestamp, reply: false,
       who: m.author?.bot ? `${m.author.username}(bot)` : (m.author?.username || 'user'),
       text: (m.content || '[embed/attachment]').replace(/\s+/g, ' ').slice(0, 300) });
     const prior = await msg.channel.messages.fetch({ limit: CTX_MESSAGES, before: msg.id }).catch(() => null);
@@ -318,7 +318,9 @@ async function callLabJudge(scope, payload) {
     payload.content || '(no text - attachment/embed only)',
     '',
     'FIRST: judge the FLAGGED MESSAGE as usual (the top-level fields).',
-    'THEN: scan the RECENT CONTEXT. If any OTHER message (from a non-staff member, named by username) is ITSELF a clear, standalone violation a mod should act on, add it to "actions". Be conservative: only clear violations — never ordinary talk, venting, jokes, quotes, or reclaimed language. Empty array if nothing else qualifies. "strike" = a real ladder violation; "corner" = a minor cool-off.',
+    'THEN: scan the RECENT CONTEXT. If any OTHER message (from a non-staff member, named by username) is ITSELF a clear, standalone violation BY ITS OWN AUTHOR, add it to "actions". Be conservative: only clear violations — never ordinary talk, venting, jokes, quotes, or reclaimed language.',
+    'CRITICAL — judge DIRECTION and AUTHORSHIP before proposing: only ever propose an action against the author of the offending content ITSELF. NEVER propose an action against someone who is asking about, accusing, calling out, quoting, reporting, or reacting to another person\'s alleged behavior. Example: "didn\'t you send a death threat?" is a QUESTION/accusation by its speaker — the concern (if any) is about the person being asked, so do NOT action the asker. When you\'re unsure who the real author of the wrongdoing is, propose nothing.',
+    'Empty array if nothing else qualifies. "strike" = a real ladder violation; "corner" = a minor cool-off.',
     '',
     'Respond with ONLY this JSON (no fences):',
     '{"surface":<bool>,"confidence":<0.0-1.0>,"severity":"none|low|medium|high","likelyRule":<0-11>,"category":"reclaimed|hostile|threat|distress|quote-report|joke-hyperbole|sexual|doxxing|child-safety|spam|non-english|unclear","reason":"<one sentence>",',
@@ -337,6 +339,21 @@ async function callLabJudge(scope, payload) {
   if (verdict && resp.usage) verdict._usage = { in: resp.usage.input_tokens, out: resp.usage.output_tokens };
   return { verdict, actions };
 }
+// Resolve each proposed action back to the real context message it quotes, so the lab card can link to it.
+// The judge gives {who, quote}; match that against the gathered context (same author + the quote is a
+// snippet of that message) and attach a jump url. Best-effort: no match → no url → no jump button.
+const _norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function resolveActionUrls(actions, context, guildId) {
+  for (const a of actions) {
+    const q = _norm(a.quote);
+    const sameWho = context.filter(m => m.who && a.who && m.who.toLowerCase() === a.who.toLowerCase());
+    let hit = sameWho.find(m => { const t = _norm(m.text); return q && (t.includes(q) || q.includes(t)); });
+    if (!hit && sameWho.length === 1) hit = sameWho[0];
+    if (!hit) hit = context.find(m => { const t = _norm(m.text); return q && q.length > 6 && t.includes(q); });
+    if (hit && hit.id && hit.channelId) a.url = `https://discord.com/channels/${guildId}/${hit.channelId}/${hit.id}`;
+  }
+  return actions;
+}
 // Lab entry point. Returns { ran, verdict, wouldSuppress, actions }. Fail-open like evaluate().
 async function evaluateLab(scope, msg, matchedTerms) {
   try {
@@ -349,7 +366,7 @@ async function evaluateLab(scope, msg, matchedTerms) {
     const wouldSuppress = verdict.surface === false
       && verdict.confidence >= (config.smartWatchSuppressThreshold || 0.85)
       && !NEVER_SUPPRESS.has(verdict.category);
-    const actions = res.actions || [];
+    const actions = resolveActionUrls(res.actions || [], context, msg.guild?.id);
     logShadow({ ts: Date.now(), scope, ran: true, lab: true, mode: 'lab', channel: payload.channelName,
       author: msg.author?.id, onWatchlist: payload.onWatchlist, terms: matchedTerms,
       content: payload.content, verdict, wouldSuppress, actions });
