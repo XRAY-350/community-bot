@@ -70,6 +70,11 @@ function systemPrompt() {
     '  MDNI space; debates/arguments belong only in discussion channels (Rule 9). You are told the channel.',
     '- Judge direction: aimed AT someone as an attack/threat, vs. reclaimed use, a joke, a quote, someone',
     '  REPORTING another\'s message, or hyperbole. Weigh who is speaking and at whom.',
+    '- LANGUAGE: this is a multilingual space, but the watched terms are ENGLISH. If the flagged message is',
+    '  NOT in English (French, Spanish, an African language, etc.), an English-keyword match on it is almost',
+    '  always a coincidental false positive - set surface:false, category "non-english" (the non-English',
+    '  channels have their own mini-mods). EXCEPTION: things that transcend language - a credible threat, a',
+    '  child-safety issue, doxxing, or a slur weaponized at someone - still surface with the REAL category.',
     '',
     'FUBU rules you map a flag to (1-11): 1 Black-only space; 2 child safety (grooming, or jokes about',
     'grooming/rape/pedophilia - always a flag); 3 verification; 4 no sexual/suggestive language in general',
@@ -85,7 +90,7 @@ function systemPrompt() {
     'Respond with ONLY a JSON object (no prose, no markdown fences) of exactly this shape:',
     '{"surface": <bool, true=show a mod / false=benign false positive>, "confidence": <0.0-1.0, how sure of surface>,',
     ' "severity": "none"|"low"|"medium"|"high", "likelyRule": <the FUBU rule 1-11 this message VIOLATES, or 0 if it is not a rule violation - welfare/distress cases and benign false positives are ALWAYS 0 (a member\'s wellbeing is not a rule)>,',
-    ' "category": "reclaimed"|"hostile"|"threat"|"distress"|"quote-report"|"joke-hyperbole"|"sexual"|"doxxing"|"child-safety"|"spam"|"unclear",',
+    ' "category": "reclaimed"|"hostile"|"threat"|"distress"|"quote-report"|"joke-hyperbole"|"sexual"|"doxxing"|"child-safety"|"spam"|"non-english"|"unclear",',
     ' "reason": "<one plain sentence a mod reads at a glance>"}',
   ].join('\n');
 }
@@ -195,10 +200,14 @@ async function evaluate(scope, msg, matchedTerms) {
     if (!verdict) { logShadow({ ts: Date.now(), scope, ran: false, channel: payload.channelName, terms: matchedTerms, content: payload.content }); return { ran: false }; }
 
     const live = !!config.smartWatchLive;
+    // Non-English messages tripping an English keyword are noise (their channels have own mini-mods); the
+    // judge only tags 'non-english' for benign non-English (real cross-language threats keep the real
+    // category), so skip these regardless of shadow/live mode.
+    const nonEnglishSkip = verdict.category === 'non-english';
     const wouldSuppress = verdict.surface === false
       && verdict.confidence >= (config.smartWatchSuppressThreshold || 0.85)
       && !NEVER_SUPPRESS.has(verdict.category);
-    const suppress = live && wouldSuppress;
+    const suppress = nonEnglishSkip || (live && wouldSuppress);
     logShadow({ ts: Date.now(), scope, ran: true, mode: live ? 'live' : 'shadow', channel: payload.channelName,
       author: msg.author?.id, onWatchlist: payload.onWatchlist, terms: matchedTerms,
       content: payload.content, verdict, wouldSuppress, suppressed: suppress });
