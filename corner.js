@@ -128,6 +128,14 @@ function logCornerHistory(state, memberId, ruleIndex) {
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   const now = Date.now();
+  // Nobody can corner themselves — every entry point (slash /corner, "Send to corner", the dashboard
+  // picker, the re-corner button) funnels through here, so one central guard closes them all. The tier
+  // check upstream lets equal tiers act on each other (mod↔mod), which — with no self-check — also let a
+  // mod corner their OWN account and self-strip their roles. Auto-corner (rule 9) passes the bot's id as
+  // byId against a member target, so byId===member.id only ever means a genuine self-corner attempt.
+  if (byId && byId === member.id) {
+    return { ok: false, error: "you can't corner yourself." };
+  }
   const existing = state.getCornered(member.id);
   if (existing) {
     // Already cornered — just update the release time (don't re-strip).
