@@ -320,17 +320,25 @@ function buildDanger() {
 }
 
 function buildWatchlist() {
+  const c = D.config;
   const strict = watchlist.loadTerms();
   const loose = watchlist.loadLoose();
   const welfare = watchlist.loadWelfare();
   const pending = watchlist.loadPending();
+  const fw = D.freshwatch ? D.freshwatch.status() : { mode: c.smartWatchFreshMode || 'off', hours: c.smartWatchFreshHours || 0, percentile: c.smartWatchFreshPercentile || 1, influxActive: false };
+  const freshLine = fw.mode === 'auto'
+    ? `**auto** — tags the newest **~${fw.percentile}%** of members as ⚠ brand-new (self-calibrates to growth${fw.influxActive ? '; 📈 **influx active → tightened**' : ''}). A mod heads-up only — the AI never sees account age.`
+    : fw.mode === 'manual'
+      ? `**manual** — tags accounts that joined **< ${fw.hours}h ago**. A mod heads-up only — the AI never sees account age.`
+      : '**off** — no new-account note.';
   const embed = new EmbedBuilder().setColor(0x5865F2).setDescription(
     '**⭐ Needs Admin.** Two monitors:\n' +
     '• **Strict watchlist** — a flagged member posts a **strict term** → alert in **mod-announcements** with **Ban** buttons (+ mod ping).\n' +
     "• **Loose watch-log** — *anyone except staff* posts a **loose term** → quiet report in **#watch-log** (buttons, no ping).\n" +
     "• **Welfare** — a distress term (e.g. `i want to die`, `sh`) → soft **check-in** report in #watch-log (no ban button).\n" +
     "All reports keep a **saved copy + mirrored attachments**, so deleting the message can't hide it.\n\n" +
-    '👁️ **Watchlist** add/remove · 🔓 **Unban** (opt. re-watchlist on rejoin) · 🏷️ **Terms** for each list.\n\n' +
+    '👁️ **Watchlist** add/remove · 🔓 **Unban** (opt. re-watchlist on rejoin) · 🏷️ **Terms** for each list.\n' +
+    `🌱 **New-account flag:** ${freshLine}\n\n` +
     `**Now:** ${strict.length} strict · ${loose.length} loose · ${welfare.length} welfare term(s) · ${pending.length} pending.`)
     .setFooter({ text: 'Watchlist + unban + terms = ADMINS-★ role. Banning a flagged message = any mod.' });
   const row1 = new ActionRowBuilder().addComponents(
@@ -347,7 +355,9 @@ function buildWatchlist() {
     new ButtonBuilder().setCustomId('fops_wl_ltermdel').setEmoji('➖').setLabel('Loose −').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_wl_wtermadd').setEmoji('➕').setLabel('Welfare +').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_wl_wtermdel').setEmoji('➖').setLabel('Welfare −').setStyle(ButtonStyle.Secondary));
-  return { content: '## 👁️ FUBU Ops · Watchlist', embeds: [embed], components: [row1, row2, row3, navRow(pageIdx('Watchlist'))] };
+  const row4 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('fops_freshflag').setEmoji('🌱').setLabel('New-account flag…').setStyle(ButtonStyle.Secondary));
+  return { content: '## 👁️ FUBU Ops · Watchlist', embeds: [embed], components: [row1, row2, row3, row4, navRow(pageIdx('Watchlist'))] };
 }
 function termModal(customId, title) {
   const m = new ModalBuilder().setCustomId(customId).setTitle(title);
@@ -692,6 +702,15 @@ async function handlePanel(interaction) {
   if (id === 'fops_wl_ltermdel') return meets(roleTier, 'admin') ? interaction.showModal(termModal('fops_wl_ltermdelmodal', 'Remove a loose watch-log term')) : denyReply('admin');
   if (id === 'fops_wl_wtermadd') return meets(roleTier, 'admin') ? interaction.showModal(termModal('fops_wl_wtermaddmodal', 'Add a welfare term')) : denyReply('admin');
   if (id === 'fops_wl_wtermdel') return meets(roleTier, 'admin') ? interaction.showModal(termModal('fops_wl_wtermdelmodal', 'Remove a welfare term')) : denyReply('admin');
+  if (id === 'fops_freshflag') {
+    if (!meets(roleTier, 'admin')) return denyReply('admin');
+    const c = D.config;
+    const m = new ModalBuilder().setCustomId('fops_freshmodal').setTitle('New-account flag');
+    m.addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('mode').setLabel('auto / off / a number = hours').setStyle(TextInputStyle.Short).setRequired(true).setValue(c.smartWatchFreshMode === 'manual' ? String(Number(c.smartWatchFreshHours) || 0) : (c.smartWatchFreshMode || 'auto'))),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('pct').setLabel('Auto sensitivity: newest % (e.g. 1)').setStyle(TextInputStyle.Short).setRequired(false).setValue(String(Number(c.smartWatchFreshPercentile) || 1))));
+    return interaction.showModal(m);
+  }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const deny = needed => interaction.editReply(`🔒 That's **${LABEL[needed]}+** only. You're ${LABEL[tier]}.`);
@@ -715,6 +734,26 @@ async function handlePanel(interaction) {
       await modapps.setApplicationsOpen(interaction.guild, nowOpen);
       try { require('./ownerlog').log(interaction.guild, { emoji: nowOpen ? '✅' : '🚫', title: nowOpen ? 'Mod applications REOPENED' : 'Mod applications CLOSED', color: nowOpen ? 0x57F287 : 0xED4245, detail: `${nowOpen ? 'Reopened' : 'Closed'} via dashboard by <@${interaction.user.id}>.${nowOpen ? '' : ' In-flight applications still finish.'}` }); } catch { /* ownerlog best-effort */ }
       await interaction.editReply(nowOpen ? '✅ Mod applications are now **OPEN**. Members can `/apply-mod`.' : '🚫 Mod applications are now **CLOSED** (team full). Applications already under review still finish.');
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_freshmodal') {
+      if (!meets(roleTier, 'admin')) return deny('admin');
+      const raw = (interaction.fields.getTextInputValue('mode') || '').trim().toLowerCase();
+      const pctRaw = (interaction.fields.getTextInputValue('pct') || '').trim();
+      const patch = {};
+      if (raw === 'auto') patch.smartWatchFreshMode = 'auto';
+      else if (['off', '0', 'no', 'none'].includes(raw)) patch.smartWatchFreshMode = 'off';
+      else {
+        const h = Number(raw);
+        if (!Number.isFinite(h) || h <= 0) return interaction.editReply('Enter **auto**, **off**, or a number of **hours** (e.g. `12`).');
+        patch.smartWatchFreshMode = 'manual'; patch.smartWatchFreshHours = h;
+      }
+      if (pctRaw) { const p = Number(pctRaw); if (Number.isFinite(p) && p > 0 && p <= 50) patch.smartWatchFreshPercentile = p; }
+      persistOverride(patch);
+      if (D.freshwatch && patch.smartWatchFreshMode === 'auto') D.freshwatch.recompute(interaction.guild);   // apply the new cutoff now
+      const desc = patch.smartWatchFreshMode === 'auto' ? `**auto** (newest ${D.config.smartWatchFreshPercentile}%)`
+        : patch.smartWatchFreshMode === 'manual' ? `**manual** (< ${patch.smartWatchFreshHours}h)` : '**off**';
+      await interaction.editReply(`🌱 New-account flag set to ${desc}.`);
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_timingsmodal') {

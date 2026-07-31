@@ -198,6 +198,23 @@ const config = {
   // there for admins to grade — and the public watch-log reverts to plain keyword flags (no AI). Dormant
   // until an id is given. The expanded terms only feed the lab (see watchlist.js lab lists).
   smartWatchLabChannelId: opt('SMARTWATCH_LAB_CHANNEL_ID', ''),
+  // Fresh-account flag (dashboard-tunable, Watchlist page): mark a watch/lab flag with "⚠ brand-new account"
+  // as a HUMAN heads-up — deliberately NOT fed to the AI judge (which judges the message, not tenure).
+  //   mode 'auto'   → self-calibrating: flag only accounts in the newest N% of the server, so the threshold
+  //                   tightens during a growth spike and loosens as growth slows — no number to babysit.
+  //   mode 'manual' → flag accounts that joined within smartWatchFreshHours hours (a fixed override).
+  //   mode 'off'    → no note.
+  smartWatchFreshMode: opt('SMARTWATCH_FRESH_MODE', 'auto'),
+  smartWatchFreshHours: num('SMARTWATCH_FRESH_HOURS', 0),          // manual-mode threshold (hours)
+  smartWatchFreshPercentile: num('SMARTWATCH_FRESH_PERCENTILE', 1), // auto-mode sensitivity: newest N% of members
+  smartWatchFreshMaxDays: num('SMARTWATCH_FRESH_MAX_DAYS', 30),     // absolute cap: never flag joins older than this
+  // Influx detection: when joins in the last hour spike to influxFactor× the 30-day baseline (and clear an
+  // absolute floor), post a one-time "📈 influx detected" heads-up. Warns admins a spike/raid is underway
+  // AND explains why the auto fresh-flag just tightened. Cooldown avoids spamming across a sustained wave.
+  influxFactor: num('INFLUX_FACTOR', 5),
+  influxMinJoins: num('INFLUX_MIN_JOINS', 10),                      // min joins/hour to even consider an influx
+  influxWarnCooldownHours: num('INFLUX_WARN_COOLDOWN_HOURS', 6),
+  influxWarnChannelId: opt('INFLUX_WARN_CHANNEL_ID', ''),           // falls back to modAnnounceChannelId
 
   // Observe-only: log every intended action but perform none. Default ON so the first
   // live run proves it targets the right threads before anything is actually closed.

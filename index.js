@@ -5,7 +5,7 @@
 // guildMemberUpdate so we can see the Verified role being assigned). The GuildMembers intent
 // must also be enabled in the Discord Developer Portal for this application.
 
-const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, AuditLogEvent } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const config = require('./config');
 const State = require('./state');
@@ -34,6 +34,7 @@ const strikeAppeals = require('./strikeAppeals');
 const features = require('./features');
 const contest = require('./contest');
 const smartwatch = require('./smartwatch');
+const freshwatch = require('./freshwatch');
 const rules = require('./rules');
 const strikes = require('./strikes');
 const roleselect = require('./roleselect');
@@ -329,7 +330,7 @@ const getWarnChannel = () => warnChannel;
 const getConflictChannel = () => conflictChannel;
 
 // Inject the bot's own logic into the tier-gated ops dashboard so it reuses corner/sweep/state/etc.
-opspanel.wire({ client, config, state, corner, sweep, activeThreads,
+opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch,
   getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel,
   logAction: ownerlog.log,
   strike: {
@@ -536,6 +537,13 @@ client.once('ready', async () => {
   // Every 60s: refresh the shared panel's live counts AND run the idle auto-return (so an abandoned
   // page snaps back to Overview within ~90–150s). The private /panel isn't affected.
   setInterval(() => opspanel.refreshPanel(client).catch(() => {}), 60 * 1000);
+
+  // Fresh-account flag + influx detection: seed the self-calibration from current membership, then refresh
+  // hourly so "newest N%" tracks the server's real growth (real-time joins are handled in guildMemberAdd).
+  (async () => {
+    const g = await client.guilds.fetch(config.guildId).catch(() => null);
+    if (g) { await freshwatch.recompute(g); setInterval(() => freshwatch.recompute(g), 60 * 60 * 1000); }
+  })();
 
   // Register the /corner and /uncorner slash commands to this guild (instant, no global wait).
   try {
@@ -880,6 +888,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 client.on('guildMemberAdd', async (member) => {
   try {
     if (member.guild.id !== config.guildId || member.user.bot) return;
+    freshwatch.onMemberJoin(member.guild, member);   // real-time join tracking (fresh-flag + influx detection)
     // Re-apply the Watchlist role to a member who was unbanned with "watchlist on rejoin".
     if (config.watchlistRoleId && watchlist.isPending(member.id)) {
       await member.roles.add(config.watchlistRoleId, 'Watchlist on rejoin (unbanned with watchlist)').catch(e => console.error('[watchlist] rejoin add:', e.message));
@@ -967,32 +976,70 @@ async function enforceAgeExclusivity(member, oldMember) {
 function snapshotRegistrationLock(member) {
   return { ageRoleId: currentAgeRole(member), mdni: !!(config.mdniRoleId && member.roles.cache.has(config.mdniRoleId)) };
 }
+// Who actually made the most recent role change on this member (via the audit log)? Lets us tell a member
+// re-picking their OWN registration (which the lock reverts) from a mod/admin correcting it (an override we
+// must ALLOW) or the bot's own revert echo (ignore). Null if the log is unavailable/lagging.
+async function whoChangedRoles(member) {
+  try {
+    const logs = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberRoleUpdate, limit: 6 });
+    const now = Date.now();
+    const e = logs.entries.find(x => x.target?.id === member.id && (now - x.createdTimestamp) < 15000);
+    return e?.executor || null;
+  } catch { return null; }
+}
+const _rlBusy = new Set();   // re-entrancy guard: our own revert fires more guildMemberUpdate events
 async function enforceRegistrationLock(member, notify = true) {
   if (!config.verifiedRoleId || !member.roles.cache.has(config.verifiedRoleId)) return;
+  if (_rlBusy.has(member.id)) return;                       // mid-revert on this member — ignore the echo
   const locks = state.getMeta('registrationLock') || {};
   if (!locks[member.id]) { locks[member.id] = snapshotRegistrationLock(member); state.setMeta('registrationLock', locks); return; }
   const lock = locks[member.id];
   const curAge = currentAgeRole(member);
   const curMdni = !!(config.mdniRoleId && member.roles.cache.has(config.mdniRoleId));
-  const roleName = id => id ? (member.guild.roles.cache.get(id)?.name || id) : 'none';
+  if (curAge === lock.ageRoleId && curMdni === lock.mdni) return;   // matches the locked baseline — nothing to do
+
+  // WHO changed it decides everything. Only a member re-picking their OWN registration is blocked. A mod/
+  // admin (or the bot) changing it is a deliberate OVERRIDE → accept it as the new locked baseline so staff
+  // CAN fix a bracket. Our own revert echoes (actor = the bot) are ignored.
+  const actor = await whoChangedRoles(member);
+  if (actor && actor.id === member.client.user.id) return;  // bot's own change — ignore
+  if (actor && actor.id !== member.id) {
+    locks[member.id] = snapshotRegistrationLock(member); state.setMeta('registrationLock', locks);
+    console.log(`[registration-lock] override by ${actor.tag || actor.id} for ${member.user.tag} — new baseline locked`);
+    return;
+  }
+
+  // Self-change (or actor unknown → fail safe toward protection): revert to the locked baseline.
+  const roleName = id => id ? (member.guild.roles.cache.get(id)?.name || id) : null;
   const changes = [];
-  if (curAge !== lock.ageRoleId) {
-    if (curAge) await member.roles.remove(curAge, 'Registration lock: age bracket can’t change after verification').catch(() => {});
-    if (lock.ageRoleId) await member.roles.add(lock.ageRoleId, 'Registration lock: restoring original age bracket').catch(() => {});
-    changes.push(`age bracket: tried **${roleName(curAge)}**, reverted to **${roleName(lock.ageRoleId)}**`);
-  }
-  if (curMdni !== lock.mdni) {
-    if (curMdni) await member.roles.remove(config.mdniRoleId, 'Registration lock: MDNI can’t change after verification').catch(() => {});
-    else await member.roles.add(config.mdniRoleId, 'Registration lock: restoring original MDNI choice').catch(() => {});
-    changes.push(`MDNI: tried to ${curMdni ? 'add it' : 'remove it'}, reverted`);
-  }
-  if (changes.length) {
-    console.log(`[registration-lock] reverted change(s) for ${member.user.tag}: ${changes.join('; ')}`);
-    if (notify && config.modAnnounceChannelId) {
-      const ch = await member.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
-      if (ch) await ch.send({ content: `## 🔒 Registration lock enforced\n<@${member.id}> (\`${member.user.tag}\`) tried to change their age/MDNI choice after verifying — reverted:\n${changes.map(c => `• ${c}`).join('\n')}`, allowedMentions: { parse: [] } }).catch(() => {});
+  _rlBusy.add(member.id);
+  try {
+    if (curAge !== lock.ageRoleId) {
+      if (curAge) await member.roles.remove(curAge, 'Registration lock: age bracket can’t change after verification').catch(() => {});
+      if (lock.ageRoleId) await member.roles.add(lock.ageRoleId, 'Registration lock: restoring original age bracket').catch(() => {});
+      changes.push(curAge
+        ? `**Age:** they tried to switch to **${roleName(curAge)}** → restored **${roleName(lock.ageRoleId) || 'their original bracket'}**`
+        : `**Age:** they tried to clear their age bracket → restored **${roleName(lock.ageRoleId) || 'their original bracket'}**`);
     }
-  }
+    if (curMdni !== lock.mdni) {
+      if (curMdni) await member.roles.remove(config.mdniRoleId, 'Registration lock: MDNI can’t change after verification').catch(() => {});
+      else await member.roles.add(config.mdniRoleId, 'Registration lock: restoring original MDNI choice').catch(() => {});
+      changes.push(`**MDNI:** they tried to turn it **${curMdni ? 'ON' : 'OFF'}** → restored`);
+    }
+  } finally { setTimeout(() => _rlBusy.delete(member.id), 4000); }   // hold past the gateway echo of our own edits
+  if (!changes.length) return;
+  console.log(`[registration-lock] reverted self-change for ${member.user.tag}: ${changes.join('; ')}`);
+
+  // Rate-limit the mod-announce post per member — a member spam-toggling shouldn't flood the channel (the
+  // revert still happens every time; only the heads-up is throttled).
+  if (!notify || !config.modAnnounceChannelId) return;
+  const notified = state.getMeta('registrationLockNotified') || {};
+  if (Date.now() - (notified[member.id] || 0) < 10 * 60 * 1000) return;
+  notified[member.id] = Date.now(); state.setMeta('registrationLockNotified', notified);
+  const ch = await member.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
+  if (ch) await ch.send({
+    content: `## 🔒 Registration lock\n<@${member.id}> (\`${member.user.tag}\`) tried to change their own **age/MDNI** after verifying — auto-reverted (it’s a one-time choice set at verification).\n${changes.map(c => `• ${c}`).join('\n')}\n_A mod/admin **can** override this by changing it for them — only self-changes are blocked._`,
+    allowedMentions: { parse: [] } }).catch(() => {});
 }
 // Boot self-heal: grandfather in every currently-Verified member with no lock snapshot yet (their
 // CURRENT state becomes their locked baseline — doesn't retroactively punish existing members).
@@ -1214,6 +1261,8 @@ async function watchlistAlert(msg, hits, opts = {}) {
     .setFooter({ text: `user ${msg.author.id}` }).setTimestamp(new Date());
   if (atts.length) embed.addFields({ name: 'Attachments', value: `${atts.length} mirrored below (deletion-proof)`, inline: true });
   if (smartNote) embed.addFields({ name: 'AI context read', value: smartNote.slice(0, 1024) });
+  const freshNote = freshwatch.noteFor(msg.member);   // human heads-up only — NOT fed to the AI judge
+  if (freshNote) embed.addFields({ name: '🌱 Account age', value: freshNote.slice(0, 1024) });
   // Re-upload the attachments to the report (fetched immediately, so a later delete can't remove them).
   const files = atts.slice(0, 10).map(a => ({ attachment: a.url, name: a.name || 'attachment' }));
   // opts.buttons: 'full' (Ban+Dismiss, default) · 'dismiss' (welfare — no ban) · 'none'.
@@ -1279,6 +1328,8 @@ async function labEvaluateAndPost(msg, member) {
       { name: `AI verdict — ${wouldSurface ? '👁️ WOULD SURFACE' : '🙈 WOULD HIDE'}`, value: verdictText.slice(0, 1024) })
     .setFooter({ text: `#${msg.channel?.name || '?'} · flagged ${msg.author.id}` })
     .setTimestamp(new Date());
+  const freshNote = freshwatch.noteFor(msg.member);   // human heads-up only — NOT part of the AI verdict
+  if (freshNote) emb.addFields({ name: '🌱 Account age', value: freshNote.slice(0, 1024) });
   const aiS = wouldSurface ? '1' : '0';
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`sw_label:strike:${aiS}`).setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
@@ -1335,6 +1386,8 @@ async function postWelfareLabCard(msg, ch, hits, base) {
       { name: `AI verdict — ${wouldSurface ? '🫂 WOULD SURFACE (check in)' : '🙈 WOULD HIDE (hyperbole)'}`, value: verdictText.slice(0, 1024) })
     .setFooter({ text: `#${msg.channel?.name || '?'} · welfare · flagged ${msg.author.id}` })
     .setTimestamp(new Date());
+  const freshNote = freshwatch.noteFor(msg.member);
+  if (freshNote) emb.addFields({ name: '🌱 Account age', value: freshNote.slice(0, 1024) });
   const aiS = wouldSurface ? '1' : '0';
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`sw_label:genuine:${aiS}`).setEmoji('🫂').setLabel('Genuine distress').setStyle(ButtonStyle.Primary),
