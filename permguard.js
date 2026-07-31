@@ -49,6 +49,7 @@ async function sweepPermissions(guild, { notify = true } = {}) {
   const manifest = loadManifest();
   if (!manifest) return { fixed: 0, corrections: [], newMemberOverwrites: [], unmanagedChannels: 0 };
   const channels = [...(await guild.channels.fetch()).values()].filter(Boolean);
+  const roles = await guild.roles.fetch();
   const corrections = [];
   const newMemberOverwrites = [];
   let unmanagedChannels = 0;
@@ -70,6 +71,11 @@ async function sweepPermissions(guild, { notify = true } = {}) {
     for (const roleId of allRoleIds) {
       const live = liveRole.get(roleId);
       const desired = goldenRole.get(roleId);
+      // Managed roles = bot/integration roles Discord auto-creates (Carl-bot, boosters, other bots). A
+      // channel overwrite for one is a deliberate integration grant, not drift, so NEVER auto-revert it
+      // (else we keep undoing the owner's bot setup — e.g. Carl-bot's welcome-message SendMessages getting
+      // stripped every sweep). Left in place silently, exactly like member-specific overwrites below.
+      if (roles.get(roleId)?.managed) continue;
       const liveAllow = live ? live.allow.bitfield.toString() : '0';
       const liveDeny = live ? live.deny.bitfield.toString() : '0';
       const desiredAllow = desired ? desired.allow : '0';
