@@ -1222,6 +1222,7 @@ async function watchlistAlert(msg, hits, opts = {}) {
     new ButtonBuilder().setCustomId(`wl_dismiss:${msg.author.id}`).setEmoji('🗑️').setLabel('Dismiss').setStyle(ButtonStyle.Secondary))];
   else if (opts.buttons !== 'none') components = [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_strike:${msg.author.id}`).setEmoji('⚠️').setLabel('Strike').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`wl_corner:${msg.author.id}`).setEmoji('⛓️').setLabel('Corner').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`wl_dismiss:${msg.author.id}`).setEmoji('🗑️').setLabel('Dismiss').setStyle(ButtonStyle.Secondary))];
   const ping = (opts.ping !== false && config.modRoleId) ? `<@&${config.modRoleId}>` : undefined;
   const mentions = { roles: (opts.ping !== false && config.modRoleId) ? [config.modRoleId] : [] };
@@ -1250,7 +1251,7 @@ async function labEvaluateAndPost(msg, member) {
   if (!all.length) return;
   const hits = watchlist.matchTerms(msg.content, all);
   if (!hits.length) return;
-  const d = await smartwatch.evaluate(scope, msg, hits);
+  const d = await smartwatch.evaluateLab(scope, msg, hits);
   if (!d.ran || !d.verdict) return;                    // judge unavailable/errored → nothing to grade (shadow log has it)
   const v = d.verdict;
   const wouldSurface = !d.wouldSuppress;               // wouldSuppress already applies threshold + NEVER_SUPPRESS
@@ -1275,6 +1276,26 @@ async function labEvaluateAndPost(msg, member) {
     new ButtonBuilder().setCustomId(`sw_label:corner:${aiS}`).setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`sw_label:fine:${aiS}`).setEmoji('⬜').setLabel('Fine (hide)').setStyle(ButtonStyle.Success));
   await ch.send({ embeds: [emb], components: [row], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
+  // Multi-action prototype: the judge may also propose strikes/corners on OTHER messages in the read
+  // context. Post each as its own gradable card (same 🔨/⛓️/⬜ buttons) so admins can score whether the
+  // richer read is trustworthy. aiSurface=1 — proposing an action means the AI would surface/act.
+  for (const a of (d.actions || []).slice(0, 4)) {
+    const emoji = a.action === 'strike' ? '🔨' : '⛓️';
+    const aRule = a.rule ? `, Rule ${a.rule}` : '';
+    const aEmb = new EmbedBuilder().setColor(0x9B59B6)
+      .setTitle(`🔎 Lab — AI proposes ${emoji} ${a.action.toUpperCase()} (from the thread)`)
+      .setDescription(`On \`${a.who}\`'s message in <#${msg.channel.id}> — spotted while reading context around the flag above.`)
+      .addFields(
+        { name: 'Matched', value: '_(context proposal — not a keyword hit)_' },
+        { name: 'Message (saved copy)', value: (a.quote || '_(no text)_').slice(0, 1024) },
+        { name: `AI proposes — ${a.action.toUpperCase()}${aRule}`, value: (a.reason || '-').slice(0, 1024) })
+      .setFooter({ text: `#${msg.channel?.name || '?'} · proposal` }).setTimestamp(new Date());
+    const aRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('sw_label:strike:1').setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('sw_label:corner:1').setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success));
+    await ch.send({ embeds: [aEmb], components: [aRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
+  }
 }
 
 // Reason+weight modal for a message-based strike. Carries the flagged message ref so the submit
@@ -1366,6 +1387,23 @@ async function handleWatchlistButton(interaction) {
     // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
     const ref = originalRefFromAlert(keep[0]);
     return interaction.reply({ content: 'Which rule (optional)?', components: [ruleRow(`strike_rule_pick:${userId}:${ref?.channelId || 0}:${ref?.messageId || 0}`)], flags: MessageFlags.Ephemeral });
+  }
+  if (action === 'wl_corner') {   // lighter than Strike: a casual, timed cool-off straight from the flag
+    const member = await interaction.guild.members.fetch(userId).catch(() => null);
+    if (!member) return interaction.update({ content: `⛓️ <@${userId}> already left — can’t corner.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+    if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
+      return interaction.reply({ content: 'You can’t corner an admin or the owner.', flags: MessageFlags.Ephemeral });
+    const durationMs = config.cornerDefaultDurationMs;
+    const r = await corner.corner(interaction.guild, member, durationMs, state, interaction.user.id);
+    if (!r.ok) return interaction.reply({ content: `Failed to corner: ${r.error}`, flags: MessageFlags.Ephemeral });
+    const relSec = Math.floor((Date.now() + durationMs) / 1000);
+    try {
+      const cornerCh = await interaction.guild.channels.fetch(config.cornerChannelId).catch(() => null);
+      if (cornerCh) await cornerCh.send(cornerSentMessage(userId, `until <t:${relSec}:f>`, null));
+    } catch (e) { console.error('[wl_corner] announce:', e.message); }
+    await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (from watch-log)', color: CORNER_RED,
+      desc: `<@${userId}> was cornered until ${relPhrase(relSec * 1000)} from a watch-log flag.\n**By:** <@${interaction.user.id}>` });
+    return interaction.update({ content: `⛓️ Cornered <@${userId}> until <t:${relSec}:f> — stripped **${r.stripped}** role(s). By <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (action === 'wl_ban') { // legacy direct-ban buttons on older reports
     return interaction.update({ components: [banConfirmRow(userId, 'Confirm ban')] }).catch(() => {});

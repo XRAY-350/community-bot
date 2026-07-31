@@ -201,43 +201,51 @@ function labStats() {
 }
 function verdictSurfaces(v) { return VERDICT_META[v]?.surface; }
 
+// ---- shared context + payload (used by both evaluate() and evaluateLab() so they can't drift) -----
+// (a) the N messages right before the flagged one, and (b) if it's a reply, the reply chain up to N hops
+// back. Merge + dedupe by id (they can overlap), oldest -> newest; reply-chain messages are marked.
+async function gatherContext(msg) {
+  let context = [], replyingTo = null;
+  try {
+    const byId = new Map();
+    const fmt = m => ({ id: m.id, ts: m.createdTimestamp, reply: false,
+      who: m.author?.bot ? `${m.author.username}(bot)` : (m.author?.username || 'user'),
+      text: (m.content || '[embed/attachment]').replace(/\s+/g, ' ').slice(0, 300) });
+    const prior = await msg.channel.messages.fetch({ limit: CTX_MESSAGES, before: msg.id }).catch(() => null);
+    if (prior) for (const m of prior.values()) byId.set(m.id, fmt(m));
+    let ref = msg.reference, hops = 0;
+    while (ref && ref.messageId && hops < CTX_MESSAGES) {
+      const rch = ref.channelId === msg.channelId ? msg.channel
+        : await msg.client.channels.fetch(ref.channelId).catch(() => null);
+      const rm = rch && rch.messages ? await rch.messages.fetch(ref.messageId).catch(() => null) : null;
+      if (!rm) break;
+      const e = byId.get(rm.id) || fmt(rm); e.reply = true; byId.set(rm.id, e);
+      if (hops === 0) replyingTo = { who: e.who, text: e.text };
+      ref = rm.reference; hops++;
+    }
+    context = [...byId.values()].sort((a, b) => a.ts - b.ts);
+  } catch { /* context is best-effort */ }
+  return { context, replyingTo };
+}
+function buildPayload(msg, matchedTerms, context, replyingTo) {
+  const member = msg.member;
+  return {
+    content: (msg.content || '').slice(0, 1500),
+    matchedTerms, channelName: msg.channel?.name || 'unknown', replyingTo, context,
+    onWatchlist: !!(config.watchlistRoleId && member?.roles?.cache?.has(config.watchlistRoleId)),
+    isStaff: !!opspanel.memberTier(member),
+    joinedDaysAgo: member?.joinedTimestamp ? Math.round((Date.now() - member.joinedTimestamp) / 86400000) : null,
+  };
+}
+
 // ---- public: evaluate one flagged message --------------------------------------------------------
 // Returns { ran, verdict, suppress, note }. On ANY problem returns { ran:false } so the caller posts
 // the flag exactly as it does today (fail-open).
 async function evaluate(scope, msg, matchedTerms) {
   try {
     if (!available()) return { ran: false };
-    // gather context: (a) the N messages right before the flagged one, and (b) if it's a reply, the reply
-    // chain up to N hops back (following each message's referenced parent). Merge + dedupe by id (the two
-    // can overlap), oldest -> newest; reply-chain messages are marked so the judge sees what's being answered.
-    let context = [], replyingTo = null;
-    try {
-      const byId = new Map();
-      const fmt = m => ({ id: m.id, ts: m.createdTimestamp, reply: false,
-        who: m.author?.bot ? `${m.author.username}(bot)` : (m.author?.username || 'user'),
-        text: (m.content || '[embed/attachment]').replace(/\s+/g, ' ').slice(0, 300) });
-      const prior = await msg.channel.messages.fetch({ limit: CTX_MESSAGES, before: msg.id }).catch(() => null);
-      if (prior) for (const m of prior.values()) byId.set(m.id, fmt(m));
-      let ref = msg.reference, hops = 0;
-      while (ref && ref.messageId && hops < CTX_MESSAGES) {
-        const rch = ref.channelId === msg.channelId ? msg.channel
-          : await msg.client.channels.fetch(ref.channelId).catch(() => null);
-        const rm = rch && rch.messages ? await rch.messages.fetch(ref.messageId).catch(() => null) : null;
-        if (!rm) break;
-        const e = byId.get(rm.id) || fmt(rm); e.reply = true; byId.set(rm.id, e);
-        if (hops === 0) replyingTo = { who: e.who, text: e.text };   // the message THIS one directly replies to
-        ref = rm.reference; hops++;
-      }
-      context = [...byId.values()].sort((a, b) => a.ts - b.ts);
-    } catch { /* context is best-effort */ }
-    const member = msg.member;
-    const payload = {
-      content: (msg.content || '').slice(0, 1500),
-      matchedTerms, channelName: msg.channel?.name || 'unknown', replyingTo,
-      onWatchlist: !!(config.watchlistRoleId && member?.roles?.cache?.has(config.watchlistRoleId)),
-      isStaff: !!opspanel.memberTier(member),
-      joinedDaysAgo: member?.joinedTimestamp ? Math.round((Date.now() - member.joinedTimestamp) / 86400000) : null,
-    };
+    const { context, replyingTo } = await gatherContext(msg);
+    const payload = buildPayload(msg, matchedTerms, context, replyingTo);
     const verdict = await callJudge(scope, payload);
     if (!verdict) { logShadow({ ts: Date.now(), scope, ran: false, channel: payload.channelName, terms: matchedTerms, content: payload.content }); return { ran: false }; }
 
@@ -265,10 +273,86 @@ async function evaluate(scope, msg, matchedTerms) {
   }
 }
 
+// ---- LAB judge: primary verdict + proposed actions on OTHER context messages ---------------------
+// Prototype (feature 'smartWatchLab', private channel only): besides ruling on the flagged message, the
+// judge scans the read context and may propose strikes/corners on OTHER clearly-violating messages, so
+// admins can evaluate whether that richer read is trustworthy before it ever drives a real action.
+function parseActions(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const a of raw.slice(0, 6)) {
+    if (!a || typeof a !== 'object') continue;
+    const action = (a.action === 'strike' || a.action === 'corner') ? a.action : null;
+    if (!action) continue;
+    const quote = String(a.quote || '').replace(/\s+/g, ' ').slice(0, 300);
+    if (!quote) continue;                                 // an action with no quoted message is unusable
+    out.push({ who: String(a.who || '?').slice(0, 80), quote, action,
+      rule: Number.isInteger(a.rule) ? a.rule : 0, reason: String(a.reason || '').slice(0, 300) });
+  }
+  return out;
+}
+async function callLabJudge(scope, payload) {
+  const c = getClient();
+  if (!c) return null;
+  const rubric = SCOPE_RUBRIC[scope] || SCOPE_RUBRIC.loose;
+  const ctx = (payload.context || []).map(m => `${m.reply ? '↳ ' : ''}${m.who}: ${m.text}`).join('\n') || '(no prior context)';
+  const user = [
+    rubric, '',
+    `CHANNEL: #${payload.channelName}`,
+    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff} · joined ~${payload.joinedDaysAgo ?? '?'}d ago`,
+    `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
+    '', 'RECENT CONTEXT (older → newer; "↳" marks reply-chain messages):', ctx, '',
+    ...(payload.replyingTo ? [`NOTE: the flagged message is a REPLY to ${payload.replyingTo.who}: "${(payload.replyingTo.text || '').slice(0, 300)}"`, ''] : []),
+    '>>> FLAGGED MESSAGE (most recent, from AUTHOR above):',
+    payload.content || '(no text - attachment/embed only)',
+    '',
+    'FIRST: judge the FLAGGED MESSAGE as usual (the top-level fields).',
+    'THEN: scan the RECENT CONTEXT. If any OTHER message (from a non-staff member, named by username) is ITSELF a clear, standalone violation a mod should act on, add it to "actions". Be conservative: only clear violations — never ordinary talk, venting, jokes, quotes, or reclaimed language. Empty array if nothing else qualifies. "strike" = a real ladder violation; "corner" = a minor cool-off.',
+    '',
+    'Respond with ONLY this JSON (no fences):',
+    '{"surface":<bool>,"confidence":<0.0-1.0>,"severity":"none|low|medium|high","likelyRule":<0-11>,"category":"reclaimed|hostile|threat|distress|quote-report|joke-hyperbole|sexual|doxxing|child-safety|spam|non-english|unclear","reason":"<one sentence>",',
+    ' "actions":[{"who":"<username from context>","quote":"<short snippet of their offending message>","action":"strike|corner","rule":<1-11>,"reason":"<one sentence>"}]}',
+  ].join('\n');
+  const resp = await c.messages.create({ model: MODEL, max_tokens: 700, system: systemPrompt(), messages: [{ role: 'user', content: user }] });
+  const textBlock = (resp.content || []).find(b => b.type === 'text');
+  const raw = textBlock && textBlock.text;
+  const verdict = parseVerdict(raw);
+  let actions = [];
+  try {
+    const t = String(raw || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const s = t.indexOf('{'), e = t.lastIndexOf('}');
+    if (s >= 0 && e > s) actions = parseActions(JSON.parse(t.slice(s, e + 1)).actions);
+  } catch { /* actions are best-effort */ }
+  if (verdict && resp.usage) verdict._usage = { in: resp.usage.input_tokens, out: resp.usage.output_tokens };
+  return { verdict, actions };
+}
+// Lab entry point. Returns { ran, verdict, wouldSuppress, actions }. Fail-open like evaluate().
+async function evaluateLab(scope, msg, matchedTerms) {
+  try {
+    if (!available()) return { ran: false };
+    const { context, replyingTo } = await gatherContext(msg);
+    const payload = buildPayload(msg, matchedTerms, context, replyingTo);
+    const res = await callLabJudge(scope, payload);
+    const verdict = res && res.verdict;
+    if (!verdict) { logShadow({ ts: Date.now(), scope, ran: false, lab: true, channel: payload.channelName, terms: matchedTerms, content: payload.content }); return { ran: false }; }
+    const wouldSuppress = verdict.surface === false
+      && verdict.confidence >= (config.smartWatchSuppressThreshold || 0.85)
+      && !NEVER_SUPPRESS.has(verdict.category);
+    const actions = res.actions || [];
+    logShadow({ ts: Date.now(), scope, ran: true, lab: true, mode: 'lab', channel: payload.channelName,
+      author: msg.author?.id, onWatchlist: payload.onWatchlist, terms: matchedTerms,
+      content: payload.content, verdict, wouldSuppress, actions });
+    return { ran: true, verdict, wouldSuppress, actions };
+  } catch (e) {
+    console.error('[smartwatch] evaluateLab:', e.message);
+    return { ran: false };
+  }
+}
+
 // status line for logs / a future dashboard tile
 function status() {
   return { enabled: config.smartWatchLive !== undefined, sdk: !!Anthropic, key: !!API_KEY, live: !!config.smartWatchLive, model: MODEL };
 }
 
-module.exports = { evaluate, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge,
+module.exports = { evaluate, evaluateLab, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge, _labjudge: callLabJudge,
   loadExamples, addExample, exemplarBlock, labStats, verdictSurfaces, EXAMPLES_FILE, VERDICT_META };
