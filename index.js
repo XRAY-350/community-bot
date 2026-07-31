@@ -1248,12 +1248,15 @@ function strikeReasonModal(memberId, channelId, messageId, ruleN, prefillNote) {
     .setTitle(ruleTitle ? `Strike — Rule ${ruleN}: ${ruleTitle}`.slice(0, 45) : 'Strike — reason + weight');
   // Required only when no rule was picked (rule OR reason, not both) — the strike_rule_pick select
   // beforehand already covers the "gave a rule" half of that requirement.
+  // Discord caps a TextInput label at 45 chars — anything longer makes showModal throw "Invalid string
+  // length", which (thrown from a select handler) leaves the interaction unacked → "didn't respond in
+  // time". Keep labels short AND slice(0,45) as a hard backstop so no label can ever overflow again.
   const reasonInput = new TextInputBuilder().setCustomId('reason')
-    .setLabel(ruleN ? 'Reason (optional — rule already picked)' : 'Reason — posted publicly, no DMs')
+    .setLabel((ruleN ? 'Reason (optional — rule already picked)' : 'Reason — posted publicly, no DMs').slice(0, 45))
     .setStyle(TextInputStyle.Short).setRequired(!ruleN).setMaxLength(300);
   if (prefillNote) reasonInput.setValue(prefillNote.slice(0, 300));
   const weightInput = new TextInputBuilder().setCustomId('weight')
-    .setLabel(ruleWeight ? `Weight (Rule ${ruleN}’s decided weight — change if needed)` : 'Weight: 1 (minor) / 2 (moderate) / 3 (severe)')
+    .setLabel((ruleWeight ? `Weight — Rule ${ruleN} default (edit if needed)` : 'Weight: 1 minor / 2 moderate / 3 severe').slice(0, 45))
     .setStyle(TextInputStyle.Short).setRequired(!ruleWeight).setValue(String(ruleWeight || 1)).setMaxLength(1);
   m.addComponents(new ActionRowBuilder().addComponents(reasonInput), new ActionRowBuilder().addComponents(weightInput));
   return m;
