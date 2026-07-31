@@ -70,6 +70,9 @@ function systemPrompt(scope) {
     '  MDNI space; debates/arguments belong only in discussion channels (Rule 9). You are told the channel.',
     '- Judge direction: aimed AT someone as an attack/threat, vs. reclaimed use, a joke, a quote, someone',
     '  REPORTING another\'s message, or hyperbole. Weigh who is speaking and at whom.',
+    '- Account tenure is NOT a signal: a recent join or "new" member is NOT evidence of bad intent — this',
+    '  community grows in waves, so most members may be new. Judge the message and its intent, never how',
+    '  new or old the account is.',
     '- LANGUAGE: this is a multilingual space, but the watched terms are ENGLISH. If the flagged message is',
     '  NOT in English (French, Spanish, an African language, etc.), an English-keyword match on it is almost',
     '  always a coincidental false positive - set surface:false, category "non-english" (the non-English',
@@ -136,7 +139,7 @@ async function callJudge(scope, payload) {
   const user = [
     rubric, '',
     `CHANNEL: #${payload.channelName}`,
-    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff} · joined ~${payload.joinedDaysAgo ?? '?'}d ago`,
+    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff}`,
     `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
     '', 'RECENT CONTEXT (older → newer; "↳" marks messages in the reply chain the flagged message is answering):', ctx, '',
     ...(payload.replyingTo ? [`NOTE: the flagged message is a REPLY to ${payload.replyingTo.who}: "${(payload.replyingTo.text || '').slice(0, 300)}"`, ''] : []),
@@ -245,7 +248,6 @@ function buildPayload(msg, matchedTerms, context, replyingTo) {
     matchedTerms, channelName: msg.channel?.name || 'unknown', replyingTo, context,
     onWatchlist: !!(config.watchlistRoleId && member?.roles?.cache?.has(config.watchlistRoleId)),
     isStaff: !!opspanel.memberTier(member),
-    joinedDaysAgo: member?.joinedTimestamp ? Math.round((Date.now() - member.joinedTimestamp) / 86400000) : null,
   };
 }
 
@@ -310,7 +312,7 @@ async function callLabJudge(scope, payload) {
   const user = [
     rubric, '',
     `CHANNEL: #${payload.channelName}`,
-    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff} · joined ~${payload.joinedDaysAgo ?? '?'}d ago`,
+    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff}`,
     `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
     '', 'RECENT CONTEXT (older → newer; "↳" marks reply-chain messages):', ctx, '',
     ...(payload.replyingTo ? [`NOTE: the flagged message is a REPLY to ${payload.replyingTo.who}: "${(payload.replyingTo.text || '').slice(0, 300)}"`, ''] : []),
