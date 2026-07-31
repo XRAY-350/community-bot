@@ -6,6 +6,7 @@ const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const config = require('./config');
 const strikes = require('./strikes');
+const ownerlog = require('./ownerlog');
 
 const CONFIG_FILE = process.env.FUBU_STRIKE_APPEALS_FILE || '/home/ubuntu/.fubu_strike_appeals.json';
 const STATE_FILE = process.env.FUBU_STRIKE_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_strike_appeals_state.json';
@@ -25,7 +26,7 @@ async function setup(guild) {
   let c = loadConfig();
   if (c.channelId) { const ex = await guild.channels.fetch(c.channelId).catch(() => null); if (ex) return { channel: ex, created: false }; }
   const channel = await guild.channels.create({
-    name: '⚖️┆sᴛʀɪᴋᴇ-ᴀᴘᴘᴇᴀʟs', type: ChannelType.GuildText,
+    name: '⚖️┆sᴛʀɪᴋᴇ-ᴀᴘᴘᴇᴀʟs', type: ChannelType.GuildText, parent: config.appealsCategoryId || undefined,
     topic: 'Appeal one of your own strikes: /appeal strike <strike>. Opens a private thread only you + staff can see.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
@@ -57,15 +58,18 @@ async function submit(guild, member, state, strikeId, note) {
   const c = loadConfig();
   if (!c.channelId) return { ok: false, msg: 'Strike appeals aren’t set up yet — an admin needs to run `/appeal-strike-setup`.' };
   const entry = strikes.ledger(state, member.id).find(e => e.id === strikeId);
-  if (!entry || !entry.active) return { ok: false, msg: 'I couldn’t find an active strike with that ID on your record — it may already be removed, or the ID’s wrong. Use the autocomplete list instead of typing it by hand.' };
+  if (!entry || !entry.active) return { ok: false, msg: 'I couldn’t find an active strike with that ID on your record. It may already be removed, or the ID’s wrong. Use the autocomplete list instead of typing it by hand.' };
   if (entry.crossedBan) return { ok: false, msg: 'That’s the strike that crossed the ban threshold — it isn’t appealable here. If you were banned over it, use `/appeal ban` instead (a friend still in the server has to open that one for you).' };
 
   const st = loadState();
   const openExisting = Object.values(st.appeals).find(a => a.memberId === member.id && a.status === 'open');
   if (openExisting) return { ok: false, msg: `You already have an open strike appeal → <#${openExisting.threadId}>. Wait for staff to decide that one first.` };
-  const deniedBefore = Object.values(st.appeals).find(a => a.strikeId === strikeId && a.status === 'denied');
-  if (deniedBefore) {
-    const readyAt = deniedBefore.deniedAt + (config.strikeAppealCooldownDays || 7) * 86400000;
+  // Cooldown after a denial — must key off the MOST-RECENT denial. A plain .find() returns the oldest
+  // record, so after a 2nd denial the stale (long-past) deniedAt would make the cooldown look expired and
+  // let the same strike be re-appealed on repeat. Take the max deniedAt across all denials of this strike.
+  const deniedAts = Object.values(st.appeals).filter(a => a.strikeId === strikeId && a.status === 'denied').map(a => a.deniedAt || 0);
+  if (deniedAts.length) {
+    const readyAt = Math.max(...deniedAts) + (config.strikeAppealCooldownDays || 7) * 86400000;
     if (Date.now() < readyAt) return { ok: false, msg: `That strike’s appeal was already denied — you can try again <t:${Math.floor(readyAt / 1000)}:R>.` };
   }
 
@@ -85,6 +89,8 @@ async function submit(guild, member, state, strikeId, note) {
   });
   rec.starterId = msg.id;
   st.appeals[thread.id] = rec; saveState(st);
+  await notifyNew(guild, member.id, thread.id).catch(() => {});
+  await ensureBoard(guild).catch(() => {});
   return { ok: true, threadId: thread.id };
 }
 
@@ -119,7 +125,37 @@ async function handleButton(interaction, state) {
     await thread.setLocked(true).catch(() => {});
     await thread.setArchived(true).catch(() => {});
   }
+  await ensureBoard(guild).catch(() => {});
+  await ownerlog.log(guild, { emoji: approve ? '✅' : '⛔', title: `Strike appeal ${approve ? 'approved (strike removed)' : 'denied'}`, color: approve ? 0x57F287 : 0xED4245,
+    detail: `<@${rec.memberId}> — strike \`${rec.strikeId}\` — by <@${interaction.user.id}>.` });
   return interaction.followUp({ content: approve ? '✅ Strike removed and appeal closed.' : '⛔ Appeal denied and closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
-module.exports = { setup, submit, handleButton, isConfigured, loadConfig };
+// Public "open strike appeals" board — pinned in the (member-visible) base channel: WHO has an open
+// appeal + a link. The appeal content stays in the private thread. Strikes are already announced publicly,
+// so naming who's appealing exposes nothing new.
+async function ensureBoard(guild) {
+  const c = loadConfig();
+  if (!c.channelId) return;
+  const ch = await guild.channels.fetch(c.channelId).catch(() => null);
+  if (!ch) return;
+  const open = Object.values(loadState().appeals).filter(a => a.status === 'open');
+  const lines = open.length
+    ? open.map(a => `• <@${a.memberId}> — appealing a strike → <#${a.threadId}>`).join('\n').slice(0, 4000)
+    : '_No open strike appeals right now._';
+  const embed = new EmbedBuilder().setColor(0x5865F2).setTitle(`📋 Open strike appeals (${open.length})`)
+    .setDescription(lines).setFooter({ text: 'Appeal your own strike: /appeal strike' });
+  const existing = c.boardId ? await ch.messages.fetch(c.boardId).catch(() => null) : null;
+  if (existing) return void existing.edit({ embeds: [embed] }).catch(() => {});
+  const m = await ch.send({ embeds: [embed] }).catch(() => null);
+  if (m) { await m.pin().catch(() => {}); c.boardId = m.id; saveConfig(c); }
+}
+async function notifyNew(guild, memberId, threadId) {
+  const c = loadConfig();
+  const ch = c.channelId && await guild.channels.fetch(c.channelId).catch(() => null);
+  if (!ch) return;
+  await ch.send({ content: `${config.modRoleId ? `<@&${config.modRoleId}> ` : ''}⚖️ new **strike appeal** from <@${memberId}> → <#${threadId}>`,
+    allowedMentions: { roles: config.modRoleId ? [config.modRoleId] : [], users: [] } }).catch(() => {});
+}
+
+module.exports = { setup, submit, handleButton, isConfigured, loadConfig, ensureBoard };

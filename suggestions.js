@@ -13,7 +13,7 @@ const watchlist = require('./watchlist');
 const CONFIG_FILE = process.env.FUBU_SUGGESTIONS_FILE || '/home/ubuntu/.fubu_suggestions.json';
 const STATE_FILE = process.env.FUBU_SUGGESTIONS_STATE_FILE || '/home/ubuntu/.fubu_suggestions_state.json';
 const COOLDOWN_MS = 10 * 60 * 1000;   // 10 min between suggestions per member
-const MAX_OPEN = 1;                    // open suggestions a member may hold at once
+const MAX_OPEN = 3;                    // open suggestions a member may hold at once
 const MIN_LEN = 5, MAX_LEN = 500;
 
 const P = PermissionsBitField.Flags;
@@ -64,16 +64,18 @@ async function setup(guild, config) {
 }
 
 // ---- vote button rows -------------------------------------------------------------------------------
-function voteRow(threadId, up, down, resolved) {
+// customIds are STATIC (no thread id baked in) — a button lives on the post's starter message, so at
+// click time interaction.channelId IS the thread id. That avoids the create-then-edit race.
+function voteRow(up, down, resolved) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`sug_up:${threadId}`).setEmoji('⬆️').setLabel(String(up)).setStyle(ButtonStyle.Success).setDisabled(!!resolved),
-    new ButtonBuilder().setCustomId(`sug_down:${threadId}`).setEmoji('⬇️').setLabel(String(down)).setStyle(ButtonStyle.Danger).setDisabled(!!resolved),
+    new ButtonBuilder().setCustomId('sug_up').setEmoji('⬆️').setLabel(String(up)).setStyle(ButtonStyle.Success).setDisabled(!!resolved),
+    new ButtonBuilder().setCustomId('sug_down').setEmoji('⬇️').setLabel(String(down)).setStyle(ButtonStyle.Danger).setDisabled(!!resolved),
   );
 }
-function staffRow(threadId, resolved) {
+function staffRow(resolved) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`sug_ok:${threadId}`).setEmoji('✅').setLabel('Approve').setStyle(ButtonStyle.Secondary).setDisabled(!!resolved),
-    new ButtonBuilder().setCustomId(`sug_no:${threadId}`).setEmoji('❌').setLabel('Deny').setStyle(ButtonStyle.Secondary).setDisabled(!!resolved),
+    new ButtonBuilder().setCustomId('sug_ok').setEmoji('✅').setLabel('Approve').setStyle(ButtonStyle.Secondary).setDisabled(!!resolved),
+    new ButtonBuilder().setCustomId('sug_no').setEmoji('❌').setLabel('Deny').setStyle(ButtonStyle.Secondary).setDisabled(!!resolved),
   );
 }
 function postEmbed(num, text, authorId, { up = 0, down = 0, resolution } = {}) {
@@ -100,7 +102,6 @@ async function submit(guild, member, text) {
 
   const state = loadState();
   const last = state.cooldown[member.id] || 0;
-  const nowSlot = Object.values(state.posts).length; // not time; time via Date is unavailable in workflows but fine here
   const waitLeft = COOLDOWN_MS - (Date.now() - last);
   if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
   if (openCountFor(state, member.id) >= MAX_OPEN) return { ok: false, msg: `You already have an open suggestion. Wait for staff to resolve it before posting another (keeps the forum tidy).` };
@@ -111,14 +112,10 @@ async function submit(guild, member, text) {
   const title = `#${num} · ${text}`.slice(0, 95);
   const thread = await forum.threads.create({
     name: title,
-    message: { embeds: [postEmbed(num, text, member.id)] },
+    message: { embeds: [postEmbed(num, text, member.id)], components: [voteRow(0, 0), staffRow()] },
     appliedTags: c.tags.pending ? [c.tags.pending] : [],
     reason: `Suggestion by ${member.user.tag}`,
   });
-  // attach the vote/staff buttons to the starter message
-  const starter = await thread.fetchStarterMessage().catch(() => null);
-  if (starter) await starter.edit({ embeds: [postEmbed(num, text, member.id)], components: [voteRow(thread.id, 0, 0), staffRow(thread.id)] }).catch(() => {});
-
   state.counter = num;
   state.posts[thread.id] = { num, authorId: member.id, status: 'open', up: [], down: [], text };
   state.cooldown[member.id] = Date.now();
@@ -128,11 +125,11 @@ async function submit(guild, member, text) {
 
 // ---- voting -----------------------------------------------------------------------------------------
 async function vote(interaction, dir) {
-  const threadId = interaction.customId.split(':')[1];
+  const threadId = interaction.channelId;
   const state = loadState();
   const post = state.posts[threadId];
   if (!post) return interaction.reply({ content: 'This suggestion is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (post.status !== 'open') return interaction.reply({ content: 'Voting is closed on a resolved suggestion.', flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open' && post.status !== 'approved') return interaction.reply({ content: 'Voting is closed on this suggestion.', flags: MessageFlags.Ephemeral });
   const uid = interaction.user.id;
   const up = new Set(post.up), down = new Set(post.down);
   if (dir === 'up') { if (up.has(uid)) up.delete(uid); else { up.add(uid); down.delete(uid); } }
@@ -140,12 +137,12 @@ async function vote(interaction, dir) {
   post.up = [...up]; post.down = [...down];
   saveState(state);
   const emb = postEmbed(post.num, post.text, post.authorId, { up: up.size, down: down.size });
-  return interaction.update({ embeds: [emb], components: [voteRow(threadId, up.size, down.size), staffRow(threadId)] });
+  return interaction.update({ embeds: [emb], components: [voteRow(up.size, down.size), staffRow()] });
 }
 
 // ---- staff resolve (approve/deny) -------------------------------------------------------------------
 async function resolve(interaction, approve, config) {
-  const threadId = interaction.customId.split(':')[1];
+  const threadId = interaction.channelId;
   const state = loadState();
   const post = state.posts[threadId];
   if (!post) return interaction.reply({ content: 'This suggestion is no longer tracked.', flags: MessageFlags.Ephemeral });
@@ -155,22 +152,22 @@ async function resolve(interaction, approve, config) {
   saveState(state);
   const emb = postEmbed(post.num, post.text, post.authorId, { up: post.up.length, down: post.down.length, resolution: post.status });
   emb.addFields({ name: approve ? 'Approved by' : 'Denied by', value: `<@${interaction.user.id}>`, inline: true });
-  await interaction.update({ embeds: [emb], components: [voteRow(threadId, post.up.length, post.down.length, true), staffRow(threadId, true)] });
+  // Approved suggestions stay OPEN + VISIBLE so members keep voting; only DENIED ones get closed.
+  await interaction.update({ embeds: [emb], components: [voteRow(post.up.length, post.down.length, !approve), staffRow(true)] });
   const thread = await interaction.guild.channels.fetch(threadId).catch(() => null);
   if (thread) {
     const tagId = approve ? c.tags.approved : c.tags.denied;
     await thread.setAppliedTags(tagId ? [tagId] : []).catch(() => {});
-    await thread.setLocked(true).catch(() => {});
-    await thread.setArchived(true).catch(() => {});
+    if (!approve) { await thread.setLocked(true).catch(() => {}); await thread.setArchived(true).catch(() => {}); }
   }
 }
 
 async function handleButton(interaction, config) {
   const id = interaction.customId;
-  if (id.startsWith('sug_up:')) return vote(interaction, 'up');
-  if (id.startsWith('sug_down:')) return vote(interaction, 'down');
-  if (id.startsWith('sug_ok:')) return resolve(interaction, true, config);
-  if (id.startsWith('sug_no:')) return resolve(interaction, false, config);
+  if (id === 'sug_up') return vote(interaction, 'up');
+  if (id === 'sug_down') return vote(interaction, 'down');
+  if (id === 'sug_ok') return resolve(interaction, true, config);
+  if (id === 'sug_no') return resolve(interaction, false, config);
 }
 
 module.exports = { setup, submit, handleButton, isConfigured, loadConfig, CONFIG_FILE, STATE_FILE };

@@ -50,29 +50,34 @@ async function setup(guild, config) {
   return { channel, created: true };
 }
 
-const btns = (userId, roleId, done, byId, ok) => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId(`rolereq_ok:${userId}:${roleId}`).setEmoji('✅').setLabel(done ? (ok ? 'Granted' : 'Approve') : 'Approve').setStyle(ButtonStyle.Success).setDisabled(!!done),
-  new ButtonBuilder().setCustomId(`rolereq_no:${userId}:${roleId}`).setEmoji('❌').setLabel(done ? (!ok ? 'Denied' : 'Deny') : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done));
+// customId carries the action (add|remove) so handleButton knows which direction to apply on approval.
+const btns = (userId, roleId, act, done, byId, ok) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId(`rolereq_ok:${userId}:${roleId}:${act}`).setEmoji('✅').setLabel(done ? (ok ? (act === 'remove' ? 'Removed' : 'Granted') : 'Approve') : 'Approve').setStyle(ButtonStyle.Success).setDisabled(!!done),
+  new ButtonBuilder().setCustomId(`rolereq_no:${userId}:${roleId}:${act}`).setEmoji('❌').setLabel(done ? (!ok ? 'Denied' : 'Deny') : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done));
 
-async function submit(guild, member, role, config) {
+// removing=true: request that a role you HOLD be taken away (self-service opt-out), instead of the
+// default request-to-be-granted. Same safety net (whyNotRequestable) and same staff approve/deny channel.
+async function submit(guild, member, role, config, removing = false) {
   const c = loadConfig();
   if (!c.channelId) return { ok: false, msg: 'Role requests aren’t set up yet — an admin needs to run `/request-role-setup`.' };
   const me = await guild.members.fetchMe();
   const why = whyNotRequestable(role, guild, me, config);
   if (why) return { ok: false, msg: `You can’t request that role — ${why}.` };
-  if (member.roles.cache.has(role.id)) return { ok: false, msg: 'You already have that role.' };
+  if (removing && !member.roles.cache.has(role.id)) return { ok: false, msg: 'You don’t have that role, so there’s nothing to remove.' };
+  if (!removing && member.roles.cache.has(role.id)) return { ok: false, msg: 'You already have that role.' };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   if (!channel) return { ok: false, msg: 'The role-requests channel is missing — an admin needs to run `/request-role-setup` again.' };
-  const embed = new EmbedBuilder().setColor(role.color || 0x5865F2).setTitle('🎭 Role request')
-    .setDescription(`<@${member.id}> is requesting the <@&${role.id}> role.`)
-    .setFooter({ text: 'Any mod+ can approve (assigns it) or deny.' }).setTimestamp(new Date());
-  await channel.send({ embeds: [embed], components: [btns(member.id, role.id)], allowedMentions: { parse: [] } });
+  const embed = new EmbedBuilder().setColor(role.color || 0x5865F2).setTitle(removing ? '🎭 Role removal request' : '🎭 Role request')
+    .setDescription(`<@${member.id}> is requesting to ${removing ? 'GIVE UP' : 'be given'} the <@&${role.id}> role.`)
+    .setFooter({ text: `Any mod+ can approve (${removing ? 'removes it' : 'assigns it'}) or deny.` }).setTimestamp(new Date());
+  await channel.send({ embeds: [embed], components: [btns(member.id, role.id, removing ? 'remove' : 'add')], allowedMentions: { parse: [] } });
   return { ok: true, role: role.name };
 }
 
 // Approve/deny — gated to staff (mods+) in index.js.
 async function handleButton(interaction) {
-  const [action, userId, roleId] = interaction.customId.split(':');
+  const [action, userId, roleId, act] = interaction.customId.split(':');
+  const removing = act === 'remove';
   const approve = action === 'rolereq_ok';
   const keep = interaction.message.embeds;
   const member = await interaction.guild.members.fetch(userId).catch(() => null);
@@ -80,13 +85,14 @@ async function handleButton(interaction) {
   if (approve) {
     if (!member) return interaction.reply({ content: 'That member isn’t in the server anymore.', flags: MessageFlags.Ephemeral });
     if (!role) return interaction.reply({ content: 'That role no longer exists.', flags: MessageFlags.Ephemeral });
-    const ok = await member.roles.add(roleId, `Role request approved by ${interaction.user.tag}`).then(() => true).catch(() => false);
-    if (!ok) return interaction.reply({ content: 'Couldn’t assign it (is it above my role?).', flags: MessageFlags.Ephemeral });
-    await member.send(`✅ Your request for the **${role.name}** role was approved!`).catch(() => {});
-    return interaction.update({ content: `✅ <@${userId}> was given **${role.name}** by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, true, interaction.user.id, true)], allowedMentions: { parse: [] } });
+    const verb = removing ? 'remove' : 'add';
+    const ok = await member.roles[verb](roleId, `Role ${removing ? 'removal' : 'request'} approved by ${interaction.user.tag}`).then(() => true).catch(() => false);
+    if (!ok) return interaction.reply({ content: `Couldn’t ${removing ? 'remove' : 'assign'} it (is it above my role?).`, flags: MessageFlags.Ephemeral });
+    await member.send(removing ? `✅ Your request to give up the **${role.name}** role was approved.` : `✅ Your request for the **${role.name}** role was approved!`).catch(() => {});
+    return interaction.update({ content: `✅ <@${userId}> ${removing ? 'had **' + role.name + '** removed' : 'was given **' + role.name + '**'} by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, act, true, interaction.user.id, true)], allowedMentions: { parse: [] } });
   }
-  if (member) await member.send(`Your request for the **${role ? role.name : 'requested'}** role was denied.`).catch(() => {});
-  return interaction.update({ content: `❌ <@${userId}>'s request for **${role ? role.name : 'the role'}** was denied by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, true, interaction.user.id, false)], allowedMentions: { parse: [] } });
+  if (member) await member.send(`Your request to ${removing ? 'give up' : 'get'} the **${role ? role.name : 'requested'}** role was denied.`).catch(() => {});
+  return interaction.update({ content: `❌ <@${userId}>'s request to ${removing ? 'give up' : 'get'} **${role ? role.name : 'the role'}** was denied by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, act, true, interaction.user.id, false)], allowedMentions: { parse: [] } });
 }
 
 module.exports = { setup, submit, handleButton, isConfigured, loadConfig, whyNotRequestable };

@@ -9,6 +9,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ChannelType } = require('discord.js');
 const watchlist = require('./watchlist');
+const opspanel = require('./opspanel');   // memberTier() - the canonical staff-tier check
 
 const IGNORE_FILE = process.env.FUBU_SUGGEST_IGNORE_FILE || '/home/ubuntu/.fubu_watchlist_suggest_ignore.json';
 const US = '␟'; // unit separator for customId/select-value encoding (never appears in a term)
@@ -61,7 +62,7 @@ function covered(term, existing) { return watchlist.matchTerms(term, existing).l
 
 async function drain(ch, cutoff, rows) {
   let before;
-  for (let page = 0; page < 6; page++) { // cap 600 msgs/channel — recommender, not an archive
+  for (let page = 0; page < 6; page++) { // cap 600 msgs/channel - recommender, not an archive
     let batch; try { batch = await ch.messages.fetch({ limit: 100, before }); } catch { return; }
     if (!batch || batch.size === 0) return;
     let old = false;
@@ -86,12 +87,9 @@ async function scan(guild, config, hours) {
     if (staffChannels.has(ch.id)) continue;
     await drain(ch, cutoff, rows);
   }
-  // skip staff authors (their casual language shouldn't seed the watchlist)
-  const isStaff = (m) => {
-    const r = m.member?.roles?.cache;
-    return !!(r && ((config.modRoleId && r.has(config.modRoleId)) ||
-      (config.strikeRoleIds || []).some(() => false))); // memberTier handled below via role check
-  };
+  // skip staff authors (their casual language shouldn't seed the watchlist) — memberTier is truthy for
+  // mod/admin/owner. m.member is populated for cached members; uncached falls through as non-staff.
+  const isStaff = (m) => !!(m.member && opspanel.memberTier(m.member));
   const msgs = rows.filter(m => m.content && !isStaff(m));
 
   const existing = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose(), ...watchlist.loadWelfare()])];

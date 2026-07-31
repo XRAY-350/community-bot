@@ -1,6 +1,6 @@
 // modmail.js — anon pipe: /modmail. An anonymous line to the mod team. The message lands in a mod-only
 // inbox (staff read + act); WHO sent it is sealed and revealable only to owners (per the locked model:
-// modmail → author visible to owners / the Big 5), via a button. Intake v1 (member → staff); a staff
+// modmail → author visible to owners), via a button. Intake v1 (member → staff); a staff
 // reply-relay can be layered on later. Mirrors the confessions/reports pattern.
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
@@ -8,7 +8,7 @@ const watchlist = require('./watchlist');
 
 const CONFIG_FILE = process.env.FUBU_MODMAIL_FILE || '/home/ubuntu/.fubu_modmail.json';
 const STATE_FILE = process.env.FUBU_MODMAIL_STATE_FILE || '/home/ubuntu/.fubu_modmail_state.json';
-const COOLDOWN_MS = 5 * 60 * 1000;
+const COOLDOWN_MS = 30 * 60 * 1000, DAILY_MAX = 6;
 const MIN_LEN = 5, MAX_LEN = 1000;
 const P = PermissionsBitField.Flags;
 
@@ -56,11 +56,15 @@ async function submit(guild, member, text) {
   const state = loadState();
   const last = state.cooldown[member.id] || 0, waitLeft = COOLDOWN_MS - (Date.now() - last);
   if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  const day = new Date().toISOString().slice(0, 10);
+  const dc = (state.daily || {})[member.id];
+  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   if (!channel) return { ok: false, msg: 'The modmail inbox is missing — an admin needs to run `/modmail-setup` again.' };
   const num = (state.counter || 0) + 1;
   const msg = await channel.send({ embeds: [mailEmbed(num, text)], components: [revealRow(false)] });
   state.counter = num; state.cooldown[member.id] = Date.now();
+  state.daily = state.daily || {}; state.daily[member.id] = (dc && dc.day === day) ? { day, n: dc.n + 1 } : { day, n: 1 };
   state.posts[msg.id] = { num, senderId: member.id };
   saveState(state);
   return { ok: true, num };

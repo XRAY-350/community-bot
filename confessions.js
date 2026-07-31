@@ -12,7 +12,7 @@ const watchlist = require('./watchlist');
 
 const CONFIG_FILE = process.env.FUBU_CONFESSIONS_FILE || '/home/ubuntu/.fubu_confessions.json';
 const STATE_FILE = process.env.FUBU_CONFESSIONS_STATE_FILE || '/home/ubuntu/.fubu_confessions_state.json';
-const COOLDOWN_MS = 5 * 60 * 1000;   // 5 min between confessions per member
+const COOLDOWN_MS = 3 * 60 * 1000, DAILY_MAX = 20;
 const MIN_LEN = 5, MAX_LEN = 1000;
 const P = PermissionsBitField.Flags;
 
@@ -85,6 +85,9 @@ async function submit(guild, member, text) {
   const last = state.cooldown[member.id] || 0;
   const waitLeft = COOLDOWN_MS - (Date.now() - last);
   if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  const day = new Date().toISOString().slice(0, 10);
+  const dc = (state.daily || {})[member.id];
+  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
 
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   const logChannel = c.logChannelId ? await guild.channels.fetch(c.logChannelId).catch(() => null) : null;
@@ -99,6 +102,7 @@ async function submit(guild, member, text) {
   }
   state.counter = num;
   state.cooldown[member.id] = Date.now();
+  state.daily = state.daily || {}; state.daily[member.id] = (dc && dc.day === day) ? { day, n: dc.n + 1 } : { day, n: 1 };
   // key by log message id (that's where the delete button lives); keep the public id to remove it too
   state.posts[logId || pub.id] = { num, authorId: member.id, publicId: pub.id, deleted: false };
   saveState(state);

@@ -4,11 +4,25 @@
 // Staff review the thread and Approve (unbans them) or Deny — nothing hits anyone's DMs.
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
+const { CATEGORY_LABEL } = require('./opspanel');
+const config = require('./config');
+const ownerlog = require('./ownerlog');
 
 const CONFIG_FILE = process.env.FUBU_APPEALS_FILE || '/home/ubuntu/.fubu_appeals.json';
 const STATE_FILE = process.env.FUBU_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_appeals_state.json';
 const P = PermissionsBitField.Flags;
 const MAX_FRIENDS = 5;
+
+// "More limited" ban appeals (owner-confirmed): the 4 instant-ban categories are non-negotiable and
+// never appealable here. Only reliable for bans issued THROUGH the bot's own categorized flows (the
+// dashboard Ban modal / strike-threshold confirm) — those write one of these exact labels into the
+// ban's reason. A native/other-tool ban won't carry it; instead of guessing, such a ban is ALLOWED to
+// proceed but flagged in the thread for staff to check manually (see submit()).
+const RESTRICTED_CATEGORIES = [CATEGORY_LABEL.false_verification, CATEGORY_LABEL.verification_bypass, CATEGORY_LABEL.ban_evasion, CATEGORY_LABEL.grooming];
+function instantBanCategory(reason) {
+  if (!reason) return null;
+  return RESTRICTED_CATEGORIES.find(label => reason.startsWith(label)) || null;
+}
 
 function _load(f, d) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } }
 function _save(f, o) { try { fs.writeFileSync(f, JSON.stringify(o)); } catch (e) { console.error('[appeals] save:', e.message); } }
@@ -25,7 +39,7 @@ async function setup(guild, config) {
   let c = loadConfig();
   if (c.channelId) { const ex = await guild.channels.fetch(c.channelId).catch(() => null); if (ex) return { channel: ex, created: false }; }
   const channel = await guild.channels.create({
-    name: '⚖️┆ʙᴀɴ-ᴀᴘᴘᴇᴀʟs', type: ChannelType.GuildText,
+    name: '⚖️┆ʙᴀɴ-ᴀᴘᴘᴇᴀʟs', type: ChannelType.GuildText, parent: config.appealsCategoryId || undefined,
     topic: 'Appeal a ban on a friend’s behalf: /appeal <their @username>. Opens a private thread only you + staff can see.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
@@ -48,6 +62,7 @@ function appealEmbed(rec, resolution, byId) {
       { name: 'Opened by', value: `<@${rec.openedBy}>`, inline: true },
       { name: 'Supporters', value: `${rec.friends.length}/${MAX_FRIENDS}`, inline: true });
   if (rec.banReason) e.addFields({ name: 'Original ban reason', value: String(rec.banReason).slice(0, 1024), inline: false });
+  if (rec.originAmbiguous) e.addFields({ name: '⚠️ Heads up', value: 'This ban’s reason doesn’t match one of the bot’s known categories, so its origin (threshold strike vs. something else) couldn’t be auto-verified. Check manually before deciding.', inline: false });
   if (resolution) e.addFields({ name: resolution === 'approved' ? '✅ Approved by' : '⛔ Denied by', value: `<@${byId}>`, inline: true });
   e.setFooter({ text: 'Friends make the case in this thread. Staff decide — Approve unbans them.' });
   return e;
@@ -68,7 +83,9 @@ async function submit(guild, member, username, note) {
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   if (!channel) return { ok: false, msg: 'The ban-appeals channel is missing — an admin needs to run `/appeal-setup` again.' };
   const ban = await findBan(guild, username);
-  if (!ban) return { ok: false, msg: `I couldn’t find a **banned** user with the username \`${username.replace(/^@/, '')}\`. Double-check the spelling (it’s their @username) — if they aren’t banned, there’s nothing to appeal.` };
+  if (!ban) return { ok: false, msg: `I couldn’t find a **banned** user with the username \`${username.replace(/^@/, '')}\`. Double-check the spelling (it’s their @username). If they aren’t banned, there’s nothing to appeal.` };
+  const category = instantBanCategory(ban.reason);
+  if (category) return { ok: false, msg: `This ban was for **${category}** — that’s one of the 4 categories that aren’t eligible for a friend-appeal. If you believe this was made in error, reach out to staff directly instead.` };
   const bannedId = ban.user.id;
 
   const state = loadState();
@@ -85,6 +102,7 @@ async function submit(guild, member, username, note) {
     await thread.members.add(member.id).catch(() => {});
     await thread.send({ content: `🤝 <@${member.id}> joined to support this appeal.${note ? `\n> ${note.slice(0, 500)}` : ''}`, allowedMentions: { users: [member.id] } }).catch(() => {});
     await refreshStarter(guild, existing);
+    await ensureBoard(guild).catch(() => {});
     return { ok: true, joined: true, threadId: existing.threadId, name: ban.user.username };
   }
   if (existing && existing.status !== 'open')
@@ -94,7 +112,8 @@ async function submit(guild, member, username, note) {
 
   // brand-new appeal
   const rec = { bannedId, bannedTag: ban.user.tag || ban.user.username, openedBy: member.id, friends: [member.id],
-    status: 'open', banReason: ban.reason || '', note: note || '' };
+    status: 'open', banReason: ban.reason || '', note: note || '',
+    originAmbiguous: !Object.values(CATEGORY_LABEL).some(label => (ban.reason || '').startsWith(label)) };
   const thread = await channel.threads.create({
     name: `Appeal · ${ban.user.username}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,
     reason: `Ban appeal for ${ban.user.tag || ban.user.username} opened by ${member.user.tag}`,
@@ -107,6 +126,8 @@ async function submit(guild, member, username, note) {
   });
   rec.starterId = msg.id;
   state.appeals[thread.id] = rec; saveState(state);
+  await notifyNew(guild, ban, thread.id).catch(() => {});
+  await ensureBoard(guild).catch(() => {});
   return { ok: true, joined: false, threadId: thread.id, name: ban.user.username };
 }
 
@@ -142,7 +163,38 @@ async function handleButton(interaction) {
     await thread.setLocked(true).catch(() => {});
     await thread.setArchived(true).catch(() => {});
   }
+  await ensureBoard(interaction.guild).catch(() => {});
+  await ownerlog.log(interaction.guild, { emoji: approve ? '✅' : '⛔', title: `Ban appeal ${approve ? 'approved (unbanned)' : 'denied'}`, color: approve ? 0x57F287 : 0xED4245,
+    detail: `**${rec.bannedTag}** — by <@${interaction.user.id}>.` });
   return interaction.followUp({ content: approve ? `✅ Unbanned <@${rec.bannedId}> and closed the appeal.` : '⛔ Appeal denied and closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
-module.exports = { setup, submit, handleButton, isConfigured, loadConfig };
+// Public "open appeals" board — a pinned message in the (member-visible) base channel listing WHO has an
+// open appeal + a link. The appeal CONTENT stays private in each thread (members see the board but can't
+// open the threads). Bans are already announced publicly, so naming who's appealing exposes nothing new.
+async function ensureBoard(guild) {
+  const c = loadConfig();
+  if (!c.channelId) return;
+  const ch = await guild.channels.fetch(c.channelId).catch(() => null);
+  if (!ch) return;
+  const open = Object.values(loadState().appeals).filter(a => a.status === 'open');
+  const lines = open.length
+    ? open.map(a => `• For **${a.bannedTag}** — opened by <@${a.openedBy}> · ${a.friends.length} supporter(s) → <#${a.threadId}>`).join('\n').slice(0, 4000)
+    : '_No open ban appeals right now._';
+  const embed = new EmbedBuilder().setColor(0x5865F2).setTitle(`📋 Open ban appeals (${open.length})`)
+    .setDescription(lines).setFooter({ text: 'Appeal a friend’s ban: /appeal ban <their @username>' });
+  const existing = c.boardId ? await ch.messages.fetch(c.boardId).catch(() => null) : null;
+  if (existing) return void existing.edit({ embeds: [embed] }).catch(() => {});
+  const m = await ch.send({ embeds: [embed] }).catch(() => null);
+  if (m) { await m.pin().catch(() => {}); c.boardId = m.id; saveConfig(c); }
+}
+// Ping mods in the base channel when a new appeal opens.
+async function notifyNew(guild, ban, threadId) {
+  const c = loadConfig();
+  const ch = c.channelId && await guild.channels.fetch(c.channelId).catch(() => null);
+  if (!ch) return;
+  await ch.send({ content: `${config.modRoleId ? `<@&${config.modRoleId}> ` : ''}⚖️ new **ban appeal** for **${ban.user.username}** → <#${threadId}>`,
+    allowedMentions: { roles: config.modRoleId ? [config.modRoleId] : [] } }).catch(() => {});
+}
+
+module.exports = { setup, submit, handleButton, isConfigured, loadConfig, ensureBoard };

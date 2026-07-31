@@ -3,12 +3,19 @@
 // bubble-girl's self-assign picker pattern (index.js's buildRolePicker/ensureRolePicker), extended with
 // a single-select category type for colors + age (age also gets real exclusivity + the registration-lock
 // backstop in index.js — this module only renders the picker and does the toggle/single-select mechanic).
+//
+// #roles messages are NEVER edited in place (the owner doesn't want the Discord "(edited)" marker) — any
+// change deletes the affected message and every message after it (to keep the fixed section order), then
+// reposts from there. The block list below is a FIXED 16-slot layout so a given section always lands at
+// the same index regardless of which sections currently have roles in them (an empty section still posts
+// its heading with a placeholder line, so indices never shift).
 const fs = require('fs');
 const path = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 
-const DIVIDER_IMAGE = path.join(__dirname, '..', '..', 'apps', 'fubu-verify-bot', 'assets', 'roles_divider.png');
+const DIVIDER_IMAGE = path.join(__dirname, 'assets', 'roles_divider.png');
 const STATE_FILE = process.env.FUBU_ROLESELECT_FILE || '/home/ubuntu/.fubu_roleselect.json';
+const SECTIONS_FILE = process.env.FUBU_ROLESELECT_SECTIONS_FILE || '/home/ubuntu/.fubu_roleselect_sections.json';
 
 function _load() { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { messageIds: [] }; } }
 function _save(s) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('[roleselect] save:', e.message); } }
@@ -28,21 +35,63 @@ const AGE = [
   ['16-17', '1516185172213628989'], ['18-21', '1516185300492222618'],
   ['21-25', '1516185358415433739'], ['25-30+', '1516209186839466113'],
 ];
-const REGIONS = [
-  ['🦒 Africa', '1501649805045141694'], ['🐼 Asia', '1501649802759508235'], ['🐂 Europe', '1501649800968278192'],
-  ['🦈 Oceania', '1501649803774267422'], ['🐆 South America', '1501649802642063380'], ['🦅 North America', '1501649801677111508'],
-];
-const INTERESTS = [
-  ['🎮 Gaming', '1527426980226797680'], ['🎶 Music', '1527427317125746778'], ['📞 Calling', '1527427436827119686'],
-  ['⚠️ Important pings', '1527427606977314956'], ['🎥 Movies', '1527427164427784214'], ['❤️‍🩹 Revive', '1527427714401697842'],
-];
-const PRONOUNS = [
-  ['She/Her', '1517716868650242098'], ['He/Him', '1517717104399220856'],
-  ['They/Them', '1517717292392251483'], ['Others (ask)', '1526939765667008615'],
-];
-const MISC = [
-  ['🇫🇷 French chat access', '1529939544391159979'], ['🤾 Event ping', '1531010348126044412'], ['😂 OK to be tagged for jokes', '1529934697688465458'],
-];
+
+// Generic toggle-button sections — persisted + admin-editable via /roleselect-role, seeded once from
+// these defaults. After the first load the FILE is the source of truth, not these consts.
+const SECTION_ORDER = ['region', 'language', 'notifications', 'pronouns', 'misc'];
+const SECTION_TITLE = {
+  region: '🌍 Region', language: '🗣️ Language', notifications: '🔔 Notifications',
+  pronouns: '🏳️‍🌈 Pronouns', misc: '✨ Misc',
+};
+// Fixed block index (0-based) for each section's HEADING message — stable regardless of section
+// content, so "which message(s) to delete+resend" never needs to be recomputed from scratch.
+const SECTION_BLOCK_INDEX = { region: 5, language: 7, notifications: 9, pronouns: 11, misc: 13 };
+const DEFAULT_SECTIONS = {
+  region: [
+    ['🦒 Africa', '1501649805045141694'], ['🐼 Asia', '1501649802759508235'], ['🐂 Europe', '1501649800968278192'],
+    ['🦈 Oceania', '1501649803774267422'], ['🐆 South America', '1501649802642063380'], ['🦅 North America', '1501649801677111508'],
+  ],
+  language: [
+    ['🇫🇷 French', '1529939544391159979'], ['🇩🇪 German', '1532221881631903795'],
+    ['🇳🇱 Dutch', '1532221882563301468'], ['🇪🇸 Hispanic', '1532221883385380924'],
+  ],
+  notifications: [
+    ['🎮 Gaming', '1527426980226797680'], ['🎶 Music', '1527427317125746778'], ['📞 Calling', '1527427436827119686'],
+    ['⚠️ Important pings', '1527427606977314956'], ['🎥 Movies', '1527427164427784214'], ['❤️‍🩹 Revive', '1527427714401697842'],
+    ['🤾 Event ping', '1531010348126044412'], ['😂 OK to be tagged for jokes', '1529934697688465458'],
+  ],
+  pronouns: [
+    ['She/Her', '1517716868650242098'], ['He/Him', '1517717104399220856'],
+    ['They/Them', '1517717292392251483'], ['Others (ask)', '1526939765667008615'],
+  ],
+  misc: [],
+};
+
+function loadSections() {
+  try { return JSON.parse(fs.readFileSync(SECTIONS_FILE, 'utf8')); }
+  catch { const seeded = JSON.parse(JSON.stringify(DEFAULT_SECTIONS)); saveSections(seeded); return seeded; }
+}
+function saveSections(s) { try { fs.writeFileSync(SECTIONS_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('[roleselect] sections save:', e.message); } }
+
+// Add/remove a role from a persisted section. Returns { ok, error } — caller (index.js) still has to
+// call rebuildFromIndex(SECTION_BLOCK_INDEX[section]) afterward to actually push the change to Discord.
+function addRoleToSection(section, label, roleId) {
+  if (!SECTION_ORDER.includes(section)) return { ok: false, error: `Unknown section "${section}".` };
+  const s = loadSections();
+  if (s[section].some(([, id]) => id === roleId)) return { ok: false, error: 'That role is already in this section.' };
+  s[section].push([label, roleId]);
+  saveSections(s);
+  return { ok: true };
+}
+function removeRoleFromSection(section, roleId) {
+  if (!SECTION_ORDER.includes(section)) return { ok: false, error: `Unknown section "${section}".` };
+  const s = loadSections();
+  const before = s[section].length;
+  s[section] = s[section].filter(([, id]) => id !== roleId);
+  if (s[section].length === before) return { ok: false, error: 'That role isn’t in this section.' };
+  saveSections(s);
+  return { ok: true };
+}
 
 function toggleRow(customPrefix, items) {
   return new ActionRowBuilder().addComponents(items.map(([label, roleId]) =>
@@ -53,7 +102,9 @@ function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n)
 function colorSelectRow() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId('roleselect_color').setPlaceholder('Pick your color…')
-      .addOptions(COLORS.map(([label, roleId]) => ({ label, value: roleId }))));
+      .addOptions(
+        ...COLORS.map(([label, roleId]) => ({ label, value: roleId })),
+        { label: '🚫 No color (clear)', value: 'none' }));
 }
 function ageSelectRow() {
   return new ActionRowBuilder().addComponents(
@@ -63,6 +114,36 @@ function ageSelectRow() {
 
 function dividerAttachment() {
   return fs.existsSync(DIVIDER_IMAGE) ? [new AttachmentBuilder(DIVIDER_IMAGE, { name: 'divider.png' })] : [];
+}
+
+function sectionBlock(key) {
+  const items = loadSections()[key] || [];
+  const heading = `## ${SECTION_TITLE[key]}`;
+  if (!items.length) return { content: `${heading}\n_Nothing here yet._` };
+  return { content: heading, components: chunk(items, 5).map(c => toggleRow('roleselect_toggle', c)) };
+}
+
+// Fixed 16-slot layout — index N always means the same thing, so a section's heading never moves even
+// when other sections gain/lose roles. Keep this in sync with SECTION_BLOCK_INDEX above.
+function buildBlocks() {
+  return [
+    { content: '# 🎓 Get Your Roles\nPick from each section below. Click a button to toggle it on/off, or use the dropdowns for age and color (those replace your current pick, one at a time).' },
+    { content: '## 🎂 Age — pick once at registration, locked after you verify (see rule 3)', components: [ageSelectRow()] },
+    { files: dividerAttachment() },
+    { content: '## 🔞 MDNI — adults only, also locked after verification', components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', '1519408206370308197']])] },
+    { files: dividerAttachment() },
+    sectionBlock('region'),
+    { files: dividerAttachment() },
+    sectionBlock('language'),
+    { files: dividerAttachment() },
+    sectionBlock('notifications'),
+    { files: dividerAttachment() },
+    sectionBlock('pronouns'),
+    { files: dividerAttachment() },
+    sectionBlock('misc'),
+    { files: dividerAttachment() },
+    { content: '## 🎨 Color', components: [colorSelectRow()] },
+  ];
 }
 
 // Delete every existing message in #roles (the old plain-text + Carl-bot-reaction system) and post the
@@ -78,25 +159,43 @@ async function rebuild(guild, channelId) {
   for (const m of old.values()) { await m.delete().catch(() => {}); await new Promise(r => setTimeout(r, 350)); }
 
   const posted = [];
-  const post = async payload => { const m = await ch.send(payload); posted.push(m.id); await new Promise(r => setTimeout(r, 700)); };
-
-  await post({ content: '# 🎓 Get Your Roles\nPick from each section below — click a button to toggle it on/off, or use the dropdowns for color and age (those replace your current pick, one at a time).' });
-  await post({ content: '## 🎨 Color', components: [colorSelectRow()] });
-  await post({ files: dividerAttachment() });
-  await post({ content: '## 🎂 Age — pick once at registration, locked after you verify (see rule 3)', components: [ageSelectRow()] });
-  await post({ files: dividerAttachment() });
-  await post({ content: '## 🌍 Region', components: chunk(REGIONS, 5).map(c => toggleRow('roleselect_toggle', c)) });
-  await post({ files: dividerAttachment() });
-  await post({ content: '## 🔔 Notifications', components: chunk(INTERESTS, 5).map(c => toggleRow('roleselect_toggle', c)) });
-  await post({ files: dividerAttachment() });
-  await post({ content: '## 🔞 MDNI — adults only, also locked after verification', components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', '1519408206370308197']])] });
-  await post({ files: dividerAttachment() });
-  await post({ content: '## 🏳️‍🌈 Pronouns', components: chunk(PRONOUNS, 5).map(c => toggleRow('roleselect_toggle', c)) });
-  await post({ files: dividerAttachment() });
-  await post({ content: '## ✨ Misc', components: chunk(MISC, 5).map(c => toggleRow('roleselect_toggle', c)) });
-
+  for (const block of buildBlocks()) {
+    const m = await ch.send(block);
+    posted.push(m.id);
+    await new Promise(r => setTimeout(r, 700));
+  }
   st.messageIds = posted; _save(st);
   return { ok: true, posted: posted.length };
 }
 
-module.exports = { COLORS, AGE, REGIONS, INTERESTS, PRONOUNS, MISC, colorSelectRow, ageSelectRow, toggleRow, rebuild };
+// Partial update: delete the message at fromIndex and every message after it (never edit in place —
+// owner preference, avoids the "(edited)" marker), then repost fresh from that point on. Used whenever
+// a section's role list changes after the initial build.
+async function rebuildFromIndex(guild, channelId, fromIndex) {
+  const ch = await guild.channels.fetch(channelId).catch(() => null);
+  if (!ch) return { ok: false, error: 'roles channel not found' };
+  const st = _load();
+  const ids = st.messageIds || [];
+  if (!ids.length) return rebuild(guild, channelId);
+
+  for (let i = fromIndex; i < ids.length; i++) {
+    const m = await ch.messages.fetch(ids[i]).catch(() => null);
+    if (m) await m.delete().catch(() => {});
+    await new Promise(r => setTimeout(r, 350));
+  }
+
+  const blocks = buildBlocks();
+  const newIds = ids.slice(0, fromIndex);
+  for (let i = fromIndex; i < blocks.length; i++) {
+    const m = await ch.send(blocks[i]);
+    newIds.push(m.id);
+    await new Promise(r => setTimeout(r, 700));
+  }
+  st.messageIds = newIds; _save(st);
+  return { ok: true, reposted: blocks.length - fromIndex };
+}
+
+module.exports = {
+  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex,
+  loadSections, addRoleToSection, removeRoleFromSection, SECTION_ORDER, SECTION_TITLE, SECTION_BLOCK_INDEX,
+};

@@ -73,6 +73,26 @@ const EVENT_LABEL = {
   [AuditLogEvent.GuildUpdate]: '⚙️ Server settings changed',
 };
 
+// Turn an audit-log entry's raw field diffs into a readable line or two — e.g. role add/remove shows the
+// actual role name(s), not just "roles changed". Without this the entry says nothing an owner can act on.
+function describeChanges(e) {
+  if (!e.changes || !e.changes.length) return '';
+  const parts = [];
+  for (const c of e.changes) {
+    const newVal = c.new, oldVal = c.old;
+    if (c.key === '$add' || c.key === '$remove') {
+      const names = (newVal || []).map(r => r.name).filter(Boolean);
+      if (names.length) parts.push(`${c.key === '$add' ? '➕' : '➖'} ${names.join(', ')}`);
+      continue;
+    }
+    if (['permissions', 'permission_overwrites', 'icon_hash', 'avatar_hash'].includes(c.key)) continue; // noisy, not human-readable
+    const fmt = v => (v === undefined || v === null) ? '_none_' : (typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : String(v).slice(0, 60));
+    if (oldVal !== undefined && newVal !== undefined) parts.push(`${c.key}: ${fmt(oldVal)} → ${fmt(newVal)}`);
+    else if (newVal !== undefined) parts.push(`${c.key} → ${fmt(newVal)}`);
+  }
+  return parts.length ? `\n${parts.join('\n')}` : '';
+}
+
 // Poll Discord's audit log for entries newer than the last one we've posted. First run only seeds the
 // watermark (doesn't dump the entire history) — after that, every new watched entry gets mirrored.
 async function pollAuditLog(guild) {
@@ -87,16 +107,24 @@ async function pollAuditLog(guild) {
       saveState({ lastAuditLogId: newest ? newest.id : '0' });
       return 0;
     }
-    const fresh = entries.filter(e => BigInt(e.id) > BigInt(st.lastAuditLogId) && WATCHED_EVENTS.has(e.action));
+    // Skip entries the BOT ITSELF caused (strikes/corners/verifies/etc. already get their own, more
+    // detailed manual log line above) — this feed is for genuine out-of-band human actions taken
+    // directly through Discord, bypassing the bot (manual bans, manual role edits, channel changes...).
+    const fresh = entries.filter(e => BigInt(e.id) > BigInt(st.lastAuditLogId) && WATCHED_EVENTS.has(e.action) && e.executorId !== guild.client.user.id);
     if (!fresh.length) return 0;
     const ch = await ensureChannel(guild);
     for (const e of fresh) {
       const label = EVENT_LABEL[e.action] || `Action ${e.action}`;
+      // Real <@id> mentions — clickable, opens their profile card — but allowedMentions:{parse:[]} below
+      // means it never actually pings/notifies them. "Visible, not tagging" for a passive log feed.
       const actor = e.executor ? `<@${e.executor.id}>` : 'Unknown';
-      const target = e.target ? (e.target.tag || e.target.name || e.targetId || 'unknown') : null;
+      // Users (the common case: kicked/banned/role-changed/updated member) get a clickable mention too;
+      // Roles/Channels/the Guild itself aren't people, so those stay plain bold text.
+      const targetIsUser = e.target && (e.target.tag !== undefined || e.target.username !== undefined);
+      const target = e.target ? (targetIsUser ? `<@${e.target.id}>` : `**${e.target.name || e.targetId || 'unknown'}**`) : null;
       const reason = e.reason ? ` — _${e.reason}_` : '';
       const embed = new EmbedBuilder().setColor(0x99AAB5)
-        .setDescription(`${label}\n${actor}${target ? ` → **${target}**` : ''}${reason}`)
+        .setDescription(`${label}\n${actor}${target ? ` → ${target}` : ''}${describeChanges(e)}${reason}`)
         .setFooter({ text: 'Server audit log' }).setTimestamp(e.createdAt);
       await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
     }

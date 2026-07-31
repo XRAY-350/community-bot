@@ -19,11 +19,11 @@
 // State lives in one JSON file (self-contained, same pattern as ownerlog/permguard), NOT the shared
 // state.js — a contest round is its own concern with its own lifecycle.
 const fs = require('fs');
-const { EmbedBuilder, ChannelType, PermissionsBitField } = require('discord.js');
+const { EmbedBuilder, ChannelType, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('./config');
 const ownerlog = require('./ownerlog');
 const opspanel = require('./opspanel');
-let permguard = null; try { permguard = require('./permguard'); } catch { /* optional */ }
 
 const P = PermissionsBitField.Flags;
 const CFG_FILE = process.env.FUBU_CONTEST_FILE || '/home/ubuntu/.fubu_contest.json';
@@ -112,7 +112,7 @@ async function ensureChannel(guild, contest, cfg) {
   // 3) create it
   const ch = await guild.channels.create({
     name: contest.name, type: ChannelType.GuildText, parent: CATEGORY_ID,
-    topic: `${contest.emoji} Monthly ${contest.label.toLowerCase()} contest — post ONE entry, vote with ${VOTE_EMOJI}. No chatting here.`,
+    topic: `${contest.emoji} Monthly ${contest.label.toLowerCase()} contest. Post ONE entry, vote with ${VOTE_EMOJI}. No chatting here.`,
     permissionOverwrites: channelOverwrites(guild),
     reason: 'Monthly contest channel (event organizer request)',
   });
@@ -124,10 +124,11 @@ function rulesEmbed(contest, theme) {
   const lines = [
     'The rules are simple ⋆｡˚',
     '',
-    `✧ **One entry per person.** You have all month to post — and to vote.`,
+    `✧ **One entry per person.** You have all month to post and to vote.`,
+    `✧ **Your own work only. No AI.** AI-generated art, photos, or writing aren't allowed. Keep it human. 🤝`,
     `✧ **Don't chat here.** This channel is only for posting entries and voting.`,
     `✧ **To vote, react with ${VOTE_EMOJI}** on your favourite entry.`,
-    `✧ Want to enter **anonymously**? Use \`/contest-submit\` — I'll post it for you, name hidden.`,
+    `✧ Want to enter **anonymously**? Use \`/contest-submit\` and I'll post it for you, name hidden.`,
     '✧ Have fun! 🩷',
   ];
   const e = new EmbedBuilder().setColor(GOLD)
@@ -154,34 +155,32 @@ async function setup(guild) {
     const ch = await ensureChannel(guild, contest, cfg);
     made.push({ contest, ch, created: !before || before !== ch.id });
   }
-  // (Re)post the rules only if there's no active round yet — otherwise /contest start owns the message.
-  const theme = cfg.round && cfg.round.active ? cfg.round.theme : null;
-  cfg.round = cfg.round || null;
-  cfg.round && cfg.round.active ? null : (cfg.round = null);
-  cfg.round || (cfg.roundAnnounce = cfg.roundAnnounce || {});
-  for (const m of made) {
-    if (!(cfg.round && cfg.round.active)) await postRules(m.ch, m.contest, theme);
-  }
+  // Post the rules now only if there's no active round — an open round's announcement is owned by
+  // /contest start (re-posting here would just duplicate it).
+  const roundActive = !!(cfg.round && cfg.round.active);
+  if (!roundActive) for (const m of made) await postRules(m.ch, m.contest, null);
   saveCfg(cfg);
-  // Make the new channels + role overwrites the permguard golden baseline so the drift guard doesn't
-  // treat them as "unmanaged" (and so a future manual change to them is caught).
-  let snap = null;
-  if (permguard) { try { snap = await permguard.resnapshot(guild); } catch (e) { console.error('[contest] resnapshot:', e.message); } }
+  // NOTE: we deliberately do NOT auto-resnapshot permguard here. New channels are "unmanaged" by the
+  // drift guard (it leaves them alone — no reversion risk), and re-baselining the WHOLE server's
+  // permission manifest as a side effect of contest setup would be too broad. To bring these channels
+  // under the drift guard, the owner runs `/permguard resnapshot` deliberately (surfaced in the reply).
   await ownerlog.log(guild, { emoji: '🎨', title: 'Contest system set up', color: GOLD,
-    detail: `Channels: ${made.map(m => `<#${m.ch.id}>`).join(' ')}\nWinner role: <@&${role.id}>` + (snap ? `\nPermguard baseline re-snapshotted (${snap.channels} channels).` : '') });
-  return { channels: made, role, resnapshot: snap };
+    detail: `Channels: ${made.map(m => `<#${m.ch.id}>`).join(' ')}\nWinner role: <@&${role.id}>` });
+  return { channels: made, role };
 }
 
 // ---- start a round -------------------------------------------------------------------------------
 async function start(guild, theme, keys) {
   const cfg = loadCfg();
-  if (!Object.keys(cfg.channels || {}).length) throw new Error('Run `/contest setup` first — no contest channels exist yet.');
+  if (!Object.keys(cfg.channels || {}).length) throw new Error('Run `/contest setup` first. No contest channels exist yet.');
   const active = (keys && keys.length ? keys : CONTESTS.map(c => c.key)).filter(k => cfg.channels[k]);
+  const prevAnnounce = (cfg.round && cfg.round.announce) || {};   // unpin last month's card so pins don't stack
   cfg.round = { theme, startedAt: Date.now(), month: ymKey(), active: true, contests: active, announce: {} };
-  cfg.entries = {};                              // fresh round — clear last month's entries
+  cfg.entries = {};                              // fresh round - clear last month's entries
   for (const k of active) {
     const ch = await guild.channels.fetch(cfg.channels[k]).catch(() => null);
     if (!ch) continue;
+    if (prevAnnounce[k]) { const old = await ch.messages.fetch(prevAnnounce[k]).catch(() => null); if (old && old.pinned) await old.unpin().catch(() => {}); }
     cfg.entries[cfg.channels[k]] = {};
     const msg = await postRules(ch, byKey(k), theme);
     cfg.round.announce[k] = msg.id;
@@ -235,9 +234,9 @@ async function status(guild) {
     const c = byKey(key);
     const leader = ranked[0];
     const leaderTxt = leader
-      ? `${leader.votes} ${VOTE_EMOJI} — ${leader.anonymous ? '_anonymous_' : `<@${leader.memberId}>`}`
+      ? `${leader.votes} ${VOTE_EMOJI} · ${leader.anonymous ? '_anonymous_' : `<@${leader.memberId}>`}`
       : '_no entries yet_';
-    e.addFields({ name: `${c.emoji} ${c.label} — ${ranked.length} entr${ranked.length === 1 ? 'y' : 'ies'}`, value: `Leader: ${leaderTxt}` });
+    e.addFields({ name: `${c.emoji} ${c.label}: ${ranked.length} entr${ranked.length === 1 ? 'y' : 'ies'}`, value: `Leader: ${leaderTxt}` });
   }
   return e;
 }
@@ -262,8 +261,8 @@ async function endRound(guild, { auto = false } = {}) {
     if (!top || top.votes === 0) {
       results[key] = null;
       await ch.send({ embeds: [new EmbedBuilder().setColor(GOLD)
-        .setTitle(`${c.emoji} ${c.label} Contest — closed`)
-        .setDescription(`This round's theme was **${theme}**.\nNo votes were cast this time — see you next month! 🩷`)], allowedMentions: { parse: [] } }).catch(() => {});
+        .setTitle(`${c.emoji} ${c.label} Contest: closed`)
+        .setDescription(`This round's theme was **${theme}**.\nNo votes were cast this time. See you next month! 🩷`)], allowedMentions: { parse: [] } }).catch(() => {});
       continue;
     }
     // ties: everyone sharing the top vote count wins
@@ -280,8 +279,8 @@ async function endRound(guild, { auto = false } = {}) {
     const link = `https://discord.com/channels/${guild.id}/${channelId}/${winners[0].messageId}`;
     await ch.send({
       embeds: [new EmbedBuilder().setColor(GOLD)
-        .setTitle(`${c.emoji} ${c.label} Contest — winner!`)
-        .setDescription(`Theme: **${theme}**\n\n🏆 ${nameList} won with **${top.votes}** ${VOTE_EMOJI}!\n[See the winning entry](${link})\n\nThank you everyone who entered and voted — a new theme is on the way. 🩷`)],
+        .setTitle(`${c.emoji} ${c.label} Contest winner!`)
+        .setDescription(`Theme: **${theme}**\n\n🏆 ${nameList} won with **${top.votes}** ${VOTE_EMOJI}!\n[See the winning entry](${link})\n\nThank you everyone who entered and voted. A new theme is on the way. 🩷`)],
       allowedMentions: { users: winners.filter(w => !w.anonymous).map(w => w.memberId) },
     }).catch(() => {});
   }
@@ -299,16 +298,16 @@ async function endRound(guild, { auto = false } = {}) {
   if (org) {
     const summary = cfg.round.contests.map(key => {
       const r = results[key]; const c = byKey(key);
-      if (!r) return `${c.emoji} **${c.label}** — no winner (no votes)`;
+      if (!r) return `${c.emoji} **${c.label}**: no winner (no votes)`;
       const who = r.winners.map(w => w.anonymous ? `an anonymous entry _(real: <@${w.memberId}>)_` : `<@${w.memberId}>`).join(' & ');
-      return `${c.emoji} **${c.label}** — ${who} · ${r.votes} ${VOTE_EMOJI}`;
+      return `${c.emoji} **${c.label}**: ${who} · ${r.votes} ${VOTE_EMOJI}`;
     }).join('\n');
     const anyWinner = Object.values(results).some(Boolean);
     const embed = new EmbedBuilder().setColor(GOLD)
       .setTitle(`🏁 ${monthName()} contest results${auto ? ' (auto-closed)' : ''}`)
       .setDescription(`Theme: **${theme}**\n\n${summary}`);
     if (anyWinner) embed.addFields({ name: '🎁 Nitro reminder',
-      value: `The 🏆 Contest Winner role is assigned. If you're gifting **Nitro**, send it to the winner(s) above — I can't gift it for you.` });
+      value: `The 🏆 Contest Winner role is assigned. If you're gifting **Nitro**, send it to the winner(s) above. I can't gift it for you.` });
     embed.addFields({ name: '▶️ Next month', value: 'Open the next round with `/contest start theme:<your theme>` whenever you\'re ready.' });
     // ping the owner tier so they see the Nitro reminder
     const pingRoles = anyWinner ? OWNER_ROLE_IDS : [];
@@ -333,7 +332,7 @@ function memberIsStaff(member) {
   return !!tier || member.roles.cache.has(ORGANIZER_ROLE_ID);
 }
 
-async function notify(user, text) { try { await user.send(text); } catch { /* DMs closed — the delete is signal enough */ } }
+async function notify(user, text) { try { await user.send(text); } catch { /* DMs closed - the delete is signal enough */ } }
 
 // Returns { deleted: bool } so the caller can stop processing a message it removed.
 async function onMessage(msg) {
@@ -356,14 +355,14 @@ async function onMessage(msg) {
     if (!valid) {
       if (staff) return { deleted: false };               // trust staff (announcements, moderation)
       await msg.delete().catch(() => {});
-      await notify(msg.author, `Your message in **${contest.label} Contest** was removed — that channel is only for posting entries and voting 🩷. ${contest.kind === 'image' ? 'Please post your entry as an image.' : 'Please post your written entry.'} For chatting, use the event chat!`);
+      await notify(msg.author, `Your message in **${contest.label} Contest** was removed. That channel is only for posting entries and voting 🩷. ${contest.kind === 'image' ? 'Please post your entry as an image.' : 'Please post your written entry.'} For chatting, use the event chat!`);
       return { deleted: true };
     }
     // valid entry — enforce one per person
     if (entries[msg.author.id]) {
       if (staff) return { deleted: false };
       await msg.delete().catch(() => {});
-      await notify(msg.author, `You've already entered the **${contest.label} Contest** this month — one entry per theme 🩷. Your first entry still stands; ask a mod if you'd like to swap it.`);
+      await notify(msg.author, `You've already entered the **${contest.label} Contest** this month. One entry per theme 🩷. Your first entry still stands; ask a mod if you'd like to swap it.`);
       return { deleted: true };
     }
     entries[msg.author.id] = { messageId: msg.id, anonymous: false, at: Date.now() };
@@ -396,15 +395,15 @@ async function submit(interaction) {
   if (!contest || !cfg.round.contests.includes(key)) return interaction.reply({ content: 'That contest isn\'t running this month.', flags: 1 << 6 });
   const channelId = cfg.channels[key];
   const ch = channelId ? await interaction.guild.channels.fetch(channelId).catch(() => null) : null;
-  if (!ch) return interaction.reply({ content: 'The contest channel is missing — tell an organizer to run `/contest setup`.', flags: 1 << 6 });
+  if (!ch) return interaction.reply({ content: 'The contest channel is missing. Tell an organizer to run `/contest setup`.', flags: 1 << 6 });
 
   const entries = (cfg.entries[channelId] = cfg.entries[channelId] || {});
-  if (entries[interaction.user.id]) return interaction.reply({ content: `You've already entered the **${contest.label}** contest this month — one entry per theme 🩷.`, flags: 1 << 6 });
+  if (entries[interaction.user.id]) return interaction.reply({ content: `You've already entered the **${contest.label}** contest this month. One entry per theme 🩷.`, flags: 1 << 6 });
 
   const image = interaction.options.getAttachment('image');
   const text = interaction.options.getString('text');
-  if (contest.kind === 'image' && !image) return interaction.reply({ content: `The **${contest.label}** contest needs an **image** — attach one to \`image:\`.`, flags: 1 << 6 });
-  if (contest.kind === 'text' && !text && !image) return interaction.reply({ content: `The **${contest.label}** contest needs your **writing** — put it in \`text:\` (or attach it).`, flags: 1 << 6 });
+  if (contest.kind === 'image' && !image) return interaction.reply({ content: `The **${contest.label}** contest needs an **image**. Attach one to \`image:\`.`, flags: 1 << 6 });
+  if (contest.kind === 'text' && !text && !image) return interaction.reply({ content: `The **${contest.label}** contest needs your **writing**. Put it in \`text:\` (or attach it).`, flags: 1 << 6 });
   if (image && !((image.contentType && image.contentType.startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(image.name || '')))
     return interaction.reply({ content: 'That attachment isn\'t an image.', flags: 1 << 6 });
 
@@ -416,11 +415,11 @@ async function submit(interaction) {
   if (image) embed.setImage(`attachment://${(image.name || 'entry').replace(/[^\w.\-]/g, '_')}`);
   const files = image ? [{ attachment: image.url, name: (image.name || 'entry').replace(/[^\w.\-]/g, '_') }] : [];
   const posted = await ch.send({ embeds: [embed], files, allowedMentions: { parse: [] } }).catch(e => { console.error('[contest] submit send:', e.message); return null; });
-  if (!posted) return interaction.editReply('Something went wrong posting your entry — try again, or post it directly in the channel.');
+  if (!posted) return interaction.editReply('Something went wrong posting your entry. Try again, or post it directly in the channel.');
   try { await posted.react(VOTE_EMOJI); } catch { /* non-fatal */ }
   entries[interaction.user.id] = { messageId: posted.id, anonymous: true, at: Date.now() };
   saveCfg(cfg);
-  return interaction.editReply(`✅ Your **${contest.label}** entry is posted anonymously in <#${channelId}> — your name is hidden. Good luck! 🩷`);
+  return interaction.editReply(`✅ Your **${contest.label}** entry is posted anonymously in <#${channelId}>. Your name is hidden. Good luck! 🩷`);
 }
 
 // ---- monthly auto-close tick ---------------------------------------------------------------------
@@ -443,7 +442,112 @@ function register(client) {
   console.log('[contest] monthly auto-close tick armed');
 }
 
+// ---- event organizer dashboard (private, ephemeral /panel-style) ---------------------------------
+// A per-caller ephemeral control panel — same idea as the mod /panel, scoped to contests. Anyone with
+// the Event Organizer role (or staff) can open it. Ephemeral = private + no shared pinned message to
+// maintain, so each refresh just re-renders the caller's own message.
+const EPH = 1 << 6;   // MessageFlags.Ephemeral, without importing the enum here
+function canManageEvents(interaction) {
+  return !!(interaction.memberPermissions?.has(P.ManageEvents)
+    || opspanel.memberTier(interaction.member)
+    || interaction.member?.roles?.cache?.has(ORGANIZER_ROLE_ID));
+}
+function isEventOrganizer(member) {
+  return !!(member?.roles?.cache?.has(ORGANIZER_ROLE_ID) || opspanel.memberTier(member));
+}
+
+// Fast panel: entry COUNTS come straight from state (no vote fetch), so refresh is instant. Live 🩷
+// standings are one click away on the "📊 Standings" button (which does the real tally).
+async function buildEventPanel(guild) {
+  const cfg = loadCfg();
+  const setUp = CONTESTS.every(c => cfg.channels[c.key]);
+  const e = new EmbedBuilder().setColor(GOLD).setTitle('🎉 Event Organizer Dashboard');
+  if (!setUp) {
+    e.setDescription('The contest channels aren\'t created yet.\nPress **🎨 Setup** to create them + the 🏆 winner role.');
+  } else if (cfg.round && cfg.round.active) {
+    const lines = cfg.round.contests.map(k => {
+      const c = byKey(k); const n = Object.keys((cfg.entries || {})[cfg.channels[k]] || {}).length;
+      return `${c.emoji} **${c.label}**: ${n} entr${n === 1 ? 'y' : 'ies'} · <#${cfg.channels[k]}>`;
+    }).join('\n');
+    e.setDescription(`**Open round** · theme: **${cfg.round.theme}**\nOpened <t:${Math.floor(cfg.round.startedAt / 1000)}:R>\n\n${lines}\n\n_Press 📊 Standings for live 🩷 counts._`);
+  } else {
+    e.setDescription('No round is open right now.\nPress **▶️ Start round** to open one with a theme.' +
+      (cfg.lastEndedMonth ? `\n\n_Last round ended: ${cfg.lastEndedMonth}._` : ''));
+  }
+  const active = !!(cfg.round && cfg.round.active);
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('evp_start').setEmoji('▶️').setLabel('Start round').setStyle(ButtonStyle.Success).setDisabled(active || !setUp),
+    new ButtonBuilder().setCustomId('evp_end').setEmoji('🏁').setLabel('End round').setStyle(ButtonStyle.Danger).setDisabled(!active));
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('evp_status').setEmoji('📊').setLabel('Standings').setStyle(ButtonStyle.Primary).setDisabled(!active),
+    new ButtonBuilder().setCustomId('evp_refresh').setEmoji('🔄').setLabel('Refresh').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('evp_setup').setEmoji('🎨').setLabel(setUp ? 'Repair setup' : 'Setup').setStyle(ButtonStyle.Secondary));
+  return { embeds: [e], components: [row1, row2] };
+}
+
+async function openEventPanel(interaction) {
+  if (!canManageEvents(interaction)) return interaction.reply({ content: 'This dashboard is for event organizers and staff.', flags: EPH });
+  return interaction.reply({ ...(await buildEventPanel(interaction.guild)), flags: EPH });
+}
+
+function isEventPanelInteraction(i) {
+  return (i.isButton?.() || i.isModalSubmit?.()) && i.customId?.startsWith('evp_');
+}
+
+async function handleEventPanel(interaction) {
+  if (!canManageEvents(interaction)) return interaction.reply({ content: 'This dashboard is for event organizers and staff.', flags: EPH });
+  const id = interaction.customId;
+  const guild = interaction.guild;
+
+  if (id === 'evp_refresh') return interaction.update(await buildEventPanel(guild));
+
+  if (id === 'evp_status') {
+    const embed = await status(guild);
+    return interaction.reply({ embeds: [embed], flags: EPH });
+  }
+
+  if (id === 'evp_setup') {
+    await interaction.deferUpdate();
+    try { await setup(guild); } catch (e) { console.error('[contest] evp_setup:', e.message); }
+    await interaction.editReply(await buildEventPanel(guild));
+    return interaction.followUp({ content: '✅ Channels + 🏆 winner role are ready. Tip: run `/permguard resnapshot` to bring the new channels under the drift-guard.', flags: EPH }).catch(() => {});
+  }
+
+  if (id === 'evp_start') {
+    const modal = new ModalBuilder().setCustomId('evp_start_modal').setTitle('Open a new contest round');
+    modal.addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('theme').setLabel('This month\'s theme').setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. summer vacations').setRequired(true).setMaxLength(120)));
+    return interaction.showModal(modal);
+  }
+  if (id === 'evp_start_modal') {
+    const theme = interaction.fields.getTextInputValue('theme').trim();
+    await interaction.deferUpdate();
+    try { await start(guild, theme, null); }   // all three contests from the dashboard fast-path
+    catch (e) { return interaction.followUp({ content: `⚠️ ${e.message}`, flags: EPH }).catch(() => {}); }
+    await interaction.editReply(await buildEventPanel(guild));
+    return interaction.followUp({ content: `✅ Opened the **${theme}** round for all three contests. Announcements posted + pinned.`, flags: EPH }).catch(() => {});
+  }
+
+  if (id === 'evp_end') {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('evp_end_yes').setEmoji('🏁').setLabel('Yes, end + crown winners').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('evp_end_no').setEmoji('↩️').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(GOLD).setTitle('End the round?')
+      .setDescription('This tallies 🩷, crowns the winner(s), assigns the 🏆 role, and posts results to <#' + ORGANIZER_CHAT_ID + '>. This can\'t be undone.')], components: [row] });
+  }
+  if (id === 'evp_end_no') return interaction.update(await buildEventPanel(guild));
+  if (id === 'evp_end_yes') {
+    await interaction.deferUpdate();
+    let r; try { r = await endRound(guild); } catch (e) { r = { ok: false, msg: e.message }; }
+    await interaction.editReply(await buildEventPanel(guild));
+    if (!r.ok) return interaction.followUp({ content: `⚠️ ${r.msg}`, flags: EPH }).catch(() => {});
+    return interaction.followUp({ content: '🏁 Round closed. Winners crowned, role assigned, results posted to <#' + ORGANIZER_CHAT_ID + '>.', flags: EPH }).catch(() => {});
+  }
+}
+
 module.exports = {
   CONTESTS, VOTE_EMOJI, isContestChannel, contestKeyForChannel,
   setup, start, status, endRound, submit, onMessage, onMessageDelete, register, loadCfg,
+  openEventPanel, isEventPanelInteraction, handleEventPanel, isEventOrganizer, buildEventPanel, rulesEmbed,
 };

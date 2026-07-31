@@ -23,7 +23,7 @@ const config = require('./config');
 const opspanel = require('./opspanel');
 
 let Anthropic = null;
-try { Anthropic = require('@anthropic-ai/sdk'); } catch { /* SDK not installed yet — feature stays dark */ }
+try { Anthropic = require('@anthropic-ai/sdk'); } catch { /* SDK not installed yet - feature stays dark */ }
 
 const MODEL = process.env.SMARTWATCH_MODEL || 'claude-haiku-4-5';
 const API_KEY = (process.env.ANTHROPIC_API_KEY || process.env.SMARTWATCH_API_KEY || '').trim();
@@ -44,7 +44,7 @@ function available() { return !!getClient(); }
 
 // ---- owner-editable community profile (the mutable, drift-prone specifics) ------------------------
 const DEFAULT_PROFILE =
-  'Members span the Black diaspora, so vernacular varies widely — AAVE, European/UK Black slang, and ' +
+  'Members span the Black diaspora, so vernacular varies widely - AAVE, European/UK Black slang, and ' +
   'French or other multilingual code-switching all appear. Don\'t assume a term carries the same meaning ' +
   'across dialects, and don\'t mistake unfamiliar diaspora slang for hostility.';
 function communityProfile() {
@@ -55,10 +55,10 @@ function communityProfile() {
 // ---- prompt (stable core in code; the profile is injected) ---------------------------------------
 function systemPrompt() {
   return [
-    'You are the moderation-context judge for F.U.B.U. ("For Us By Us") — a Black-only community (Rule 1).',
+    'You are the moderation-context judge for F.U.B.U. ("For Us By Us") - a Black-only community (Rule 1).',
     'A keyword matcher flagged a message for a watched term. You are NOT the moderator; a human makes every',
     'real call. Your job: decide whether this flag is a genuine concern worth a mod\'s attention or a false',
-    'positive, so the log stays signal, not noise. Judge MEANING and INTENT in context — never the bare',
+    'positive, so the log stays signal, not noise. Judge MEANING and INTENT in context - never the bare',
     'presence of a word.',
     '',
     'Community norms a naive word list gets wrong:',
@@ -72,10 +72,10 @@ function systemPrompt() {
     '  REPORTING another\'s message, or hyperbole. Weigh who is speaking and at whom.',
     '',
     'FUBU rules you map a flag to (1-11): 1 Black-only space; 2 child safety (grooming, or jokes about',
-    'grooming/rape/pedophilia — always a flag); 3 verification; 4 no sexual/suggestive language in general',
-    'channels; 5 respect everyone (harassment, personal attacks, hate speech — hate carries extra weight);',
+    'grooming/rape/pedophilia - always a flag); 3 verification; 4 no sexual/suggestive language in general',
+    'channels; 5 respect everyone (harassment, personal attacks, hate speech - hate carries extra weight);',
     '6 privacy (no doxxing / sharing DMs); 7 respect the space (no intentional disruption/drama); 8 no spam',
-    '(repeated messages, emoji/mention spam, flooding, excessive caps — hard-R spam lands here + rule 5);',
+    '(repeated messages, emoji/mention spam, flooding, excessive caps - hard-R spam lands here + rule 5);',
     '9 right channel right conversation; 10 don\'t weaponize the anon tools; 11 staff decisions final.',
     '',
     'When genuinely unsure, SURFACE it (do not suppress). Only mark a false positive when clearly confident',
@@ -84,24 +84,24 @@ function systemPrompt() {
     '',
     'Respond with ONLY a JSON object (no prose, no markdown fences) of exactly this shape:',
     '{"surface": <bool, true=show a mod / false=benign false positive>, "confidence": <0.0-1.0, how sure of surface>,',
-    ' "severity": "none"|"low"|"medium"|"high", "likelyRule": <FUBU rule 1-11, or 0 if none>,',
+    ' "severity": "none"|"low"|"medium"|"high", "likelyRule": <the FUBU rule 1-11 this message VIOLATES, or 0 if it is not a rule violation - welfare/distress cases and benign false positives are ALWAYS 0 (a member\'s wellbeing is not a rule)>,',
     ' "category": "reclaimed"|"hostile"|"threat"|"distress"|"quote-report"|"joke-hyperbole"|"sexual"|"doxxing"|"child-safety"|"spam"|"unclear",',
     ' "reason": "<one plain sentence a mod reads at a glance>"}',
   ].join('\n');
 }
 
 const SCOPE_RUBRIC = {
-  strict: 'SCOPE — STRICT (watchlisted member): this message is from someone on the WATCHLIST — previously ' +
+  strict: 'SCOPE - STRICT (watchlisted member): this message is from someone on the WATCHLIST - previously ' +
     'banned or a repeat problem, being actively monitored. The bar is behavioral, not lexical: is this person ' +
-    'actually being disruptive, hostile, rule-breaking, or resuming what got them watched — or is it ordinary ' +
+    'actually being disruptive, hostile, rule-breaking, or resuming what got them watched - or is it ordinary ' +
     'participation any member could say freely? Surface anything genuinely concerning; do not flag them for ' +
     'normal in-community talk.',
-  loose: 'SCOPE — LOOSE (day-to-day watch): posts to a mods-only log with NO ping — a "worth a glance", not an ' +
+  loose: 'SCOPE - LOOSE (day-to-day watch): posts to a mods-only log with NO ping - a "worth a glance", not an ' +
     'alarm. Surface only genuine rule-tension, escalating conflict, hostility aimed at someone, or content off ' +
     'for the space. Suppress ordinary chatter, jokes, venting, reclaimed language, and quotes that merely ' +
     'contain a watched word.',
-  welfare: 'SCOPE — WELFARE (support check): about a member\'s OWN wellbeing, not rule-breaking. Does this person ' +
-    'genuinely seem in distress or reaching for help right now — vs. hyperbole ("kms, I have work tomorrow"), ' +
+  welfare: 'SCOPE - WELFARE (support check): about a member\'s OWN wellbeing, not rule-breaking. Does this person ' +
+    'genuinely seem in distress or reaching for help right now - vs. hyperbole ("kms, I have work tomorrow"), ' +
     'jokes, or lyrics? Surface genuine distress with a LOW bar (a kind check-in beats missing one), but suppress ' +
     'obvious hyperbole. NEVER suppress a specific, sincere statement of self-harm intent. severity = urgency.',
 };
@@ -134,7 +134,7 @@ async function callJudge(scope, payload) {
     `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
     '', 'RECENT CONTEXT (older → newer):', ctx, '',
     '>>> FLAGGED MESSAGE (most recent, from AUTHOR above):',
-    payload.content || '(no text — attachment/embed only)',
+    payload.content || '(no text - attachment/embed only)',
     '', 'Return only the JSON verdict.',
   ].join('\n');
   const resp = await c.messages.create({
@@ -204,4 +204,4 @@ function status() {
   return { enabled: config.smartWatchLive !== undefined, sdk: !!Anthropic, key: !!API_KEY, live: !!config.smartWatchLive, model: MODEL };
 }
 
-module.exports = { evaluate, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL };
+module.exports = { evaluate, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge };

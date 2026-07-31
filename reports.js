@@ -8,7 +8,7 @@ const watchlist = require('./watchlist');
 
 const CONFIG_FILE = process.env.FUBU_REPORTS_FILE || '/home/ubuntu/.fubu_reports.json';
 const STATE_FILE = process.env.FUBU_REPORTS_STATE_FILE || '/home/ubuntu/.fubu_reports_state.json';
-const COOLDOWN_MS = 5 * 60 * 1000;
+const COOLDOWN_MS = 30 * 60 * 1000, DAILY_MAX = 6;
 const MIN_LEN = 10, MAX_LEN = 1000;
 const P = PermissionsBitField.Flags;
 
@@ -57,12 +57,16 @@ async function submit(guild, member, reportedUser, text) {
   const state = loadState();
   const last = state.cooldown[member.id] || 0, waitLeft = COOLDOWN_MS - (Date.now() - last);
   if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  const day = new Date().toISOString().slice(0, 10);
+  const dc = (state.daily || {})[member.id];
+  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   if (!channel) return { ok: false, msg: 'The reports channel is missing — an admin needs to run `/report-setup` again.' };
   const num = (state.counter || 0) + 1;
   const reportedId = reportedUser ? reportedUser.id : null;
   const msg = await channel.send({ embeds: [reportEmbed(num, text, reportedId)], components: [revealRow(false)] });
   state.counter = num; state.cooldown[member.id] = Date.now();
+  state.daily = state.daily || {}; state.daily[member.id] = (dc && dc.day === day) ? { day, n: dc.n + 1 } : { day, n: 1 };
   state.posts[msg.id] = { num, reporterId: member.id, reportedId };
   saveState(state);
   return { ok: true, num };
