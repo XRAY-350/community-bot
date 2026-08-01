@@ -37,19 +37,33 @@ async function setup(guild) {
   return { channel, created: true };
 }
 
-const buttons = (done, approved) => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('strikeappeal_approve').setEmoji('✅').setLabel(done && approved ? 'Approved — removed' : 'Approve & remove').setStyle(ButtonStyle.Success).setDisabled(!!done),
-  new ButtonBuilder().setCustomId('strikeappeal_deny').setEmoji('⛔').setLabel(done && !approved ? 'Denied' : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done));
+// Appeal card rows (returns an ARRAY of ActionRows). `outcome` (once decided) is 'approved'|'reduced'|'denied'.
+// `snapshotWeight` drives the partial-approval "Approve → Nu" buttons — one per integer weight below the
+// strike's current weight (so a 3-unit strike can be knocked to 2 or 1 instead of fully removed).
+function buttons(done, outcome, snapshotWeight) {
+  const topLabel = done ? (outcome === 'approved' ? 'Approved — removed' : outcome === 'reduced' ? 'Approved — reduced' : 'Approve & remove') : 'Approve & remove';
+  const rows = [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('strikeappeal_approve').setEmoji(outcome === 'reduced' ? '⚖️' : '✅').setLabel(topLabel).setStyle(outcome === 'reduced' ? ButtonStyle.Secondary : ButtonStyle.Success).setDisabled(!!done),
+    new ButtonBuilder().setCustomId('strikeappeal_deny').setEmoji('⛔').setLabel(done && outcome === 'denied' ? 'Denied' : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done))];
+  const w = Math.floor(Number(snapshotWeight) || 0);
+  if (!done && w > 1) {
+    const reduceRow = new ActionRowBuilder();
+    for (let n = 1; n < w && reduceRow.components.length < 5; n++)
+      reduceRow.addComponents(new ButtonBuilder().setCustomId(`strikeappeal_reduce:${n}`).setEmoji('⚖️').setLabel(`Approve → ${n}u`).setStyle(ButtonStyle.Primary));
+    rows.push(reduceRow);
+  }
+  return rows;
+}
 
 function appealEmbed(rec, resolution, byId) {
   const e = new EmbedBuilder()
-    .setColor(resolution === 'approved' ? 0x57F287 : resolution === 'denied' ? 0xED4245 : 0x5865F2)
+    .setColor(resolution === 'denied' ? 0xED4245 : (resolution === 'approved' || resolution === 'reduced') ? 0x57F287 : 0x5865F2)
     .setTitle('⚖️ Strike appeal').addFields(
       { name: 'Appealing', value: `<@${rec.memberId}> \`${rec.memberTag}\``, inline: false },
       { name: 'Strike', value: strikes.entryLabel(rec.strikeSnapshot), inline: false });
   if (rec.note) e.addFields({ name: 'Their note', value: String(rec.note).slice(0, 1024), inline: false });
-  if (resolution) e.addFields({ name: resolution === 'approved' ? '✅ Approved by' : '⛔ Denied by', value: `<@${byId}>`, inline: true });
-  e.setFooter({ text: 'Only the member who received it can appeal. Staff decide — Approve removes the strike.' });
+  if (resolution) e.addFields({ name: resolution === 'approved' ? '✅ Removed by' : resolution === 'reduced' ? `⚖️ Reduced to ${rec.reducedTo}u by` : '⛔ Denied by', value: `<@${byId}>`, inline: true });
+  e.setFooter({ text: 'Only the member who received it can appeal. Staff decide — Approve removes it, or reduce its units.' });
   return e;
 }
 
@@ -85,7 +99,7 @@ async function submit(guild, member, state, strikeId, note) {
   await thread.members.add(member.id).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}> — this is your appeal for the strike below. Explain why here; staff will read it and decide. You don’t need anyone else to join.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
-    embeds: [appealEmbed(rec)], components: [buttons(false)], allowedMentions: { users: [member.id] },
+    embeds: [appealEmbed(rec)], components: buttons(false, null, entry.weight), allowedMentions: { users: [member.id] },
   });
   rec.starterId = msg.id;
   st.appeals[thread.id] = rec; saveState(st);
@@ -101,34 +115,46 @@ async function handleButton(interaction, state) {
   const rec = st.appeals[interaction.channelId];
   if (!rec) return interaction.reply({ content: 'This appeal is no longer tracked.', flags: MessageFlags.Ephemeral });
   if (rec.status !== 'open') return interaction.reply({ content: 'This appeal was already decided.', flags: MessageFlags.Ephemeral });
-  const approve = interaction.customId === 'strikeappeal_approve';
+  const cid = interaction.customId;
+  const isDeny = cid === 'strikeappeal_deny';
+  const reduceTo = cid.startsWith('strikeappeal_reduce:') ? Number(cid.split(':')[1]) : null;   // partial approve
+  const isApprove = cid === 'strikeappeal_approve' || reduceTo !== null;
 
-  if (approve) {
+  if (isApprove) {
     const member = await guild.members.fetch(rec.memberId).catch(() => null);
-    if (!member) return interaction.reply({ content: 'That member isn’t in the server anymore — can’t safely remove the strike/timeout from here. If they come back, use `/strike remove`.', flags: MessageFlags.Ephemeral });
-    const r = await strikes.removeStrike(guild, member, state, rec.strikeId, interaction.user.tag);
-    if (!r.ok) return interaction.reply({ content: 'Couldn’t find that strike anymore — it may have already been removed some other way. Nothing was changed.', flags: MessageFlags.Ephemeral });
-    if (rec.strikeSnapshot.timeoutMs && member.communicationDisabledUntilTimestamp && member.communicationDisabledUntilTimestamp > Date.now()) {
-      await member.timeout(null, `Strike appeal approved by ${interaction.user.tag}`).catch(() => {});
+    if (!member) return interaction.reply({ content: 'That member isn’t in the server anymore — can’t safely change the strike/timeout from here. If they come back, use `/strike`.', flags: MessageFlags.Ephemeral });
+    if (reduceTo !== null) {
+      const r = await strikes.setStrikeWeight(guild, member, state, rec.strikeId, reduceTo, interaction.user.tag);
+      if (!r.ok) return interaction.reply({ content: 'Couldn’t find that strike anymore — it may have already been changed. Nothing was done.', flags: MessageFlags.Ephemeral });
+      rec.reducedTo = reduceTo;
+    } else {
+      const r = await strikes.removeStrike(guild, member, state, rec.strikeId, interaction.user.tag);
+      if (!r.ok) return interaction.reply({ content: 'Couldn’t find that strike anymore — it may have already been removed some other way. Nothing was changed.', flags: MessageFlags.Ephemeral });
+      if (rec.strikeSnapshot.timeoutMs && member.communicationDisabledUntilTimestamp && member.communicationDisabledUntilTimestamp > Date.now())
+        await member.timeout(null, `Strike appeal approved by ${interaction.user.tag}`).catch(() => {});   // full removal lifts the timeout; a reduction leaves it
     }
   }
-  rec.status = approve ? 'approved' : 'denied'; rec.decidedBy = interaction.user.id;
-  if (!approve) rec.deniedAt = Date.now();
+  const outcome = isDeny ? 'denied' : reduceTo !== null ? 'reduced' : 'approved';
+  rec.status = isDeny ? 'denied' : 'approved'; rec.decidedBy = interaction.user.id;
+  if (isDeny) rec.deniedAt = Date.now();
   saveState(st);
-  await interaction.update({ embeds: [appealEmbed(rec, rec.status, interaction.user.id)], components: [buttons(true, approve)] }).catch(() => {});
+  await interaction.update({ embeds: [appealEmbed(rec, outcome, interaction.user.id)], components: buttons(true, outcome, rec.strikeSnapshot?.weight) }).catch(() => {});
   const thread = await guild.channels.fetch(rec.threadId).catch(() => null);
   if (thread) {
-    await thread.send({ content: approve
-      ? `✅ <@${rec.memberId}> — your appeal was **approved** by <@${interaction.user.id}>. The strike has been removed.`
-      : `⛔ <@${rec.memberId}> — your appeal was **denied** by <@${interaction.user.id}>. The strike stands.`,
-      allowedMentions: { users: [rec.memberId] } }).catch(() => {});
+    const msg = isDeny
+      ? `⛔ <@${rec.memberId}> — your appeal was **denied** by <@${interaction.user.id}>. The strike stands.`
+      : reduceTo !== null
+        ? `⚖️ <@${rec.memberId}> — your appeal was **partially approved** by <@${interaction.user.id}>. The strike was reduced to **${reduceTo} unit${reduceTo > 1 ? 's' : ''}**.`
+        : `✅ <@${rec.memberId}> — your appeal was **approved** by <@${interaction.user.id}>. The strike has been removed.`;
+    await thread.send({ content: msg, allowedMentions: { users: [rec.memberId] } }).catch(() => {});
     await thread.setLocked(true).catch(() => {});
     await thread.setArchived(true).catch(() => {});
   }
   await ensureBoard(guild).catch(() => {});
-  await ownerlog.log(guild, { emoji: approve ? '✅' : '⛔', title: `Strike appeal ${approve ? 'approved (strike removed)' : 'denied'}`, color: approve ? 0x57F287 : 0xED4245,
+  await ownerlog.log(guild, { emoji: isDeny ? '⛔' : reduceTo !== null ? '⚖️' : '✅',
+    title: `Strike appeal ${isDeny ? 'denied' : reduceTo !== null ? `partially approved (→ ${reduceTo}u)` : 'approved (strike removed)'}`, color: isDeny ? 0xED4245 : 0x57F287,
     detail: `<@${rec.memberId}> — strike \`${rec.strikeId}\` — by <@${interaction.user.id}>.` });
-  return interaction.followUp({ content: approve ? '✅ Strike removed and appeal closed.' : '⛔ Appeal denied and closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
+  return interaction.followUp({ content: isDeny ? '⛔ Appeal denied and closed.' : reduceTo !== null ? `⚖️ Strike reduced to ${reduceTo} units and appeal closed.` : '✅ Strike removed and appeal closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
 // Public "open strike appeals" board — pinned in the (member-visible) base channel: WHO has an open

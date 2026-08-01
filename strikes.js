@@ -126,6 +126,22 @@ async function removeStrike(guild, member, state, strikeId, byTag) {
   return { ok: true, totalUnits: total, tier: tierName(total) };
 }
 
+// Change ONE active strike's weight (units) — the "partial appeal / re-weigh" primitive. newWeight <= 0
+// deactivates it (same effect as removeStrike). Otherwise the weight is updated and the tier role recomputed.
+// Returns { ok, oldWeight, newWeight, removed, totalUnits, tier }.
+async function setStrikeWeight(guild, member, state, strikeId, newWeight, byTag) {
+  const entries = ledger(state, member.id);
+  const entry = entries.find(e => e.id === strikeId && e.active);
+  if (!entry) return { ok: false };
+  const oldWeight = entry.weight;
+  const removed = newWeight <= 0;
+  if (removed) entry.active = false; else entry.weight = newWeight;
+  saveLedger(state, member.id, entries);
+  await recomputeTier(guild, member, state, byTag);
+  const total = totalUnits(state, member.id);
+  return { ok: true, oldWeight, newWeight: removed ? 0 : newWeight, removed, totalUnits: total, tier: tierName(total) };
+}
+
 // Deactivate every active strike a member holds (full reset). Returns { cleared }.
 async function clearStrikes(guild, member, state, byTag) {
   const entries = ledger(state, member.id);
@@ -181,6 +197,6 @@ async function resyncTierRoles(guild, state) {
 
 module.exports = {
   BAN_THRESHOLD, tierRole, tierName, ledger, activeEntries, totalUnits,
-  addStrike, removeStrike, clearStrikes, recomputeTier, migrateLegacyStrikes, resyncTierRoles,
+  addStrike, removeStrike, setStrikeWeight, clearStrikes, recomputeTier, migrateLegacyStrikes, resyncTierRoles,
   entryLabel, autocompleteChoices, activeMembers, formatUnits, timeoutBonusUnits, TIMEOUT_BONUS_CAP,
 };

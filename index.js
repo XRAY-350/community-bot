@@ -406,6 +406,12 @@ opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch,
       if (r.ok) await ownerlog.log(guild, { emoji: '➖', title: 'Strike removed', color: 0x57F287, detail: `\`${strikeId}\` from <@${member.id}> — by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
       return r;
     },
+    setWeight: async (guild, member, strikeId, newWeight, byTag) => {
+      const r = await strikes.setStrikeWeight(guild, member, state, strikeId, newWeight, byTag);
+      if (r.ok) await ownerlog.log(guild, { emoji: r.removed ? '➖' : '⚖️', title: r.removed ? 'Strike removed' : 'Strike weight changed', color: 0x57F287,
+        detail: `\`${strikeId}\` on <@${member.id}> — ${r.removed ? 'removed' : `${strikes.formatUnits(r.oldWeight)} → ${strikes.formatUnits(r.newWeight)} units`} — by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
+      return r;
+    },
     activeMembers: () => strikes.activeMembers(state),
     format: strikes.formatUnits,
     // Reuses the SAME rule-picker → reason+weight-modal → addStrike flow already wired for the

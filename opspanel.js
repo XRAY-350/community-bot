@@ -561,7 +561,7 @@ async function handlePanel(interaction) {
       new ButtonBuilder().setCustomId(`fops_pick_strikegive:${uid}`).setEmoji('📋').setLabel('Give a strike…').setStyle(ButtonStyle.Danger).setDisabled(units >= cap),
       new ButtonBuilder().setCustomId(`fops_do_strikeup:${uid}`).setEmoji('⚠️').setLabel('Strike +1 (1 unit)').setStyle(ButtonStyle.Danger).setDisabled(units >= cap),
       new ButtonBuilder().setCustomId(`fops_do_strikedown:${uid}`).setEmoji('➖').setLabel('Undo last strike').setStyle(ButtonStyle.Secondary).setDisabled(units <= 0),
-      new ButtonBuilder().setCustomId(`fops_pick_strikeremove:${uid}`).setEmoji('🎯').setLabel('Remove specific strike…').setStyle(ButtonStyle.Secondary).setDisabled(units <= 0),
+      new ButtonBuilder().setCustomId(`fops_pick_strikeremove:${uid}`).setEmoji('🎯').setLabel('Manage a strike…').setStyle(ButtonStyle.Secondary).setDisabled(units <= 0),
       new ButtonBuilder().setCustomId(`fops_do_strikeclear:${uid}`).setEmoji('🧹').setLabel('Clear strikes').setStyle(ButtonStyle.Secondary).setDisabled(units <= 0));
     const unitsDisplay = D.strike ? D.strike.format(units) : units;
     return interaction.reply({ content: `🎯 Selected <@${uid}> (\`${member.user.tag}\`) — currently **${unitsDisplay}/${cap} units**. Pick an action. _(Corner here is indefinite; for a timed corner use the Corner button (asks duration) or \`/corner\`. "Give a strike…" picks a rule/reason/weight/timeout, same as \`/strike add\`; "Strike +1" is a quick no-reason 1-unit shortcut.)_`, components: [actions, strikes], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
@@ -583,18 +583,36 @@ async function handlePanel(interaction) {
     if (!member) return interaction.reply({ content: 'Could not find that member.', flags: MessageFlags.Ephemeral });
     const entries = D.strike ? D.strike.entries(member) : [];
     if (!entries.length) return interaction.reply({ content: `<@${uid}> has no active strikes.`, flags: MessageFlags.Ephemeral });
-    const menu = new StringSelectMenuBuilder().setCustomId(`fops_do_strikeremove:${uid}`).setPlaceholder('Which strike?')
+    const menu = new StringSelectMenuBuilder().setCustomId(`fops_strike_manage:${uid}`).setPlaceholder('Which strike?')
       .addOptions(entries.slice(0, 25).map(e => ({ label: D.strike.label(e).slice(0, 100), value: e.id })));
-    return interaction.reply({ content: `Pick which strike to remove from <@${uid}>:`, components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    return interaction.reply({ content: `Manage a strike on <@${uid}> — pick which one:`, components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
-  if (id.startsWith('fops_do_strikeremove:') && interaction.isStringSelectMenu?.()) {
+  // Picked a specific strike → offer Remove OR re-weight it (partial leniency / correction). Each button
+  // carries the target weight (0 = remove); the strike's CURRENT weight button is disabled so it's obvious.
+  if (id.startsWith('fops_strike_manage:') && interaction.isStringSelectMenu?.()) {
     const uid = id.split(':')[1];
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.reply({ content: 'That member is no longer in the server.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.update({ content: 'That member is no longer in the server.', components: [] });
     const strikeId = interaction.values[0];
-    const r = await D.strike.removeById(interaction.guild, member, strikeId, interaction.user.tag);
-    if (!r.ok) return interaction.update({ content: `Couldn’t find that strike anymore. It may have already been removed.`, components: [] });
-    return interaction.update({ content: `✅ Removed strike \`${strikeId}\` from <@${uid}> — now **${D.strike.format(r.totalUnits)}/${D.strike.BAN_THRESHOLD} units** (${r.tier}).`, components: [] });
+    const entry = (D.strike.entries(member) || []).find(e => e.id === strikeId);
+    if (!entry) return interaction.update({ content: 'That strike is gone — it may already have been changed.', components: [] });
+    const cur = entry.weight;
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`fops_strike_setw:${uid}:${strikeId}:0`).setEmoji('🗑️').setLabel('Remove').setStyle(ButtonStyle.Danger),
+      ...[1, 2, 3].map(w => new ButtonBuilder().setCustomId(`fops_strike_setw:${uid}:${strikeId}:${w}`).setLabel(`${w} unit${w > 1 ? 's' : ''}`).setStyle(ButtonStyle.Secondary).setDisabled(cur === w)));
+    return interaction.update({ content: `Strike \`${strikeId}\` on <@${uid}> — currently **${D.strike.format(cur)} unit${cur === 1 ? '' : 's'}**.\nRemove it, or set a new weight:`, components: [row] });
+  }
+  if (id.startsWith('fops_strike_setw:') && interaction.isButton?.()) {
+    const [, uid, strikeId, wStr] = id.split(':');
+    const w = Number(wStr);
+    const member = await interaction.guild.members.fetch(uid).catch(() => null);
+    if (!member) return interaction.update({ content: 'That member is no longer in the server.', components: [] });
+    const r = w <= 0
+      ? await D.strike.removeById(interaction.guild, member, strikeId, interaction.user.tag)
+      : await D.strike.setWeight(interaction.guild, member, strikeId, w, interaction.user.tag);
+    if (!r.ok) return interaction.update({ content: 'Couldn’t find that strike anymore — it may already have been changed.', components: [] });
+    const what = w <= 0 ? `Removed strike \`${strikeId}\`` : `Set strike \`${strikeId}\` to **${w} unit${w > 1 ? 's' : ''}**`;
+    return interaction.update({ content: `✅ ${what} on <@${uid}> — now **${D.strike.format(r.totalUnits)}/${D.strike.BAN_THRESHOLD} units** (${r.tier}).`, components: [] });
   }
   // Single-purpose pickers (fops_pick_*) — a member was just chosen via UserSelect for one specific
   // action opened by the buttons below. corner/ban still need one more field, so they show a short
