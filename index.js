@@ -1346,15 +1346,20 @@ async function labEvaluateAndPost(msg, member) {
   const base = onWatch ? [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])] : watchlist.loadLoose();
   const expanded = onWatch ? [...watchlist.loadLabStrict(), ...watchlist.loadLabLoose()] : watchlist.loadLabLoose();
   const all = [...new Set([...base, ...expanded])];
-  if (!all.length) return;
-  const hits = watchlist.matchTerms(msg.content, all);
-  if (!hits.length) return;
+  const hits = all.length ? watchlist.matchTerms(msg.content, all) : [];
+  // LOOSE stays keyword-gated (cost/noise across the whole server). STRICT is FULL behavioral coverage —
+  // the judge reads EVERY message from a watchlisted member (a small, deliberately-watched population),
+  // keyword or not, matching the strict rubric's "is this person being disruptive/resuming?" intent.
+  if (!onWatch && !hits.length) return;
   const d = await smartwatch.evaluateLab(scope, msg, hits);
   if (!d.ran || !d.verdict) return;                    // judge unavailable/errored → nothing to grade (shadow log has it)
   const v = d.verdict;
   const wouldSurface = !d.wouldSuppress;               // wouldSuppress already applies threshold + NEVER_SUPPRESS
+  // Don't flood the lab with a watchlisted member's benign chatter: for a no-keyword strict read, only post
+  // when the judge would SURFACE it (every read is still shadow-logged by evaluateLab above regardless).
+  if (onWatch && !hits.length && !wouldSurface) return;
   const baseSet = new Set(base.map(t => t.toLowerCase()));
-  const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '-').slice(0, 1024); // ⁺ = expansion-only (lab), not in the public list
+  const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '_(behavioral read — no keyword)_').slice(0, 1024); // ⁺ = expansion-only (lab)
   const conf = v.confidence.toFixed(2);
   const rule = v.likelyRule ? `, Rule ${v.likelyRule}` : '';
   const verdictText = `${v.surface ? 'looks real' : 'likely false positive'} — ${v.reason} _(conf ${conf}, ${v.category}${rule})_`;
