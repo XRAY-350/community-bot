@@ -7,6 +7,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
 const config = require('./config');
 const strikes = require('./strikes');
 const ownerlog = require('./ownerlog');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_STRIKE_APPEALS_FILE || '/home/ubuntu/.fubu_strike_appeals.json';
 const STATE_FILE = process.env.FUBU_STRIKE_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_strike_appeals_state.json';
@@ -113,7 +114,7 @@ async function handleButton(interaction, state) {
   const guild = interaction.guild;
   const st = loadState();
   const rec = st.appeals[interaction.channelId];
-  if (!rec) return interaction.reply({ content: 'This appeal is no longer tracked.', flags: MessageFlags.Ephemeral });
+  if (!rec) return interaction.reply({ content: copy.appeals.untracked, flags: MessageFlags.Ephemeral });
   if (rec.status !== 'open') return interaction.reply({ content: 'This appeal was already decided.', flags: MessageFlags.Ephemeral });
   const cid = interaction.customId;
   const isDeny = cid === 'strikeappeal_deny';
@@ -154,7 +155,7 @@ async function handleButton(interaction, state) {
   await ownerlog.log(guild, { emoji: isDeny ? '⛔' : reduceTo !== null ? '⚖️' : '✅',
     title: `Strike appeal ${isDeny ? 'denied' : reduceTo !== null ? `partially approved (→ ${reduceTo}u)` : 'approved (strike removed)'}`, color: isDeny ? 0xED4245 : 0x57F287,
     detail: `<@${rec.memberId}> — strike \`${rec.strikeId}\` — by <@${interaction.user.id}>.` });
-  return interaction.followUp({ content: isDeny ? '⛔ Appeal denied and closed.' : reduceTo !== null ? `⚖️ Strike reduced to ${reduceTo} units and appeal closed.` : '✅ Strike removed and appeal closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
+  return interaction.followUp({ content: isDeny ? copy.appeals.denied : reduceTo !== null ? `⚖️ Strike reduced to ${reduceTo} units and appeal closed.` : '✅ Strike removed and appeal closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
 // Public "open strike appeals" board — pinned in the (member-visible) base channel: WHO has an open

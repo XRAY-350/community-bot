@@ -7,6 +7,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
 const { CATEGORY_LABEL } = require('./opspanel');
 const config = require('./config');
 const ownerlog = require('./ownerlog');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_APPEALS_FILE || '/home/ubuntu/.fubu_appeals.json';
 const STATE_FILE = process.env.FUBU_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_appeals_state.json';
@@ -143,7 +144,7 @@ async function refreshStarter(guild, rec) {
 async function handleButton(interaction) {
   const state = loadState();
   const rec = state.appeals[interaction.channelId];
-  if (!rec) return interaction.reply({ content: 'This appeal is no longer tracked.', flags: MessageFlags.Ephemeral });
+  if (!rec) return interaction.reply({ content: copy.appeals.untracked, flags: MessageFlags.Ephemeral });
   if (rec.status !== 'open') return interaction.reply({ content: 'This appeal was already decided.', flags: MessageFlags.Ephemeral });
   const approve = interaction.customId === 'appeal_approve';
 
@@ -166,7 +167,7 @@ async function handleButton(interaction) {
   await ensureBoard(interaction.guild).catch(() => {});
   await ownerlog.log(interaction.guild, { emoji: approve ? '✅' : '⛔', title: `Ban appeal ${approve ? 'approved (unbanned)' : 'denied'}`, color: approve ? 0x57F287 : 0xED4245,
     detail: `**${rec.bannedTag}** — by <@${interaction.user.id}>.` });
-  return interaction.followUp({ content: approve ? `✅ Unbanned <@${rec.bannedId}> and closed the appeal.` : '⛔ Appeal denied and closed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
+  return interaction.followUp({ content: approve ? `✅ Unbanned <@${rec.bannedId}> and closed the appeal.` : copy.appeals.denied, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
 // Public "open appeals" board — a pinned message in the (member-visible) base channel listing WHO has an

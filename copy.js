@@ -58,4 +58,10 @@ const smartwatch = {
   modeLabel(live) { return live ? '🟢 LIVE — suppressing false positives' : '🟡 shadow — annotating only'; },
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch };
+// ── appeals (ban + strike appeal family — shared notices) ───────────────────────────────────────────
+const appeals = {
+  untracked: 'This appeal is no longer tracked.',
+  denied: '⛔ Appeal denied and closed.',
+};
+
+module.exports = { common, tiers, corner, watchlist, smartwatch, appeals };

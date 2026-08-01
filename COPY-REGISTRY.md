@@ -56,8 +56,10 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 12)
+## copy.js keys (migrated so far — 14)
 
+- `copy.appeals.denied`
+- `copy.appeals.untracked`
 - `copy.common.noMemberInServer`
 - `copy.common.noWatchlistRole`
 - `copy.common.whichRule`
@@ -94,7 +96,7 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **permguard** (core) — _inline (not yet migrated)_
 - **perms** (core) — _inline (not yet migrated)_
 - **contest** (member) — _inline (not yet migrated)_
-- **appeals** (member) — _inline (not yet migrated)_
+- **appeals** (member) — copy.js: `appeals`
 - **strikeAppeals** (member) — _inline (not yet migrated)_
 - **smartWatch** (core) — copy.js: `smartwatch`
 - **smartWatchLab** (core) — _inline (not yet migrated)_
