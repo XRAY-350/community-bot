@@ -40,6 +40,7 @@ const REGISTRY = [
     help: { name: '🎭 `/request-role` — ask for (or drop) a role', value: 'Ask for a casual role — or hand one back. Staff get your request with one-click approve/deny; if approved it’s added (or removed) for you. Cosmetic/interest roles only — not staff or age roles.' } },
   { key: 'roleselect',  audience: 'staff',  built: true,  commands: ['roleselect-role'] }, // #roles picker itself has no command (built by a one-off script); this is just the admin add/remove tool
   { key: 'permguard',   audience: 'core',   built: true,  commands: ['permguard'] }, // channel-permission drift guard (auto-sweep + owner resnapshot command)
+  { key: 'perms',       audience: 'core',   built: true,  commands: ['perms'] }, // bot-owner permission inspector/auditor (tier view, channel access, grand audit)
   { key: 'contest',     audience: 'member', built: true,  commands: ['contest', 'contest-submit'],
     help: { name: '🎨 `/contest-submit` — enter the monthly contest', value: 'Each month there\'s a **Drawing**, **Photography** and **Writing** contest with a theme. Post your entry in its channel (one per person) and **vote with 🩷** — most reactions wins the 🏆 Contest Winner role! Want to stay anonymous? `/contest-submit` posts your entry with your name hidden. Organizers run it with `/contest`.' } },
 

@@ -28,6 +28,7 @@ const langmods = require('./langmods');
 const promote = require('./promote');
 const ownerlog = require('./ownerlog');
 const permguard = require('./permguard');
+const perms = require('./perms');
 const rolereq = require('./rolereq');
 const appeals = require('./appeals');
 const strikeAppeals = require('./strikeAppeals');
@@ -643,6 +644,14 @@ client.once('ready', async () => {
           { name: '👁️ Surface, no action', value: 'glance' }, { name: '⬜ Fine (hide)', value: 'fine' },
           { name: '🫂 Genuine distress (welfare)', value: 'genuine' }, { name: '⬜ Hyperbole (welfare hide)', value: 'hyperbole' }))
         .addStringOption(o => o.setName('note').setDescription('Optional: the correct read (teaches the judge its reasoning)').setRequired(false).setMaxLength(300))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+      new SlashCommandBuilder().setName('perms').setDescription('Permission inspector & audit (bot owner only)')
+        .addSubcommand(s => s.setName('tier').setDescription('What a whole tier can see')
+          .addStringOption(o => o.setName('tier').setDescription('Which tier').setRequired(true).addChoices(
+            { name: 'Regular member', value: 'member' }, { name: 'Trial mod', value: 'trial' }, { name: 'Mod', value: 'mod' }, { name: 'Admin', value: 'admin' }, { name: 'Owner', value: 'owner' })))
+        .addSubcommand(s => s.setName('channel').setDescription('Who can see/use one channel')
+          .addChannelOption(o => o.setName('channel').setDescription('Channel to inspect').setRequired(true)))
+        .addSubcommand(s => s.setName('audit').setDescription('Full permission audit — leaks, dangerous perms, exposure'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('suggest').setDescription('Post a suggestion to the suggestions forum')
@@ -2383,6 +2392,25 @@ client.on('interactionCreate', async (interaction) => {
       if (sub === 'add') { await member.roles.add(config.watchlistRoleId, `Watchlist by ${interaction.user.tag}`); return interaction.reply({ content: `👁 <@${user.id}> added to the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
       if (sub === 'remove') { await member.roles.remove(config.watchlistRoleId, `Un-watchlist by ${interaction.user.tag}`); watchlist.removePending(user.id); return interaction.reply({ content: `✅ <@${user.id}> removed from the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
     } catch (e) { return interaction.reply({ content: `❌ ${e.message}`, flags: MessageFlags.Ephemeral }); }
+    return;
+  }
+  if (name === 'perms') {
+    // OWNER-ONLY permission inspector/auditor. Ephemeral; computed against real tier role-sets.
+    if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the bot owner can use this.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const guild = interaction.guild;
+      await guild.channels.fetch().catch(() => {});
+      await guild.roles.fetch().catch(() => {});
+      const sub = interaction.options.getSubcommand();
+      let text;
+      if (sub === 'tier') text = perms.tierReport(guild, interaction.options.getString('tier'));
+      else if (sub === 'channel') text = perms.channelReport(guild, interaction.options.getChannel('channel'));
+      else text = perms.grandAudit(guild);
+      const parts = perms.chunk(text);
+      await interaction.editReply({ content: parts[0], allowedMentions: { parse: [] } });
+      for (let i = 1; i < parts.length; i++) await interaction.followUp({ content: parts[i], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    } catch (e) { console.error('[perms]', e.message); await interaction.editReply(`Error: ${e.message}`).catch(() => {}); }
     return;
   }
   if (name === 'grade') {
