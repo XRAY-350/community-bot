@@ -64,6 +64,7 @@ const CATEGORY_LABEL = { false_verification: 'False verification / not eligible'
 
 let D = null;
 function wire(deps) { D = deps; }
+const _cornerMultiStash = new Map();   // modId -> {ids, at}: carries a multi-corner selection to its duration modal
 function loadRef() { try { return JSON.parse(fs.readFileSync(PANEL_FILE, 'utf8')); } catch { return {}; } }
 function saveRef(r) { try { fs.writeFileSync(PANEL_FILE, JSON.stringify(r)); } catch (e) { console.error('[fops] save:', e.message); } }
 
@@ -202,7 +203,8 @@ function buildModeration() {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_corner').setEmoji('⛓️').setLabel('Corner (type)').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('fops_verify').setEmoji('✅').setLabel('Verify (type)').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('fops_uncorner').setEmoji('🔓').setLabel('Uncorner (type)').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId('fops_uncorner').setEmoji('🔓').setLabel('Uncorner (type)').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_corner_multi').setEmoji('⛓️').setLabel('Corner several…').setStyle(ButtonStyle.Danger));
   return { content: '## 🛡️ FUBU Ops · Moderation', embeds: [embed], components: [pick, row, navRow(pageIdx('Moderation'))] };
 }
 
@@ -570,6 +572,11 @@ async function handlePanel(interaction) {
     return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner — duration',
       [{ id: 'dur', label: 'Duration (30m, 2h, 3d — blank = indefinite)' }]));
   }
+  if (id === 'fops_pick_cornermulti') {
+    _cornerMultiStash.set(interaction.user.id, { ids: interaction.values, at: Date.now() });
+    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s) — duration`,
+      [{ id: 'dur', label: 'Duration (30m, 2h, 3d — blank = indefinite)' }]));
+  }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
     const uid = interaction.values[0];
@@ -668,6 +675,10 @@ async function handlePanel(interaction) {
   // Picker openers — gate BEFORE showing the picker. Each replies with a UserSelect; picking triggers
   // fops_pick_* below (either straight to the action, or a short follow-up modal for extra fields).
   if (id === 'fops_corner') return interaction.reply({ content: 'Pick who to corner:', components: [pickerRow('fops_pick_corner', 'Pick a member to corner…')], flags: MessageFlags.Ephemeral });
+  if (id === 'fops_corner_multi') {
+    const menu = new UserSelectMenuBuilder().setCustomId('fops_pick_cornermulti').setPlaceholder('Pick members to corner (up to 10)…').setMinValues(1).setMaxValues(10);
+    return interaction.reply({ content: 'Pick everyone to corner (same duration for all):', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+  }
   if (id === 'fops_verify') return interaction.reply({ content: 'Pick who to verify:', components: [pickerRow('fops_pick_verify', 'Pick a member to verify…')], flags: MessageFlags.Ephemeral });
   if (id === 'fops_uncorner') return interaction.reply({ content: 'Pick who to release:', components: [pickerRow('fops_pick_uncorner', 'Pick a member to release…')], flags: MessageFlags.Ephemeral });
   if (id === 'fops_ban') return meets(tier, 'admin') ? interaction.reply({ content: 'Pick who to ban:', components: [pickerRow('fops_pick_ban', 'Pick a member to ban…')], flags: MessageFlags.Ephemeral }) : denyReply('admin');
@@ -778,6 +789,23 @@ async function handlePanel(interaction) {
       const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id);
       if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'} — stripped ${r.stripped} role(s).`);
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_cornermulti_dur') {
+      const stash = _cornerMultiStash.get(interaction.user.id);
+      _cornerMultiStash.delete(interaction.user.id);
+      if (!stash || !stash.ids?.length) return interaction.editReply('That selection expired — pick the members again.');
+      const dur = (interaction.fields.getTextInputValue('dur') || '').trim();
+      const ms = dur ? D.corner.parseDuration(dur) : null;
+      if (dur && !ms) return interaction.editReply('Bad duration — use `30m`, `2h`, `3d`, `30s`.');
+      const members = [];
+      for (const uid of stash.ids) { const m = await interaction.guild.members.fetch(uid).catch(() => null); if (m) members.push(m); }
+      const actorRank = { owner: 3, admin: 2, mod: 1 }[tierOf(interaction)] || 0;
+      const { done, skipped } = await D.cornerMany(interaction.guild, interaction.user.id, actorRank, members, ms, {});
+      const lines = [];
+      if (done.length) lines.push(`⛓️ Cornered **${done.length}**${dur ? ` for ${dur}` : ' indefinitely'}: ${done.map(x => `<@${x}>`).join(', ')}`);
+      if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
+      await interaction.editReply({ content: lines.join('\n') || 'Nobody cornered.', allowedMentions: { parse: [] } });
       return refreshPanel(interaction.client);
     }
     if (id.startsWith('fops_banmodal2:')) {

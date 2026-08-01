@@ -221,6 +221,32 @@ async function releaseCornerAndAnnounce(guild, uid) {
     desc: `<@${uid}>'s sentence ended — auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(r.servedMs)}` });
 }
 
+// Corner a LIST of members in one action — shared by /corner's `also`, the dashboard multi-pick, and the
+// Send-to-corner sweep. Applies the same per-target guards as /corner (skip self/bot/owner/higher-tier),
+// dedupes, announces each in the corner channel, writes ONE summary to the corner log. Returns {done, skipped}.
+async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null } = {}) {
+  const RANK = { owner: 3, admin: 2, mod: 1 };
+  const done = [], skipped = [], seen = new Set();
+  const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
+  const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
+  const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
+  for (const member of members) {
+    if (!member || seen.has(member.id)) continue;
+    seen.add(member.id);
+    if (member.id === actorId) { skipped.push(`<@${member.id}> (yourself)`); continue; }
+    if (member.user?.bot) { skipped.push(`<@${member.id}> (bot)`); continue; }
+    if (member.id === guild.ownerId) { skipped.push(`<@${member.id}> (owner)`); continue; }
+    const targetTier = opspanel.memberTier(member);
+    if ((RANK[targetTier] || 0) > actorRank) { skipped.push(`<@${member.id}> (${targetTier})`); continue; }
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
+    if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText)).catch(() => {}); }
+    else skipped.push(`<@${member.id}> (${r.error})`);
+  }
+  if (done.length) await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
+    desc: `${done.map(id => `<@${id}>`).join(', ')} — cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+  return { done, skipped, whenPhrase };
+}
+
 async function handleCornerButton(interaction) {
   const [, userId, msStr] = interaction.customId.split(':');   // corner_rel:<userId>:<ms>  or  corner_recorner:<userId>
   const ms = Number(msStr || 0);
@@ -345,7 +371,7 @@ const getWarnChannel = () => warnChannel;
 const getConflictChannel = () => conflictChannel;
 
 // Inject the bot's own logic into the tier-gated ops dashboard so it reuses corner/sweep/state/etc.
-opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch,
+opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch, cornerMany,
   getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel,
   logAction: ownerlog.log,
   strike: {
@@ -570,6 +596,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('rule').setDescription('Which rule did they break? (optional)').setRequired(false)
           .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
+        .addStringOption(o => o.setName('also').setDescription('Corner more members too — @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
@@ -1830,8 +1857,23 @@ client.on('interactionCreate', async (interaction) => {
       if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
       const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs);
       if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
+      // Sweep: also corner everyone else (non-staff, non-bot) who posted in this channel in the last N minutes.
+      let sweepStr = ''; try { sweepStr = (interaction.fields.getTextInputValue('sweep') || '').trim(); } catch { /* older modal */ }
+      let sweepNote = '';
+      const mins = sweepStr ? Number(sweepStr) : 0;
+      if (Number.isFinite(mins) && mins > 0) {
+        const since = Date.now() - Math.min(mins, 120) * 60000;   // cap the look-back at 2h
+        const recent = target.channel && await target.channel.messages.fetch({ limit: 100 }).catch(() => null);
+        const authorIds = new Set();
+        if (recent) for (const m of recent.values()) { if (m.createdTimestamp >= since && !m.author.bot && m.author.id !== member.id) authorIds.add(m.author.id); }
+        const sweepMembers = [];
+        for (const id of authorIds) { const mm = await guild.members.fetch(id).catch(() => null); if (mm && !opspanel.memberTier(mm)) sweepMembers.push(mm); }
+        const actorRank = { owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
+        const { done, skipped } = await cornerMany(guild, interaction.user.id, actorRank, sweepMembers, durationMs, { reasonText: reason });
+        sweepNote = `\n🧹 Sweep (${Math.min(mins, 120)}m): +${done.length} more${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
+      }
       const relSec = Math.floor((Date.now() + durationMs) / 1000);
-      return interaction.editReply(`🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` — ${reason}` : ''}. Stripped **${res.stripped}** role(s).`);
+      return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` — ${reason}` : ''}. Stripped **${res.stripped}** role(s).${sweepNote}`, allowedMentions: { parse: [] } });
     } catch (e) { console.error(`[corner-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not corner.') : interaction.reply({ content: 'Could not corner.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
@@ -2033,7 +2075,8 @@ client.on('interactionCreate', async (interaction) => {
     const modal = new ModalBuilder().setCustomId(`corner_reason:${member.id}:${target.channelId}:${target.id}`).setTitle('Send to corner');
     modal.addComponents(
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = 15m; 30s, 10m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
     return interaction.showModal(modal);
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Strike') {
@@ -2616,6 +2659,21 @@ client.on('interactionCreate', async (interaction) => {
         if (!ruleN && !customReason) return interaction.reply({ content: 'As a **trial mod**, you must pick a **rule** or give a **reason** to corner someone.', flags: MessageFlags.Ephemeral });
         if (!durationMs) return interaction.reply({ content: 'As a **trial mod**, you must set a **duration** — max **1 hour** (e.g. `30m`, `1h`).', flags: MessageFlags.Ephemeral });
         if (durationMs > 3600000) return interaction.reply({ content: 'As a **trial mod**, a corner can be **at most 1 hour**.', flags: MessageFlags.Ephemeral });
+      }
+      // Multi-corner: `also` lists extra members (mentions or IDs) → corner the whole set at once.
+      const alsoStr = interaction.options.getString('also');
+      if (alsoStr && alsoStr.trim()) {
+        await interaction.deferReply({ flags: interaction.channelId === config.cornerChannelId ? MessageFlags.Ephemeral : undefined });
+        const ids = [...new Set(alsoStr.match(/\d{15,}/g) || [])].filter(id => id !== member.id);
+        const extras = [];
+        for (const id of ids) { const m = await guild.members.fetch(id).catch(() => null); if (m) extras.push(m); }
+        const unknown = ids.filter(id => !extras.some(m => m.id === id));
+        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, [member, ...extras], durationMs, { ruleN, reasonText });
+        const lines = [];
+        if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` — ${reasonText}` : ''}`);
+        if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
+        if (unknown.length) lines.push(`❓ Not found: ${unknown.map(id => `\`${id}\``).join(', ')}`);
+        return interaction.editReply({ content: lines.join('\n') || 'Nobody to corner.', allowedMentions: { parse: [] } });
       }
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
