@@ -608,15 +608,15 @@ client.once('ready', async () => {
           .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too — @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods lack ManageRoles but HAVE ModerateMembers; handler enforces trial restrictions
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(`Optional — e.g.  — release automatically instead of now`).setRequired(false))
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('pending').setDescription('Browse open verify threads (paginated)')
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods verify, so they need /pending too
       // No Discord-level perm gate: trial mods (who lack Manage Roles) need to reach it too. The handler
       // gates — mod+ get the full panel, trial mods get the read-only view, everyone else is refused.
       new SlashCommandBuilder().setName('panel').setDescription('Open your private FUBU control panel (only you see it)').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
