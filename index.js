@@ -226,10 +226,11 @@ async function releaseCornerAndAnnounce(guild, uid) {
 }
 
 // Corner a LIST of members in one action — shared by /corner's `also`, the dashboard multi-pick, and the
-// Send-to-corner sweep. Applies the same per-target guards as /corner (skip self/bot/owner/higher-tier),
-// dedupes, announces each in the corner channel, writes ONE summary to the corner log. Returns {done, skipped}.
+// Bulk corner (sweep / dashboard "Corner several" / /corner also). Per-target guards: skip self, bots, and
+// ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
+// /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
+// scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
 async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null } = {}) {
-  const RANK = { owner: 3, admin: 2, mod: 1 };
   const done = [], skipped = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
@@ -241,7 +242,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     if (member.user?.bot) { skipped.push(`<@${member.id}> (bot)`); continue; }
     if (member.id === guild.ownerId) { skipped.push(`<@${member.id}> (owner)`); continue; }
     const targetTier = opspanel.memberTier(member);
-    if ((RANK[targetTier] || 0) > actorRank) { skipped.push(`<@${member.id}> (${targetTier})`); continue; }
+    if (targetTier) { skipped.push(`<@${member.id}> (${targetTier})`); continue; }   // bulk-corner never touches staff (mod/admin/owner)
     const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
     if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText)).catch(() => {}); }
     else skipped.push(`<@${member.id}> (${r.error})`);
