@@ -204,6 +204,9 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
     return { ok: false, error: err.message };
   }
   await restoreTimeout(); // put the Discord timeout back - cornering doesn't cancel it
+  // They just lost access to every normal channel, but Discord does NOT reliably eject someone from a voice
+  // channel they're already in on a permission change — so pull them out of voice explicitly.
+  if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
   return { ok: true, stripped: strip.length, repeatCount };

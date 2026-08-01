@@ -355,7 +355,8 @@ const state = new State(config.stateFile);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],   // watchlist keyword monitor
+    GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates],   // watchlist keyword monitor + voice states (corner disconnects them from VC)
   // GuildMember partial lets guildMemberUpdate fire even when the old member wasn't cached.
   // Message/Reaction partials let messageReactionAdd fire for the (old, uncached) weekly message.
   partials: [Partials.GuildMember, Partials.Message, Partials.Reaction, Partials.User],
