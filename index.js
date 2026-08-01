@@ -632,6 +632,14 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new SlashCommandBuilder().setName('watchlist-suggest').setDescription('Scan recent messages and recommend new watchlist terms')
         .addIntegerOption(o => o.setName('hours').setDescription('How far back to scan (default 6, max 24)').setMinValue(1).setMaxValue(24)),
+      new SlashCommandBuilder().setName('grade').setDescription('Grade a smart-watch card by its ID — trains the judge (owner only)')
+        .addStringOption(o => o.setName('id').setDescription('The grade id shown on the card').setRequired(true))
+        .addStringOption(o => o.setName('verdict').setDescription('Your call').setRequired(true).addChoices(
+          { name: '🔨 Strike-worthy', value: 'strike' }, { name: '⛓️ Corner-only', value: 'corner' },
+          { name: '👁️ Surface, no action', value: 'glance' }, { name: '⬜ Fine (hide)', value: 'fine' },
+          { name: '🫂 Genuine distress (welfare)', value: 'genuine' }, { name: '⬜ Hyperbole (welfare hide)', value: 'hyperbole' }))
+        .addStringOption(o => o.setName('note').setDescription('Optional: the correct read (teaches the judge its reasoning)').setRequired(false).setMaxLength(300))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('suggest').setDescription('Post a suggestion to the suggestions forum')
         .addStringOption(o => o.setName('text').setDescription('Your suggestion').setRequired(true).setMaxLength(500)),
@@ -1384,7 +1392,10 @@ async function labEvaluateAndPost(msg, member) {
     new ButtonBuilder().setCustomId(`sw_label:fine:${aiS}`).setEmoji('⬜').setLabel('Fine (hide)').setStyle(ButtonStyle.Success));
   const noteRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`sw_note:rule:${aiS}`).setEmoji('✏️').setLabel('Correct its read').setStyle(ButtonStyle.Secondary));
-  await ch.send({ embeds: [emb], components: [row, noteRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
+  const gradeId = smartwatch.genGradeId();
+  emb.setFooter({ text: `#${msg.channel?.name || '?'} · flagged ${msg.author.id} · grade id ${gradeId}` });
+  const sent = await ch.send({ embeds: [emb], components: [row, noteRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
+  smartwatch.registerCard(gradeId, { content: (msg.content || '').slice(0, 1024), aiWouldSurface: wouldSurface, task: 'rule', channel: msg.channel?.name, author: msg.author?.id, cardMsgId: sent?.id, cardChannelId: ch.id });
   // Multi-action prototype: the judge may also propose strikes/corners on OTHER messages in the read
   // context. Post each as its own gradable card (same 🔨/⛓️/⬜ buttons) so admins can score whether the
   // richer read is trustworthy. aiSurface=1 — proposing an action means the AI would surface/act.
@@ -1398,7 +1409,9 @@ async function labEvaluateAndPost(msg, member) {
         { name: 'Matched', value: '_(context proposal — not a keyword hit)_' },
         { name: 'Message (saved copy)', value: (a.quote || '_(no text)_').slice(0, 1024) },
         { name: `AI proposes — ${a.action.toUpperCase()}${aRule}`, value: (a.reason || '-').slice(0, 1024) })
-      .setFooter({ text: `#${msg.channel?.name || '?'} · proposal` }).setTimestamp(new Date());
+      .setTimestamp(new Date());
+    const aGradeId = smartwatch.genGradeId();
+    aEmb.setFooter({ text: `#${msg.channel?.name || '?'} · proposal · grade id ${aGradeId}` });
     const aRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('sw_label:strike:1').setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('sw_label:corner:1').setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
@@ -1408,7 +1421,8 @@ async function labEvaluateAndPost(msg, member) {
     const aRow2 = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('sw_note:rule:1').setEmoji('✏️').setLabel('Correct its read').setStyle(ButtonStyle.Secondary));
     if (a.url) aRow2.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(a.url).setEmoji('🔗').setLabel('Jump'));
-    await ch.send({ embeds: [aEmb], components: [aRow, aRow2], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
+    const aSent = await ch.send({ embeds: [aEmb], components: [aRow, aRow2], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
+    smartwatch.registerCard(aGradeId, { content: (a.quote || '').slice(0, 1024), aiWouldSurface: true, task: 'rule', channel: msg.channel?.name, author: null, cardMsgId: aSent?.id, cardChannelId: ch.id });
   }
 }
 
@@ -1442,7 +1456,10 @@ async function postWelfareLabCard(msg, ch, hits, base) {
     new ButtonBuilder().setCustomId(`sw_label:hyperbole:${aiS}`).setEmoji('⬜').setLabel('Hyperbole (hide)').setStyle(ButtonStyle.Success));
   const noteRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`sw_note:welfare:${aiS}`).setEmoji('✏️').setLabel('Correct its read').setStyle(ButtonStyle.Secondary));
-  await ch.send({ embeds: [emb], components: [row, noteRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] welfare send:', e.message));
+  const gradeId = smartwatch.genGradeId();
+  emb.setFooter({ text: `#${msg.channel?.name || '?'} · welfare · flagged ${msg.author.id} · grade id ${gradeId}` });
+  const sent = await ch.send({ embeds: [emb], components: [row, noteRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] welfare send:', e.message));
+  smartwatch.registerCard(gradeId, { content: (msg.content || '').slice(0, 1024), aiWouldSurface: wouldSurface, task: 'welfare', channel: msg.channel?.name, author: msg.author?.id, cardMsgId: sent?.id, cardChannelId: ch.id });
 }
 
 // Reason+weight modal for a message-based strike. Carries the flagged message ref so the submit
@@ -2339,6 +2356,37 @@ client.on('interactionCreate', async (interaction) => {
       if (sub === 'remove') { await member.roles.remove(config.watchlistRoleId, `Un-watchlist by ${interaction.user.tag}`); watchlist.removePending(user.id); return interaction.reply({ content: `✅ <@${user.id}> removed from the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
     } catch (e) { return interaction.reply({ content: `❌ ${e.message}`, flags: MessageFlags.Ephemeral }); }
     return;
+  }
+  if (name === 'grade') {
+    // OWNER-ONLY. Grade a smart-watch card by its short ID (works when there are no buttons — e.g. live).
+    if (opspanel.tierOf(interaction) !== 'owner') return interaction.reply({ content: 'Only the owner can grade cards.', flags: MessageFlags.Ephemeral });
+    const gid = (interaction.options.getString('id') || '').trim().toUpperCase();
+    const verdict = interaction.options.getString('verdict');
+    const note = (interaction.options.getString('note') || '').trim() || null;
+    const meta = smartwatch.VERDICT_META[verdict];
+    if (!meta) return interaction.reply({ content: 'Unknown verdict.', flags: MessageFlags.Ephemeral });
+    const card = smartwatch.lookupCard(gid);
+    if (!card) return interaction.reply({ content: `No card with id \`${gid}\` — check the grade id on the card (only the last ~400 are kept).`, flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const aiWouldSurface = !!card.aiWouldSurface;
+    smartwatch.addExample({ ts: Date.now(), verdict, task: meta.task, content: card.content, note, channel: card.channel, aiWouldSurface, author: card.author, by: interaction.user.id, byTag: interaction.user.tag });
+    const correct = aiWouldSurface === meta.surface;
+    const stats = smartwatch.labStats(meta.task);
+    const acc = stats.total ? Math.round(100 * stats.right / stats.total) : 0;
+    // Best-effort: annotate + lock the card message so it shows it was graded.
+    try {
+      if (card.cardMsgId && card.cardChannelId) {
+        const cch = await interaction.guild.channels.fetch(card.cardChannelId).catch(() => null);
+        const cm = cch && await cch.messages.fetch(card.cardMsgId).catch(() => null);
+        if (cm?.embeds?.[0]) {
+          const e2 = EmbedBuilder.from(cm.embeds[0]).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
+            name: `✅ Graded via /grade (\`${gid}\`)`, value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> — AI was ${correct ? '✅ right' : '❌ wrong'}${note ? `\ncorrect read: _${note}_` : ''}\n${meta.task} accuracy **${acc}%** (${stats.right}/${stats.total})`.slice(0, 1024) });
+          const links = (cm.components?.flatMap(r => r.components) || []).filter(b => b.style === ButtonStyle.Link);
+          await cm.edit({ embeds: [e2], components: links.length ? [new ActionRowBuilder().addComponents(...links.map(b => ButtonBuilder.from(b)))] : [] }).catch(() => {});
+        }
+      }
+    } catch { /* annotate best-effort */ }
+    return interaction.editReply(`✅ Graded \`${gid}\` as **${meta.label.split(' (')[0]}** — AI was ${correct ? 'right ✅' : 'wrong ❌'}. ${meta.task} accuracy now **${acc}%**${note ? ' · note saved to guide the judge' : ''}.`);
   }
   if (name === 'watchlist-suggest') {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can use this.', flags: MessageFlags.Ephemeral });

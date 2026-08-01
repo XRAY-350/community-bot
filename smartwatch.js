@@ -195,6 +195,20 @@ function addExample(e) {
   try { fs.appendFileSync(EXAMPLES_FILE, JSON.stringify(e) + '\n'); return true; }
   catch (err) { console.error('[smartwatch] example append:', err.message); return false; }
 }
+
+// ---- card registry: lets a card be graded by a short ID via /grade (works when there are no buttons) ----
+const CARDS_FILE = process.env.SMARTWATCH_CARDS_FILE || '/home/ubuntu/.fubu_smartwatch_cards.json';
+const CARD_CAP = 400;
+const crypto = require('crypto');
+function genGradeId() { return crypto.randomBytes(3).toString('hex').toUpperCase(); }   // 6 hex chars, e.g. 3F9A1C
+function _loadCards() { try { return JSON.parse(fs.readFileSync(CARDS_FILE, 'utf8')); } catch { return {}; } }
+function registerCard(id, data) {
+  const cards = _loadCards();
+  cards[id] = { ...data, ts: Date.now() };
+  const kept = Object.fromEntries(Object.entries(cards).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0)).slice(0, CARD_CAP));
+  try { fs.writeFileSync(CARDS_FILE, JSON.stringify(kept)); } catch (e) { console.error('[smartwatch] card register:', e.message); }
+}
+function lookupCard(id) { return _loadCards()[String(id || '').trim().toUpperCase()] || null; }
 const taskOf = v => VERDICT_META[v]?.task || 'rule';
 // Few-shot block from the most recent labels for ONE task (rule vs welfare), for injection into the judge
 // prompt — a welfare call only ever sees welfare exemplars, and vice versa.
@@ -392,4 +406,5 @@ function status() {
 }
 
 module.exports = { evaluate, evaluateLab, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge, _labjudge: callLabJudge,
-  loadExamples, addExample, exemplarBlock, labStats, verdictSurfaces, EXAMPLES_FILE, VERDICT_META };
+  loadExamples, addExample, exemplarBlock, labStats, verdictSurfaces, EXAMPLES_FILE, VERDICT_META,
+  genGradeId, registerCard, lookupCard };
