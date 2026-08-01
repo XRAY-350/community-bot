@@ -919,6 +919,10 @@ client.once('ready', async () => {
   // Real-time enforcement is guildMemberUpdate; this catches pre-existing holders + missed events.
   if (dguild) await sweepMdni(dguild).catch(e => console.error(`[mdni] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdni(g)).catch(() => {}), 3600000);
+  // MDNI minor-STAFF lock: a minor with a staff role sees MDNI via the role allow (role-deny can't stop it) —
+  // maintain member-level denies for them. Boot + hourly, same cadence.
+  if (dguild) await sweepMdniStaffLock(dguild).catch(e => console.error(`[mdni-lock] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g)).catch(() => {}), 3600000);
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {
@@ -1017,6 +1021,58 @@ async function sweepMdni(guild) {
       allowedMentions: { parse: [] },
     }).catch(() => {});
   }
+}
+
+// MDNI is 18+ — and a minor must be excluded EVEN IF they're staff. Discord can't express "staff AND adult":
+// at the role tier every allow is OR'd on top of every deny, so a MODS/ADMINS **allow** overrides a 16-17
+// role **deny** — a minor mod would still see the channel. Only a MEMBER-level overwrite beats a role allow.
+// So for any minor who'd otherwise see MDNI (i.e. staff — regular minors are already blocked by @everyone),
+// maintain a member-level ViewChannel deny; drop it once they're no longer a minor-staff. Scoped to the few
+// minor-staff, never the ~800 regular minors. blessChannel keeps permguard from flagging the member-denies.
+async function enforceMdniStaffLock(member, { bless = true } = {}) {
+  if (!config.mdniChannelId || !config.minorAgeRoleId || member.user?.bot) return null;
+  const ch = member.guild.channels.cache.get(config.mdniChannelId) || await member.guild.channels.fetch(config.mdniChannelId).catch(() => null);
+  if (!ch) return null;
+  const VIEW = PermissionsBitField.Flags.ViewChannel;
+  const isMinor = member.roles.cache.has(config.minorAgeRoleId);
+  const needsLock = isMinor && !!opspanel.memberTier(member);   // a minor with a staff role that grants MDNI view
+  const ow = ch.permissionOverwrites.cache.get(member.id);
+  const botLocked = !!(ow && ow.type === 1 && ow.deny.has(VIEW) && ow.allow.bitfield === 0n);
+  let changed = null;
+  if (needsLock && !botLocked) {
+    await ch.permissionOverwrites.edit(member.id, { ViewChannel: false }, { reason: 'MDNI is 18+ — minor staff excluded (member deny overrides staff role allow)' }).catch(e => console.error('[mdni-lock] add:', e.message));
+    console.log(`[mdni-lock] locked minor-staff ${member.user.tag} out of MDNI`);
+    changed = { id: member.id, tag: member.user.tag, locked: true };
+  } else if (!needsLock && botLocked) {
+    await ch.permissionOverwrites.delete(member.id, 'no longer minor-staff — MDNI lock lifted').catch(e => console.error('[mdni-lock] del:', e.message));
+    console.log(`[mdni-lock] lifted MDNI lock on ${member.user.tag}`);
+    changed = { id: member.id, tag: member.user.tag, locked: false };
+  }
+  if (changed && bless) await permguard.blessChannel(member.guild, config.mdniChannelId).catch(() => {});
+  return changed;
+}
+
+// Backstop sweep (boot + hourly): lock every current minor-staff, and lift stale locks (member-denies whose
+// holder is no longer a minor-staff). Re-snapshots MDNI once at the end so permguard treats the result as golden.
+async function sweepMdniStaffLock(guild) {
+  if (!config.mdniChannelId || !config.minorAgeRoleId) return 0;
+  await guild.members.fetch().catch(() => {});
+  const ch = guild.channels.cache.get(config.mdniChannelId) || await guild.channels.fetch(config.mdniChannelId).catch(() => null);
+  if (!ch) return 0;
+  const VIEW = PermissionsBitField.Flags.ViewChannel;
+  let n = 0;
+  const minorRole = guild.roles.cache.get(config.minorAgeRoleId);
+  if (minorRole) for (const m of [...minorRole.members.values()]) { const r = await enforceMdniStaffLock(m, { bless: false }); if (r?.locked) n++; }
+  // lift stale locks
+  for (const o of [...ch.permissionOverwrites.cache.values()]) {
+    if (o.type !== 1 || !o.deny.has(VIEW) || o.allow.bitfield !== 0n) continue;   // only our pure View-denies
+    const m = await guild.members.fetch(o.id).catch(() => null);
+    if (!m || !(m.roles.cache.has(config.minorAgeRoleId) && opspanel.memberTier(m)))
+      await ch.permissionOverwrites.delete(o.id, 'MDNI minor-staff lock cleanup').catch(() => {});
+  }
+  await permguard.blessChannel(guild, config.mdniChannelId).catch(() => {});
+  if (n) console.log(`[mdni-lock] boot/hourly sweep: locked ${n} minor-staff out of MDNI`);
+  return n;
 }
 
 // Only one age bracket at a time. Nothing previously enforced this — a member could hold multiple age
@@ -1165,6 +1221,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
       if (n) console.log(`[modapps] demoted ${newMember.user.tag} removed from ${n} review thread(s)`);
     }
     await enforceMdni(newMember).catch(() => {});   // keep MDNI ⟹ adult on every role change
+    await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));   // block minor STAFF from the 18+ channel
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
     if (!config.unverifiedRoleId || !oldMember || oldMember.partial) return;

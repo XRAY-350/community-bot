@@ -41,6 +41,23 @@ async function resnapshot(guild, { exclude } = {}) {
   return { channels: channels.length, overwrites: Object.values(manifest).reduce((n, c) => n + c.overwrites.length, 0) };
 }
 
+// Re-snapshot ONE channel's overwrites (role + member) into the golden manifest. For when another module
+// legitimately changes a channel's overwrites (e.g. the MDNI minor-staff lock adds member-level denies) and
+// wants permguard to treat the new state as correct — otherwise every sweep would re-flag it as drift.
+async function blessChannel(guild, channelId) {
+  const man = loadManifest(); if (!man) return false;
+  const ch = await guild.channels.fetch(channelId).catch(() => null); if (!ch) return false;
+  const roles = await guild.roles.fetch();
+  man[channelId] = {
+    name: ch.name, type: ch.type, parentId: ch.parentId || null,
+    overwrites: [...ch.permissionOverwrites.cache.values()].map(o => ({
+      id: o.id, type: o.type, name: o.type === 0 ? (roles.get(o.id)?.name || o.id) : `member:${o.id}`,
+      allow: o.allow.bitfield.toString(), deny: o.deny.bitfield.toString(),
+    })),
+  };
+  try { fs.writeFileSync(MANIFEST_FILE, JSON.stringify(man, null, 2)); return true; } catch { return false; }
+}
+
 // Compare + fix ROLE overwrites (type 0) only. Member-specific overwrites (bot integrations, one-off
 // grants) are far more likely to be a deliberate, still-valid special case added after the snapshot —
 // auto-reverting those could undo something the owner meant to keep. Those are only ever REPORTED
@@ -291,4 +308,4 @@ async function applyDecisions(guild, s, userId) {
   return { summary: `Reverted **${reverted}** change(s) to the old baseline, kept **${kept}**, adopted **${adopted}** new channel(s)${ignored ? `, left **${ignored}** unguarded` : ''}${dropped ? `, dropped **${dropped}** deleted channel(s)` : ''}.\n\n📸 New baseline saved: **${snap.channels}** channels, **${snap.overwrites}** overwrite entries.` };
 }
 
-module.exports = { sweepPermissions, resnapshot, loadManifest, register, computeDiff, openReconcile, isReconcileInteraction, handleReconcile, renderReconcile };
+module.exports = { sweepPermissions, resnapshot, loadManifest, blessChannel, register, computeDiff, openReconcile, isReconcileInteraction, handleReconcile, renderReconcile };

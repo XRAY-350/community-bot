@@ -124,6 +124,7 @@ const config = {
   // self-select MDNI with no age check, so the bot strips it from anyone lacking an adult age role.
   mdniEnforce: bool('MDNI_ENFORCE', true),
   mdniRoleId: opt('MDNI_ROLE_ID', '1519408206370308197'),                    // 𝗠𝗗𝗡𝗜 (18+ opt-in, onboarding)
+  mdniChannelId: opt('MDNI_CHANNEL_ID', '1531720395357687868'),              // 🔞┆ᴍᴅɴɪ (the gated 18+ channel)
   minorAgeRoleId: opt('MINOR_AGE_ROLE_ID', '1516185172213628989'),           // ✰ • 16-17
   adultAgeRoleIds: opt('ADULT_AGE_ROLE_IDS', '1516185300492222618,1516185358415433739,1516209186839466113').split(',').map(s => s.trim()).filter(Boolean), // 18-21 / 21-25 / 25-30+
   // Mod-dashboard channel — its non-pinned messages get tidied weekly (the pinned panel stays).
