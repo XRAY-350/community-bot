@@ -632,7 +632,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('scope').setDescription('Which list (default all)').addChoices({ name: 'strict', value: 'strict' }, { name: 'loose', value: 'loose' }, { name: 'welfare', value: 'welfare' })))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new SlashCommandBuilder().setName('watchlist-suggest').setDescription('Scan recent messages and recommend new watchlist terms')
-        .addIntegerOption(o => o.setName('hours').setDescription('How far back to scan (default 6, max 24)').setMinValue(1).setMaxValue(24)),
+        .addIntegerOption(o => o.setName('hours').setDescription('How far back to scan (default 6, max 24)').setMinValue(1).setMaxValue(24))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new SlashCommandBuilder().setName('grade').setDescription('Grade a smart-watch card by its ID — trains the judge (owner only)')
         .addStringOption(o => o.setName('id').setDescription('The grade id shown on the card').setRequired(true))
         .addStringOption(o => o.setName('verdict').setDescription('Your call').setRequired(true).addChoices(
@@ -644,11 +645,11 @@ client.once('ready', async () => {
 
       new SlashCommandBuilder().setName('suggest').setDescription('Post a suggestion to the suggestions forum')
         .addStringOption(o => o.setName('text').setDescription('Your suggestion').setRequired(true).setMaxLength(500)),
-      new SlashCommandBuilder().setName('suggest-setup').setDescription('Create/repair the bot-gated suggestions forum (admin)'),
+      new SlashCommandBuilder().setName('suggest-setup').setDescription('Create/repair the bot-gated suggestions forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('confess').setDescription('Send an anonymous confession')
         .addStringOption(o => o.setName('text').setDescription('Your confession (your name is hidden from other members)').setRequired(true).setMaxLength(1000)),
-      new SlashCommandBuilder().setName('confess-setup').setDescription('Create/repair the confessions + staff log channels (admin)'),
+      new SlashCommandBuilder().setName('confess-setup').setDescription('Create/repair the confessions + staff log channels (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
 
       new SlashCommandBuilder().setName('whistleblow').setDescription('Privately DM a problem about the server/staff to the top — no channel, admins can’t snoop')
@@ -656,18 +657,18 @@ client.once('ready', async () => {
           .addChoices({ name: 'Head admin only', value: 'you' }, { name: 'Server owner only', value: 'her' },
             { name: 'Both', value: 'both' }, { name: 'Anonymous — both see it, no one can unmask', value: 'anonymous' }))
         .addStringOption(o => o.setName('text').setDescription('What’s the problem?').setRequired(true).setMaxLength(1500)),
-      new SlashCommandBuilder().setName('whistleblow-setup').setDescription('Set who receives whistleblows — run as the head admin'),
+      new SlashCommandBuilder().setName('whistleblow-setup').setDescription('Set who receives whistleblows (bot owner only)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('report').setDescription('Anonymously report a member to staff')
         .addStringOption(o => o.setName('text').setDescription('What happened?').setRequired(true).setMaxLength(1000))
         .addUserOption(o => o.setName('user').setDescription('Who are you reporting? (optional)')),
-      new SlashCommandBuilder().setName('report-setup').setDescription('Create the anon-reports channel (admin)'),
+      new SlashCommandBuilder().setName('report-setup').setDescription('Create the anon-reports channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('modmail').setDescription('Send an anonymous message to the mod team')
         .addStringOption(o => o.setName('text').setDescription('Your message').setRequired(true).setMaxLength(1000)),
-      new SlashCommandBuilder().setName('modmail-setup').setDescription('Create the mod-inbox channel (admin)'),
+      new SlashCommandBuilder().setName('modmail-setup').setDescription('Create the mod-inbox channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('apply-mod').setDescription('Apply to become a moderator'),
-      new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (admin)'),
+      new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('mod-applications').setDescription('Open or close mod applications when the team is full (admin)')
         .addSubcommand(s => s.setName('status').setDescription('Are mod applications open or closed right now?'))
         .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications — accept new /apply-mod again'))
@@ -706,7 +707,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('request-role').setDescription('Request a casual role — staff approves it')
         .addRoleOption(o => o.setName('role').setDescription('The role you want (or already have, if removing)').setRequired(true))
         .addBooleanOption(o => o.setName('remove').setDescription('Request to give this role UP instead of getting it (default: no)').setRequired(false)),
-      new SlashCommandBuilder().setName('request-role-setup').setDescription('Create the role-requests channel (admin)'),
+      new SlashCommandBuilder().setName('request-role-setup').setDescription('Create the role-requests channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       // Appeals — unified /appeal ban|strike. Each subcommand is gated by its OWN feature flag
       // ('appeals' for ban, 'strikeAppeals' for strike — see the gate check near the interaction
@@ -718,8 +719,8 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('strike').setDescription('Appeal one of your own strikes, alone — opens a private thread')
           .addStringOption(o => o.setName('strike_id').setDescription('Which strike — pick from your own active strikes').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false))),
-      new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (admin)'),
-      new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (admin)'),
+      new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+      new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('help').setDescription('What can this bot do? — the member features'),
 
