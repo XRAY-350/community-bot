@@ -79,6 +79,9 @@ const features = require('./features');
 // Instant-ban reason categories — used to write the ban's audit-log reason AND (in appeals.js) to
 // recognize which bans the "more limited" ban-appeal path must refuse outright.
 const CATEGORY_LABEL = { false_verification: 'False verification / not eligible', verification_bypass: 'Verification bypass / misrepresenting identity', ban_evasion: 'Ban evasion (alt account)', grooming: 'Confirmed grooming of a minor', other: 'Other' };
+// Per-category emoji for the ban-reason select — keyed by the same values as CATEGORY_LABEL so the dropdown
+// derives its labels from that single const (change a label there → the select updates too).
+const CATEGORY_EMOJI = { false_verification: '🚫', verification_bypass: '🎭', ban_evasion: '👤', grooming: '⚠️', other: '❓' };
 
 let D = null;
 function wire(deps) { D = deps; }
@@ -632,12 +635,8 @@ async function handlePanel(interaction) {
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
     const uid = interaction.values[0];
-    const menu = new StringSelectMenuBuilder().setCustomId(`fops_ban_category:${uid}`).setPlaceholder('Why are you banning them?').addOptions(
-      { label: 'False verification / not eligible', value: 'false_verification', emoji: '🚫' },
-      { label: 'Verification bypass / misrepresenting identity', value: 'verification_bypass', emoji: '🎭' },
-      { label: 'Ban evasion (alt account)', value: 'ban_evasion', emoji: '👤' },
-      { label: 'Confirmed grooming of a minor', value: 'grooming', emoji: '⚠️' },
-      { label: 'Other', value: 'other', emoji: '❓' });
+    const menu = new StringSelectMenuBuilder().setCustomId(`fops_ban_category:${uid}`).setPlaceholder('Why are you banning them?')
+      .addOptions(Object.entries(CATEGORY_LABEL).map(([value, label]) => ({ label, value, emoji: CATEGORY_EMOJI[value] || '❓' })));
     return interaction.reply({ content: 'Why are you banning them? (this gets logged with the ban, for audit)', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
   }
   if (id.startsWith('fops_ban_category:')) {
