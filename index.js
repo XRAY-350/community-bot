@@ -681,6 +681,7 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff census — how many of each tier (deduped by highest)')
+        .addBooleanOption(o => o.setName('ids').setDescription('List each tier’s members with their user IDs (for Integrations command overrides)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
         .addUserOption(o => o.setName('member').setDescription('The trial mod to consider for full Mod').setRequired(true))
@@ -2524,18 +2525,36 @@ client.on('interactionCreate', async (interaction) => {
     const trialId = modapps.loadConfig().trialModRoleId;
     // Counted by HIGHEST tier so nobody is double-counted (higher tiers absorb the lower). memberTier
     // returns owner→admin→mod (the bot's canonical tier); Trial Mod is only counted for people below mod.
-    let owner = 0, admin = 0, mod = 0, trial = 0, humans = 0;
+    const byTier = { owner: [], admin: [], mod: [], trial: [] };
+    let humans = 0;
     for (const m of members.values()) {
       if (m.user.bot) continue;
       humans++;
       const t = opspanel.memberTier(m);
-      if (t === 'owner') owner++;
-      else if (t === 'admin') admin++;
-      else if (t === 'mod') mod++;
-      else if (trialId && m.roles.cache.has(trialId)) trial++;
+      if (t === 'owner') byTier.owner.push(m);
+      else if (t === 'admin') byTier.admin.push(m);
+      else if (t === 'mod') byTier.mod.push(m);
+      else if (trialId && m.roles.cache.has(trialId)) byTier.trial.push(m);
+    }
+    const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
+    if (interaction.options.getBoolean('ids')) {
+      // Roster with copyable user IDs — for setting per-command overrides in Server Settings → Integrations.
+      const roster = (arr) => { if (!arr.length) return '_(none)_'; const s = arr.map(m => `\`${m.id}\` ${m.displayName}`).join('\n'); return s.length > 1024 ? s.slice(0, 990) + `\n…(+${arr.length} total)` : s; };
+      const one = (id) => { const m = members.get(id); return m ? `\`${id}\` ${m.displayName}` : `\`${id}\``; };
+      const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('👥 Staff roster — user IDs')
+        .setDescription('Members by tier, with copyable IDs (for Integrations per-command overrides). Owner = OWNER role **and** Admin permission.')
+        .addFields(
+          { name: '👑 Bot owner (you)', value: one(opspanel.BOT_OWNER_ID) },
+          { name: '⚜️ Server owner', value: one(interaction.guild.ownerId) },
+          { name: `🟣 Owner (${owner})`, value: roster(byTier.owner) },
+          { name: `🔵 Admin (${admin})`, value: roster(byTier.admin) },
+          { name: `🟢 Mod (${mod})`, value: roster(byTier.mod) },
+          { name: `✧ Trial Mod (${trial})`, value: roster(byTier.trial) })
+        .setFooter({ text: 'Long-press / right-click an ID to copy it.' }).setTimestamp(new Date());
+      return interaction.editReply({ embeds: [embed] }).catch(() => {});
     }
     const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('👥 Staff census')
-      .setDescription('Counted by **highest tier** — each person once (higher tiers absorb the lower).')
+      .setDescription('Counted by **highest tier** — each person once (higher tiers absorb the lower). Add `ids:true` to list who’s in each tier.')
       .addFields(
         { name: '🟣 Owner', value: String(owner), inline: true },
         { name: '🔵 Admin', value: String(admin), inline: true },
