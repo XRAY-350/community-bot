@@ -98,4 +98,36 @@ const confessions = {
   delLabel: deleted => deleted ? 'Deleted' : 'Delete confession',
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions };
+const rolereq = {
+  notSetup: 'Role requests aren’t set up yet — an admin needs to run `/request-role-setup`.',
+  channelMissing: 'The role-requests channel is missing — an admin needs to run `/request-role-setup` again.',
+  cantRequest: why => `You can’t request that role — ${why}.`,
+  dontHave: 'You don’t have that role, so there’s nothing to remove.',
+  alreadyHave: 'You already have that role.',
+  noRole: 'That role no longer exists.',
+  couldntApply: removing => `Couldn’t ${removing ? 'remove' : 'assign'} it (is it above my role?).`,
+};
+const suggestions = {
+  notSetup: 'The suggestions forum isn’t set up yet — an admin needs to run `/suggest-setup`.',
+  forumMissing: 'The suggestions forum is missing — an admin needs to run `/suggest-setup` again.',
+  tooShort: min => `That’s too short — give at least ${min} characters.`,
+  tooLong: max => `That’s too long — keep it under ${max} characters.`,
+  filtered: 'That suggestion tripped the word filter, so it wasn’t posted. Rephrase it and try again.',
+  openLimit: 'You already have an open suggestion. Wait for staff to resolve it before posting another (keeps the forum tidy).',
+  untracked: 'This suggestion is no longer tracked.',
+  votingClosed: 'Voting is closed on this suggestion.',
+  alreadyResolved: 'Already resolved.',
+};
+const whistleblow = {
+  notSetup: 'Whistleblow isn’t set up yet — the head admin needs to run `/whistleblow-setup`.',
+  pickWho: 'Pick who (if anyone) may unmask you.',
+  tooShort: min => `Give a bit more detail — at least ${min} characters.`,
+  tooLong: max => `Keep it under ${max} characters.`,
+  filtered: 'That tripped the safety filter (threats/doxxing aren’t allowed even here). Reword the concern itself and resend.',
+  deliverFail: 'Couldn’t deliver — the recipient has DMs closed. Ask an admin to open DMs from server members, then retry.',
+  untracked: 'This whistleblow is no longer tracked.',
+  fullyAnon: 'This one is fully anonymous — the sender chose “no one”, so there’s no identity to unseal.',
+  notAuthorized: 'You’re not authorized to unseal this — the sender entrusted it to someone else.',
+};
+
+module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow };

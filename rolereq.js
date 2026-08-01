@@ -4,6 +4,7 @@
 // (managed) role, sits at/above the bot (unassignable), carries ANY power permission, or is a known
 // system/staff role (mod/admin/owner/trial/verified/unverified/corner/watchlist/strike).
 const fs = require('fs');
+const copy = require('./copy');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 
 const CONFIG_FILE = process.env.FUBU_ROLEREQ_FILE || '/home/ubuntu/.fubu_rolereq.json';
@@ -59,14 +60,14 @@ const btns = (userId, roleId, act, done, byId, ok) => new ActionRowBuilder().add
 // default request-to-be-granted. Same safety net (whyNotRequestable) and same staff approve/deny channel.
 async function submit(guild, member, role, config, removing = false) {
   const c = loadConfig();
-  if (!c.channelId) return { ok: false, msg: 'Role requests aren’t set up yet — an admin needs to run `/request-role-setup`.' };
+  if (!c.channelId) return { ok: false, msg: copy.rolereq.notSetup };
   const me = await guild.members.fetchMe();
   const why = whyNotRequestable(role, guild, me, config);
-  if (why) return { ok: false, msg: `You can’t request that role — ${why}.` };
-  if (removing && !member.roles.cache.has(role.id)) return { ok: false, msg: 'You don’t have that role, so there’s nothing to remove.' };
-  if (!removing && member.roles.cache.has(role.id)) return { ok: false, msg: 'You already have that role.' };
+  if (why) return { ok: false, msg: copy.rolereq.cantRequest(why) };
+  if (removing && !member.roles.cache.has(role.id)) return { ok: false, msg: copy.rolereq.dontHave };
+  if (!removing && member.roles.cache.has(role.id)) return { ok: false, msg: copy.rolereq.alreadyHave };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
-  if (!channel) return { ok: false, msg: 'The role-requests channel is missing — an admin needs to run `/request-role-setup` again.' };
+  if (!channel) return { ok: false, msg: copy.rolereq.channelMissing };
   const embed = new EmbedBuilder().setColor(role.color || 0x5865F2).setTitle(removing ? '🎭 Role removal request' : '🎭 Role request')
     .setDescription(`<@${member.id}> is requesting to ${removing ? 'GIVE UP' : 'be given'} the <@&${role.id}> role.`)
     .setFooter({ text: `Any mod+ can approve (${removing ? 'removes it' : 'assigns it'}) or deny.` }).setTimestamp(new Date());
@@ -83,11 +84,11 @@ async function handleButton(interaction) {
   const member = await interaction.guild.members.fetch(userId).catch(() => null);
   const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
   if (approve) {
-    if (!member) return interaction.reply({ content: 'That member isn’t in the server anymore.', flags: MessageFlags.Ephemeral });
-    if (!role) return interaction.reply({ content: 'That role no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.common.noMemberInServer, flags: MessageFlags.Ephemeral });
+    if (!role) return interaction.reply({ content: copy.rolereq.noRole, flags: MessageFlags.Ephemeral });
     const verb = removing ? 'remove' : 'add';
     const ok = await member.roles[verb](roleId, `Role ${removing ? 'removal' : 'request'} approved by ${interaction.user.tag}`).then(() => true).catch(() => false);
-    if (!ok) return interaction.reply({ content: `Couldn’t ${removing ? 'remove' : 'assign'} it (is it above my role?).`, flags: MessageFlags.Ephemeral });
+    if (!ok) return interaction.reply({ content: copy.rolereq.couldntApply(removing), flags: MessageFlags.Ephemeral });
     await member.send(removing ? `✅ Your request to give up the **${role.name}** role was approved.` : `✅ Your request for the **${role.name}** role was approved!`).catch(() => {});
     return interaction.update({ content: `✅ <@${userId}> ${removing ? 'had **' + role.name + '** removed' : 'was given **' + role.name + '**'} by <@${interaction.user.id}>.`, embeds: keep, components: [btns(userId, roleId, act, true, interaction.user.id, true)], allowedMentions: { parse: [] } });
   }

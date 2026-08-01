@@ -14,6 +14,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_WHISTLEBLOW_FILE || '/home/ubuntu/.fubu_whistleblow.json';
 const STATE_FILE = process.env.FUBU_WHISTLEBLOW_STATE_FILE || '/home/ubuntu/.fubu_whistleblow_state.json';
@@ -63,19 +64,19 @@ const unsealRow = (num, disabled) => new ActionRowBuilder().addComponents(
 // ---- submit -----------------------------------------------------------------------------------------
 async function submit(guild, member, text, choice) {
   const c = loadConfig();
-  if (!c.you || !c.her) return { ok: false, msg: 'Whistleblow isn’t set up yet — the head admin needs to run `/whistleblow-setup`.' };
-  if (!CHOICES[choice]) return { ok: false, msg: 'Pick who (if anyone) may unmask you.' };
+  if (!c.you || !c.her) return { ok: false, msg: copy.whistleblow.notSetup };
+  if (!CHOICES[choice]) return { ok: false, msg: copy.whistleblow.pickWho };
   text = String(text || '').trim().replace(/\s+/g, ' ');
-  if (text.length < MIN_LEN) return { ok: false, msg: `Give a bit more detail — at least ${MIN_LEN} characters.` };
-  if (text.length > MAX_LEN) return { ok: false, msg: `Keep it under ${MAX_LEN} characters.` };
+  if (text.length < MIN_LEN) return { ok: false, msg: copy.whistleblow.tooShort(MIN_LEN) };
+  if (text.length > MAX_LEN) return { ok: false, msg: copy.whistleblow.tooLong(MAX_LEN) };
   const bad = watchlist.matchTerms(text, watchlist.loadTerms());   // light filter: threats/doxxing only
-  if (bad.length) return { ok: false, msg: 'That tripped the safety filter (threats/doxxing aren’t allowed even here). Reword the concern itself and resend.' };
+  if (bad.length) return { ok: false, msg: copy.whistleblow.filtered };
   const last = _cooldown.get(member.id) || 0;
   const waitLeft = COOLDOWN_MS - (Date.now() - last);
-  if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  if (last && waitLeft > 0) return { ok: false, msg: copy.common.onCooldown(Math.ceil(waitLeft / 60000)) };
   const day = new Date().toISOString().slice(0, 10);
   const d = _daily.get(member.id);
-  if (d && d.day === day && d.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
+  if (d && d.day === day && d.n >= DAILY_MAX) return { ok: false, msg: copy.common.dailyLimit(DAILY_MAX) };
 
   const state = loadState();
   const num = (state.counter || 0) + 1;
@@ -89,7 +90,7 @@ async function submit(guild, member, text, choice) {
     const ok = await m.send({ embeds: [embed], components: comps }).then(() => true).catch(() => false);
     if (ok) delivered.push(uid);
   }
-  if (!delivered.length) return { ok: false, msg: 'Couldn’t deliver — the recipient has DMs closed. Ask an admin to open DMs from server members, then retry.' };
+  if (!delivered.length) return { ok: false, msg: copy.whistleblow.deliverFail };
   state.counter = num;
   state.posts[num] = { choice, authorId: choice === 'anonymous' ? null : member.id };   // anonymous → no identity
   saveState(state);
@@ -104,10 +105,10 @@ async function unseal(interaction) {
   const num = interaction.customId.split(':')[1];
   const state = loadState();
   const post = state.posts[num];
-  if (!post) return interaction.reply({ content: 'This whistleblow is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (!post.authorId) return interaction.reply({ content: 'This one is fully anonymous — the sender chose “no one”, so there’s no identity to unseal.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.whistleblow.untracked, flags: MessageFlags.Ephemeral });
+  if (!post.authorId) return interaction.reply({ content: copy.whistleblow.fullyAnon, flags: MessageFlags.Ephemeral });
   if (!allowedUnsealers(post.choice, c).includes(interaction.user.id))
-    return interaction.reply({ content: 'You’re not authorized to unseal this — the sender entrusted it to someone else.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: copy.whistleblow.notAuthorized, flags: MessageFlags.Ephemeral });
   if (post.unsealedBy) return interaction.reply({ content: `Already unsealed (by <@${post.unsealedBy}>). Author: <@${post.authorId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   post.unsealedBy = interaction.user.id;
   saveState(state);

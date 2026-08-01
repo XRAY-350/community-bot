@@ -56,7 +56,7 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 38)
+## copy.js keys (migrated so far — 63)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
@@ -91,11 +91,36 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 - `copy.reports.tooLong()`
 - `copy.reports.tooShort()`
 - `copy.reports.untracked`
+- `copy.rolereq.alreadyHave`
+- `copy.rolereq.cantRequest()`
+- `copy.rolereq.channelMissing`
+- `copy.rolereq.couldntApply()`
+- `copy.rolereq.dontHave`
+- `copy.rolereq.noRole`
+- `copy.rolereq.notSetup`
 - `copy.smartwatch.modeLabel()`
+- `copy.suggestions.alreadyResolved`
+- `copy.suggestions.filtered`
+- `copy.suggestions.forumMissing`
+- `copy.suggestions.notSetup`
+- `copy.suggestions.openLimit`
+- `copy.suggestions.tooLong()`
+- `copy.suggestions.tooShort()`
+- `copy.suggestions.untracked`
+- `copy.suggestions.votingClosed`
 - `copy.tiers.admin`
 - `copy.tiers.mod`
 - `copy.tiers.owner`
 - `copy.watchlist.monitorStatus()`
+- `copy.whistleblow.deliverFail`
+- `copy.whistleblow.filtered`
+- `copy.whistleblow.fullyAnon`
+- `copy.whistleblow.notAuthorized`
+- `copy.whistleblow.notSetup`
+- `copy.whistleblow.pickWho`
+- `copy.whistleblow.tooLong()`
+- `copy.whistleblow.tooShort()`
+- `copy.whistleblow.untracked`
 
 ## Migration status by feature
 
@@ -109,13 +134,13 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **corner** (staff) — copy.js: `corner`
 - **strikes** (staff) — _inline (not yet migrated)_
 - **watchlist** (staff) — copy.js: `watchlist`
-- **suggestions** (member) — _inline (not yet migrated)_
+- **suggestions** (member) — copy.js: `suggestions`
 - **confessions** (member) — copy.js: `confessions`
-- **whistleblow** (member) — _inline (not yet migrated)_
+- **whistleblow** (member) — copy.js: `whistleblow`
 - **reports** (member) — copy.js: `reports`
 - **modmail** (member) — copy.js: `modmail`
 - **modapps** (member) — _inline (not yet migrated)_
-- **rolereq** (member) — _inline (not yet migrated)_
+- **rolereq** (member) — copy.js: `rolereq`
 - **roleselect** (staff) — _inline (not yet migrated)_
 - **permguard** (core) — _inline (not yet migrated)_
 - **perms** (core) — _inline (not yet migrated)_

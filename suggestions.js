@@ -9,6 +9,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_SUGGESTIONS_FILE || '/home/ubuntu/.fubu_suggestions.json';
 const STATE_FILE = process.env.FUBU_SUGGESTIONS_STATE_FILE || '/home/ubuntu/.fubu_suggestions_state.json';
@@ -92,22 +93,22 @@ function openCountFor(state, authorId) {
 }
 async function submit(guild, member, text) {
   const c = loadConfig();
-  if (!c.forumId) return { ok: false, msg: 'The suggestions forum isn’t set up yet — an admin needs to run `/suggest-setup`.' };
+  if (!c.forumId) return { ok: false, msg: copy.suggestions.notSetup };
   text = String(text || '').trim().replace(/\s+/g, ' ');
-  if (text.length < MIN_LEN) return { ok: false, msg: `That’s too short — give at least ${MIN_LEN} characters.` };
-  if (text.length > MAX_LEN) return { ok: false, msg: `That’s too long — keep it under ${MAX_LEN} characters.` };
+  if (text.length < MIN_LEN) return { ok: false, msg: copy.suggestions.tooShort(MIN_LEN) };
+  if (text.length > MAX_LEN) return { ok: false, msg: copy.suggestions.tooLong(MAX_LEN) };
   // content filter — reuse the watchlist matcher across all three lists
   const bad = watchlist.matchTerms(text, [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose(), ...watchlist.loadWelfare()])]);
-  if (bad.length) return { ok: false, msg: 'That suggestion tripped the word filter, so it wasn’t posted. Rephrase it and try again.' };
+  if (bad.length) return { ok: false, msg: copy.suggestions.filtered };
 
   const state = loadState();
   const last = state.cooldown[member.id] || 0;
   const waitLeft = COOLDOWN_MS - (Date.now() - last);
-  if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
-  if (openCountFor(state, member.id) >= MAX_OPEN) return { ok: false, msg: `You already have an open suggestion. Wait for staff to resolve it before posting another (keeps the forum tidy).` };
+  if (last && waitLeft > 0) return { ok: false, msg: copy.common.onCooldown(Math.ceil(waitLeft / 60000)) };
+  if (openCountFor(state, member.id) >= MAX_OPEN) return { ok: false, msg: copy.suggestions.openLimit };
 
   const forum = await guild.channels.fetch(c.forumId).catch(() => null);
-  if (!forum) return { ok: false, msg: 'The suggestions forum is missing — an admin needs to run `/suggest-setup` again.' };
+  if (!forum) return { ok: false, msg: copy.suggestions.forumMissing };
   const num = (state.counter || 0) + 1;
   const title = `#${num} · ${text}`.slice(0, 95);
   const thread = await forum.threads.create({
@@ -128,8 +129,8 @@ async function vote(interaction, dir) {
   const threadId = interaction.channelId;
   const state = loadState();
   const post = state.posts[threadId];
-  if (!post) return interaction.reply({ content: 'This suggestion is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (post.status !== 'open' && post.status !== 'approved') return interaction.reply({ content: 'Voting is closed on this suggestion.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.suggestions.untracked, flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open' && post.status !== 'approved') return interaction.reply({ content: copy.suggestions.votingClosed, flags: MessageFlags.Ephemeral });
   const uid = interaction.user.id;
   const up = new Set(post.up), down = new Set(post.down);
   if (dir === 'up') { if (up.has(uid)) up.delete(uid); else { up.add(uid); down.delete(uid); } }
@@ -145,8 +146,8 @@ async function resolve(interaction, approve, config) {
   const threadId = interaction.channelId;
   const state = loadState();
   const post = state.posts[threadId];
-  if (!post) return interaction.reply({ content: 'This suggestion is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (post.status !== 'open') return interaction.reply({ content: 'Already resolved.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.suggestions.untracked, flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open') return interaction.reply({ content: copy.suggestions.alreadyResolved, flags: MessageFlags.Ephemeral });
   const c = loadConfig();
   post.status = approve ? 'approved' : 'denied';
   saveState(state);
