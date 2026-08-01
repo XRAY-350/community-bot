@@ -65,7 +65,7 @@ function servedSuffix(servedMs) {
   return (features.enabled('timeServed') && servedMs) ? ` · in for **${humanDur(servedMs)}**` : '';
 }
 
-function cornerSentMessage(userId, whenPhrase, reason) {
+function cornerSentMessage(userId, whenPhrase, reason, actorId) {
   return {
     // Hybrid: big rendered header in message CONTENT (headers don't render inside embeds), with the
     // colored embed below so the meaningful red/green signal is kept. The mention is in CONTENT (not
@@ -73,7 +73,8 @@ function cornerSentMessage(userId, whenPhrase, reason) {
     content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>`,
     embeds: [new EmbedBuilder().setColor(CORNER_RED)
       .setDescription(`<@${userId}> has been stripped of their roles and confined here **${whenPhrase}**.`
-        + (reason ? `\n\n**Reason:** ${reason}` : '')
+        + (actorId ? `\n**Sent by:** <@${actorId}>` : '')
+        + (reason ? `\n**Reason:** ${reason}` : '')
         + `\n\nThis is the only text channel you may speak in (you can also join the corner voice channel). Reflect on what brought you here.`)],
     // Mod controls: release now, add time (+1h / +1d), or set indefinite (no auto-release) — one click.
     components: [new ActionRowBuilder().addComponents(
@@ -84,6 +85,19 @@ function cornerSentMessage(userId, whenPhrase, reason) {
     )],
     allowedMentions: { users: [userId] },
   };
+}
+
+// Announce a corner that just happened: the themed message in the corner channel (duration + who + reason +
+// release buttons) AND the audit entry in the corner log. Centralises what every corner path needs — /corner,
+// the context-menu, and the DASHBOARD (which previously announced/logged nothing) all call this so the
+// resultant message consistently shows the duration and who sent them.
+async function announceCorner(guild, memberId, durationMs, actorId, reasonText) {
+  const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
+  const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
+  const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
+  if (cornerCh) await cornerCh.send(cornerSentMessage(memberId, whenPhrase, reasonText || null, actorId)).catch(() => {});
+  await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
+    desc: `<@${memberId}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
 }
 
 // Post a FULLY STYLIZED audit entry to the public corner-log channel for every corner event
@@ -193,7 +207,7 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
   try {
     const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
     if (cornerCh) {
-      await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reason || null));
+      await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reason || null, actorId));
       const emb = new EmbedBuilder().setColor(CORNER_RED)
         .setAuthor({ name: target.author.tag, iconURL: target.author.displayAvatarURL() })
         .setDescription(target.content?.slice(0, 4000) || '_[no text — see attachment/link]_')
@@ -244,7 +258,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     const targetTier = opspanel.memberTier(member);
     if (targetTier) { skipped.push(`<@${member.id}> (${targetTier})`); continue; }   // bulk-corner never touches staff (mod/admin/owner)
     const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
-    if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText)).catch(() => {}); }
+    if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
     else skipped.push(`<@${member.id}> (${r.error})`);
   }
   if (done.length) await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
@@ -269,7 +283,7 @@ async function handleCornerButton(interaction) {
     if (!r.ok) return interaction.editReply(`Failed to re-corner: ${r.error}`);
     try {
       const ch = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
-      if (ch) await ch.send(cornerSentMessage(userId, 'indefinitely'));
+      if (ch) await ch.send(cornerSentMessage(userId, 'indefinitely', null, interaction.user.id));
     } catch (e) { console.error(`[recorner] announce failed: ${e.message}`); }
     await logCorner(guild, { emoji: '⛓️', title: 'RE-CORNERED', color: CORNER_RED,
       desc: `<@${userId}> was sent straight back to the corner **indefinitely**.\n**By:** <@${interaction.user.id}>` });
@@ -377,7 +391,7 @@ const getWarnChannel = () => warnChannel;
 const getConflictChannel = () => conflictChannel;
 
 // Inject the bot's own logic into the tier-gated ops dashboard so it reuses corner/sweep/state/etc.
-opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch, cornerMany,
+opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch, cornerMany, announceCorner,
   getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel,
   logAction: ownerlog.log,
   strike: {
@@ -2880,7 +2894,7 @@ client.on('interactionCreate', async (interaction) => {
       // Announce in the corner channel so the cornered member sees it there.
       try {
         const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
-        if (cornerCh) await cornerCh.send(cornerSentMessage(user.id, whenPhrase, reasonText));
+        if (cornerCh) await cornerCh.send(cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id));
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,

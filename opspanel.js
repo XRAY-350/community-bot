@@ -685,6 +685,7 @@ async function handlePanel(interaction) {
     if (!member) return interaction.editReply(copy.common.noMemberInServer);
     if (act === 'corner') {
       const r = await D.corner.corner(interaction.guild, member, null, D.state, interaction.user.id);
+      if (r.ok && D.announceCorner) await D.announceCorner(interaction.guild, uid, null, interaction.user.id, null);
       return interaction.editReply(r.ok ? `⛓️ Cornered <@${uid}> indefinitely — stripped ${r.stripped} role(s). Release from the ⛓️ Corner page when ready.` : `Failed: ${r.error}`);
     }
     if (act === 'verify') {
@@ -839,6 +840,7 @@ async function handlePanel(interaction) {
       if (dur && !ms) return interaction.editReply(copy.corner.badDuration);
       const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id);
       if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
+      if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'} — stripped ${r.stripped} role(s).`);
       return refreshPanel(interaction.client);
     }
