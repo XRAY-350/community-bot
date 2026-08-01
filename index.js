@@ -696,7 +696,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('reason').setDescription('Why — posted publicly, no DMs (pick a rule, a reason, or both)').setRequired(false))
           .addIntegerOption(o => o.setName('weight').setDescription('Severity — omit to use the picked rule’s decided weight').setRequired(false)
             .addChoices({ name: '1 — minor', value: 1 }, { name: '2 — moderate', value: 2 }, { name: '3 — severe', value: 3 }))
-          .addStringOption(o => o.setName('timeout').setDescription('Attach a native Discord timeout, e.g. 30m/2h/3d — adds bonus units (linear by length, capped at +2)').setRequired(false)))
+          .addStringOption(o => o.setName('timeout').setDescription('Attach a native Discord timeout, e.g. 30m/2h/3d — adds bonus units (linear by length, capped at +2)').setRequired(false))
+          .addStringOption(o => o.setName('corner').setDescription('Also send them to the Corner for this long, e.g. 30m/2h/30s — strips roles, restored on release').setRequired(false)))
         .addSubcommand(s => s.setName('remove').setDescription('Remove ONE specific strike — start typing to search their strikes')
           .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true))
           .addStringOption(o => o.setName('strike_id').setDescription('Which strike — pick from the list').setRequired(true).setAutocomplete(true)))
@@ -1434,7 +1435,12 @@ function strikeReasonModal(memberId, channelId, messageId, ruleN, prefillNote) {
   const weightInput = new TextInputBuilder().setCustomId('weight')
     .setLabel((ruleWeight ? `Weight — Rule ${ruleN} default (edit if needed)` : 'Weight: 1 minor / 2 moderate / 3 severe').slice(0, 45))
     .setStyle(TextInputStyle.Short).setRequired(!ruleWeight).setValue(String(ruleWeight || 1)).setMaxLength(1);
-  m.addComponents(new ActionRowBuilder().addComponents(reasonInput), new ActionRowBuilder().addComponents(weightInput));
+  // Optional: ALSO send them to the corner for a duration — same spirit as /strike's timeout field, but
+  // the corner (strip roles + jail) instead of a native mute. Blank = strike only.
+  const cornerInput = new TextInputBuilder().setCustomId('corner')
+    .setLabel('Also corner them? (30m/2h — blank = no)')
+    .setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10);
+  m.addComponents(new ActionRowBuilder().addComponents(reasonInput), new ActionRowBuilder().addComponents(weightInput), new ActionRowBuilder().addComponents(cornerInput));
   return m;
 }
 // Alert staff when a member has been repeatedly cornered for the SAME rule (config.cornerRepeatAlertThreshold,
@@ -1791,11 +1797,24 @@ client.on('interactionCreate', async (interaction) => {
       const ruleWeight = ruleObj ? rules.weightOf(ruleObj.key) : null;
       const weight = weightRaw ? Number(weightRaw) : ruleWeight;
       if (![1, 2, 3].includes(weight)) return interaction.reply({ content: 'Weight must be 1, 2, or 3.', flags: MessageFlags.Ephemeral });
+      let cornerMs = null, cornerStr = '';
+      try { cornerStr = (interaction.fields.getTextInputValue('corner') || '').trim(); } catch { /* older modal had no corner field */ }
+      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return interaction.reply({ content: 'Bad corner duration — use e.g. `30m`, `2h`, `30s` (or leave it blank).', flags: MessageFlags.Ephemeral }); }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply('That member isn’t in the server.');
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
+      let cornerNote = '';
+      if (cornerMs) {
+        const cr = await corner.corner(guild, member, cornerMs, state, interaction.user.id, ruleN);
+        if (cr.ok) {
+          const relSec = Math.floor((Date.now() + cornerMs) / 1000);
+          cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
+          try { const cch = await guild.channels.fetch(config.cornerChannelId).catch(() => null); if (cch) await cch.send(cornerSentMessage(member.id, `until <t:${relSec}:f>`, reason)); } catch { /* announce best-effort */ }
+          await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${member.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
+        } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
+      }
       // In-channel notice on the flagged message (no DM) — public, carries the reason.
       if (channelId !== '0' && messageId !== '0') {
         const ch = await guild.channels.fetch(channelId).catch(() => null);
@@ -1806,7 +1825,7 @@ client.on('interactionCreate', async (interaction) => {
       const banNote = res.crossedBan ? banConfirmRow(member.id, 'Confirm ban') : null;
       await ownerlog.log(guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
         detail: `<@${member.id}> — ${strikes.formatUnits(weight)} unit(s), ${reason} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
-      return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike — now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ' — 🔨 **crossed the ban threshold**' : ''}.`,
+      return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike — now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ' — 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [] });
     } catch (e) { console.error(`[strike-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not strike.') : interaction.reply({ content: 'Could not strike.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
@@ -2093,8 +2112,21 @@ client.on('interactionCreate', async (interaction) => {
         timeoutMs = corner.parseDuration(timeoutStr);
         if (!timeoutMs) return R('Bad timeout duration — use e.g. `30m`, `2h`, `3d`.');
       }
+      const cornerStr = interaction.options.getString('corner');
+      let cornerMs = null;
+      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return R('Bad corner duration — use e.g. `30m`, `2h`, `30s`.'); }
       const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? ` — ${reason}` : ''}` : reason;
       const res = await strikes.addStrike(interaction.guild, member, state, { weight, ruleIndex: ruleN, reason: reasonText, timeoutMs, byId: interaction.user.id, byTag: interaction.user.tag });
+      let cornerNote = '';
+      if (cornerMs) {
+        const cr = await corner.corner(interaction.guild, member, cornerMs, state, interaction.user.id, ruleN);
+        if (cr.ok) {
+          const relSec = Math.floor((Date.now() + cornerMs) / 1000);
+          cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
+          try { const cch = await interaction.guild.channels.fetch(config.cornerChannelId).catch(() => null); if (cch) await cch.send(cornerSentMessage(user.id, `until <t:${relSec}:f>`, reasonText)); } catch { /* announce best-effort */ }
+          await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${user.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
+        } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
+      }
       // res.weight is the EFFECTIVE weight (base + the timeout's linear-capped bonus) — always show
       // that, never the raw input, so the mod sees what was actually recorded.
       const bonus = strikes.timeoutBonusUnits(timeoutMs);
@@ -2105,7 +2137,7 @@ client.on('interactionCreate', async (interaction) => {
       const banNote = res.crossedBan ? banConfirmRow(user.id, 'Confirm ban') : null;
       await ownerlog.log(interaction.guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
         detail: `<@${user.id}> — ${strikes.formatUnits(res.weight)} unit(s), ${reasonText}${timeoutMs ? ' + timeout' : ''} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${cap}.` });
-      return interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight} — Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''} — now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ' — 🔨 **crossed the ban threshold**' : ''}.`,
+      return interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight} — Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''} — now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ' — 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'remove') {
