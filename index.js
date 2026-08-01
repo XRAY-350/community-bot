@@ -1035,7 +1035,7 @@ async function enforceMdniStaffLock(member, { bless = true } = {}) {
   if (!ch) return null;
   const VIEW = PermissionsBitField.Flags.ViewChannel;
   const isMinor = member.roles.cache.has(config.minorAgeRoleId);
-  const needsLock = isMinor && !!opspanel.memberTier(member);   // a minor with a staff role that grants MDNI view
+  const needsLock = isMinor && ['mod', 'admin'].includes(opspanel.memberTier(member));   // minor mods/admins only — owner-tier exempt (owner ruling 2026-08-01)
   const ow = ch.permissionOverwrites.cache.get(member.id);
   const botLocked = !!(ow && ow.type === 1 && ow.deny.has(VIEW) && ow.allow.bitfield === 0n);
   let changed = null;
@@ -1067,7 +1067,7 @@ async function sweepMdniStaffLock(guild) {
   for (const o of [...ch.permissionOverwrites.cache.values()]) {
     if (o.type !== 1 || !o.deny.has(VIEW) || o.allow.bitfield !== 0n) continue;   // only our pure View-denies
     const m = await guild.members.fetch(o.id).catch(() => null);
-    if (!m || !(m.roles.cache.has(config.minorAgeRoleId) && opspanel.memberTier(m)))
+    if (!m || !(m.roles.cache.has(config.minorAgeRoleId) && ['mod', 'admin'].includes(opspanel.memberTier(m))))
       await ch.permissionOverwrites.delete(o.id, 'MDNI minor-staff lock cleanup').catch(() => {});
   }
   await permguard.blessChannel(guild, config.mdniChannelId).catch(() => {});
