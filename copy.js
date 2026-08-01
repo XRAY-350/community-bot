@@ -162,4 +162,21 @@ const contest = {
   organizersOnly: 'This dashboard is for event organizers and staff.',
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest };
+const roleselect = {
+  alreadyInSection: 'That role is already in this section.',
+  notInSection: 'That role isn’t in this section.',
+  sectionEmpty: heading => `${heading}\n_Nothing here yet._`,
+  header: '# 🎓 Get Your Roles\nPick from each section below. Click a button to toggle it on/off, or use the dropdowns for age and color (those replace your current pick, one at a time).',
+  ageHeading: '## 🎂 Age — pick once at registration, locked after you verify (see rule 3)',
+  mdniHeading: '## 🔞 MDNI — adults only, also locked after verification',
+  colorHeading: '## 🎨 Color',
+};
+const promote = {
+  unknownKind: 'Unknown promotion kind.',
+  alreadyOpen: 'There’s already an open promotion vote for them.',
+  noChannel: 'Couldn’t reach the promotion channel.',
+  voteClosed: 'This vote is closed.',
+  alreadyDecided: 'Already decided.',
+};
+
+module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest, roleselect, promote };

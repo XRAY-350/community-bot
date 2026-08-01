@@ -16,10 +16,10 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `confess-setup` | confessions | member | Administrator | ✅ | Create/repair the confessions + staff log channels (owner) |
 | `contest` | contest | member | ManageEvents | ✅ | Run the monthly community contests (organizers/staff) |
 | `contest-submit` | contest | member | UseApplicationCommands | ✅ | Enter this month\'s contest anonymously (your name stays hidden) |
-| `corner` | corner | staff | ManageRoles | — | Send a member to the corner — strips roles, pulls them from voice, jails them (o |
+| `corner` | corner | staff | ModerateMembers | — | Send a member to the corner — strips roles, pulls them from voice, jails them (o |
 | `cornered` | corner | staff | ManageRoles | — | List everyone in the corner, with one-click release buttons |
 | `Send to corner (ctx)` | corner | staff | ctx | — | (context-menu command) |
-| `uncorner` | corner | staff | ManageRoles | — | Release a member from the corner (or schedule a release) |
+| `uncorner` | corner | staff | ModerateMembers | — | Release a member from the corner (or schedule a release) |
 | `features` | features | core | Administrator | — | View or toggle bot features (Owner only) |
 | `help` | help | core | UseApplicationCommands | — | What can this bot do? — the member features |
 | `apply-mod` | modapps | member | UseApplicationCommands | ✅ | Apply to become a moderator |
@@ -46,7 +46,7 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `Strike (ctx)` | strikes | staff | ModerateMembers | — | (context-menu command) |
 | `suggest` | suggestions | member | UseApplicationCommands | ✅ | Post a suggestion to the suggestions forum |
 | `suggest-setup` | suggestions | member | Administrator | ✅ | Create/repair the bot-gated suggestions forum (owner) |
-| `pending` | verify | core | ManageRoles | — | Browse open verify threads (paginated) |
+| `pending` | verify | core | ModerateMembers | — | Browse open verify threads (paginated) |
 | `verify` | verify | core | ModerateMembers | — | Verify a member — no need to open the panel |
 | `Report to watchlist (ctx)` | watchlist | staff | ctx | — | (context-menu command) |
 | `unban` | watchlist | staff | BanMembers | — | Unban a user by ID (optionally re-watchlist on rejoin) |
@@ -56,7 +56,7 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 89)
+## copy.js keys (migrated so far — 101)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
@@ -110,6 +110,11 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 - `copy.modmail.tooLong()`
 - `copy.modmail.tooShort()`
 - `copy.modmail.untracked`
+- `copy.promote.alreadyDecided`
+- `copy.promote.alreadyOpen`
+- `copy.promote.noChannel`
+- `copy.promote.unknownKind`
+- `copy.promote.voteClosed`
 - `copy.reports.channelMissing`
 - `copy.reports.filtered`
 - `copy.reports.notSetup`
@@ -124,6 +129,13 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 - `copy.rolereq.dontHave`
 - `copy.rolereq.noRole`
 - `copy.rolereq.notSetup`
+- `copy.roleselect.ageHeading`
+- `copy.roleselect.alreadyInSection`
+- `copy.roleselect.colorHeading`
+- `copy.roleselect.header`
+- `copy.roleselect.mdniHeading`
+- `copy.roleselect.notInSection`
+- `copy.roleselect.sectionEmpty()`
 - `copy.smartwatch.modeLabel()`
 - `copy.suggestions.alreadyResolved`
 - `copy.suggestions.filtered`
@@ -167,7 +179,7 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **modmail** (member) — copy.js: `modmail`
 - **modapps** (member) — copy.js: `modapps`
 - **rolereq** (member) — copy.js: `rolereq`
-- **roleselect** (staff) — _inline (not yet migrated)_
+- **roleselect** (staff) — copy.js: `roleselect`
 - **permguard** (core) — _inline (not yet migrated)_
 - **perms** (core) — _inline (not yet migrated)_
 - **contest** (member) — copy.js: `contest`

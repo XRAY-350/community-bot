@@ -7,6 +7,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const ownerlog = require('./ownerlog');
+const copy = require('./copy');
 
 // Per-kind wiring, resolved against config at call time.
 const KINDS = {
@@ -39,7 +40,7 @@ function embed(rec, resolution, byId) {
 
 // Open a promotion vote of the given kind ('trial' → Mod, 'mod' → Admin). Returns { ok, channelId } or { ok:false, msg }.
 async function start(guild, candidate, byId, config, kind = 'trial') {
-  const k = KINDS[kind]; if (!k) return { ok: false, msg: 'Unknown promotion kind.' };
+  const k = KINDS[kind]; if (!k) return { ok: false, msg: copy.promote.unknownKind };
   const channelId = config[k.channelKey];
   if (!channelId) return { ok: false, msg: `No channel is configured for ${k.fromLabel}→${k.toLabel} promotions.` };
   const requireRole = config[k.requireKey];
@@ -49,9 +50,9 @@ async function start(guild, candidate, byId, config, kind = 'trial') {
     return { ok: false, msg: `<@${candidate.id}> is already **${k.toLabel}**.` };
   const state = _load();
   if (Object.values(state.posts).find(p => p.candidateId === candidate.id && p.status === 'open'))
-    return { ok: false, msg: 'There’s already an open promotion vote for them.' };
+    return { ok: false, msg: copy.promote.alreadyOpen };
   const ch = await guild.channels.fetch(channelId).catch(() => null);
-  if (!ch) return { ok: false, msg: 'Couldn’t reach the promotion channel.' };
+  if (!ch) return { ok: false, msg: copy.promote.noChannel };
   const pingRole = config[k.pingKey];
   const rec = { candidateId: candidate.id, byId, up: [], down: [], status: 'open', kind };
   const msg = await ch.send({
@@ -65,7 +66,7 @@ async function start(guild, candidate, byId, config, kind = 'trial') {
 
 async function vote(interaction, dir) {
   const state = _load(); const rec = state.posts[interaction.message.id];
-  if (!rec || rec.status !== 'open') return interaction.reply({ content: 'This vote is closed.', flags: MessageFlags.Ephemeral });
+  if (!rec || rec.status !== 'open') return interaction.reply({ content: copy.promote.voteClosed, flags: MessageFlags.Ephemeral });
   const uid = interaction.user.id;
   const up = (rec.up || []).filter(x => x !== uid), down = (rec.down || []).filter(x => x !== uid);
   const wasIn = ((dir === 'up' ? rec.up : rec.down) || []).includes(uid);
@@ -78,7 +79,7 @@ async function vote(interaction, dir) {
 // Owner-gated in index.js. Confirm → add the Mod role (auto-nester strips Trial Mod after).
 async function resolve(interaction, confirmed, config) {
   const state = _load(); const rec = state.posts[interaction.message.id];
-  if (!rec || rec.status !== 'open') return interaction.reply({ content: 'Already decided.', flags: MessageFlags.Ephemeral });
+  if (!rec || rec.status !== 'open') return interaction.reply({ content: copy.promote.alreadyDecided, flags: MessageFlags.Ephemeral });
   rec.status = confirmed ? 'promoted' : 'rejected'; rec.decidedBy = interaction.user.id; _save(state);
   const k = KINDS[rec.kind || 'trial'];
   const member = await interaction.guild.members.fetch(rec.candidateId).catch(() => null);

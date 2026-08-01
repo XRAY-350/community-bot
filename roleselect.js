@@ -10,6 +10,7 @@
 // the same index regardless of which sections currently have roles in them (an empty section still posts
 // its heading with a placeholder line, so indices never shift).
 const fs = require('fs');
+const copy = require('./copy');
 const path = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 
@@ -78,7 +79,7 @@ function saveSections(s) { try { fs.writeFileSync(SECTIONS_FILE, JSON.stringify(
 function addRoleToSection(section, label, roleId) {
   if (!SECTION_ORDER.includes(section)) return { ok: false, error: `Unknown section "${section}".` };
   const s = loadSections();
-  if (s[section].some(([, id]) => id === roleId)) return { ok: false, error: 'That role is already in this section.' };
+  if (s[section].some(([, id]) => id === roleId)) return { ok: false, error: copy.roleselect.alreadyInSection };
   s[section].push([label, roleId]);
   saveSections(s);
   return { ok: true };
@@ -88,7 +89,7 @@ function removeRoleFromSection(section, roleId) {
   const s = loadSections();
   const before = s[section].length;
   s[section] = s[section].filter(([, id]) => id !== roleId);
-  if (s[section].length === before) return { ok: false, error: 'That role isn’t in this section.' };
+  if (s[section].length === before) return { ok: false, error: copy.roleselect.notInSection };
   saveSections(s);
   return { ok: true };
 }
@@ -119,7 +120,7 @@ function dividerAttachment() {
 function sectionBlock(key) {
   const items = loadSections()[key] || [];
   const heading = `## ${SECTION_TITLE[key]}`;
-  if (!items.length) return { content: `${heading}\n_Nothing here yet._` };
+  if (!items.length) return { content: copy.roleselect.sectionEmpty(heading) };
   return { content: heading, components: chunk(items, 5).map(c => toggleRow('roleselect_toggle', c)) };
 }
 
@@ -127,10 +128,10 @@ function sectionBlock(key) {
 // when other sections gain/lose roles. Keep this in sync with SECTION_BLOCK_INDEX above.
 function buildBlocks() {
   return [
-    { content: '# 🎓 Get Your Roles\nPick from each section below. Click a button to toggle it on/off, or use the dropdowns for age and color (those replace your current pick, one at a time).' },
-    { content: '## 🎂 Age — pick once at registration, locked after you verify (see rule 3)', components: [ageSelectRow()] },
+    { content: copy.roleselect.header },
+    { content: copy.roleselect.ageHeading, components: [ageSelectRow()] },
     { files: dividerAttachment() },
-    { content: '## 🔞 MDNI — adults only, also locked after verification', components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', '1519408206370308197']])] },
+    { content: copy.roleselect.mdniHeading, components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', '1519408206370308197']])] },
     { files: dividerAttachment() },
     sectionBlock('region'),
     { files: dividerAttachment() },
@@ -142,7 +143,7 @@ function buildBlocks() {
     { files: dividerAttachment() },
     sectionBlock('misc'),
     { files: dividerAttachment() },
-    { content: '## 🎨 Color', components: [colorSelectRow()] },
+    { content: copy.roleselect.colorHeading, components: [colorSelectRow()] },
   ];
 }
 
