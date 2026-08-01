@@ -142,7 +142,7 @@ async function renderPending(page) {
 
 // Daily-digest mod-control buttons: run the sweep on demand, or pull up the corner list.
 async function handleDigestButton(interaction) {
-  if (!modClicked(interaction)) return interaction.reply({ content: 'Only the mod role can use this.', flags: MessageFlags.Ephemeral });
+  if (!modClicked(interaction)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
   if (interaction.customId === 'digest_cornered') return handleCorneredList(interaction);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // digest_sweep
   try {
@@ -155,7 +155,7 @@ async function handleDigestButton(interaction) {
 
 // /cornered — mod tool: list everyone in the corner, each with a one-click Release button.
 async function handleCorneredList(interaction) {
-  if (!modClicked(interaction)) return interaction.reply({ content: 'Only the mod role can use this.', flags: MessageFlags.Ephemeral });
+  if (!modClicked(interaction)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const cornered = state.listCornered();
   const ids = Object.keys(cornered);
@@ -254,7 +254,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
 async function handleCornerButton(interaction) {
   const [, userId, msStr] = interaction.customId.split(':');   // corner_rel:<userId>:<ms>  or  corner_recorner:<userId>
   const ms = Number(msStr || 0);
-  if (!modClicked(interaction)) return interaction.reply({ content: 'Only the mod role can use this.', flags: MessageFlags.Ephemeral });
+  if (!modClicked(interaction)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // ack is private; the corner-log channel is the public record
   const guild = interaction.guild;
   // Re-corner (from a release announcement): send them straight back, indefinitely.
@@ -1628,7 +1628,7 @@ function originalRefFromAlert(embed) {
 }
 
 async function handleWatchlistButton(interaction) {
-  if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can use this.', flags: MessageFlags.Ephemeral });
+  if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnly, flags: MessageFlags.Ephemeral });
   const [action, userId] = interaction.customId.split(':');
   const keep = interaction.message.embeds;
   if (action === 'wl_dismiss')
@@ -1797,7 +1797,7 @@ client.on('interactionCreate', async (interaction) => {
     try { await opspanel.handlePanel(interaction); }
     catch (e) {
       console.error(`[fops] ${e.message}`);
-      const msg = { content: 'Something went wrong.', flags: MessageFlags.Ephemeral };
+      const msg = { content: copy.guards.somethingWrong, flags: MessageFlags.Ephemeral };
       if (interaction.deferred || interaction.replied) interaction.followUp(msg).catch(() => {});
       else interaction.reply(msg).catch(() => {});
     }
@@ -1808,7 +1808,7 @@ client.on('interactionCreate', async (interaction) => {
     try { await contest.handleEventPanel(interaction); }
     catch (e) {
       console.error(`[contest] evp: ${e.message}`);
-      const msg = { content: 'Something went wrong.', flags: MessageFlags.Ephemeral };
+      const msg = { content: copy.guards.somethingWrong, flags: MessageFlags.Ephemeral };
       if (interaction.deferred || interaction.replied) interaction.followUp(msg).catch(() => {});
       else interaction.reply(msg).catch(() => {});
     }
@@ -1819,7 +1819,7 @@ client.on('interactionCreate', async (interaction) => {
     try { await permguard.handleReconcile(interaction); }
     catch (e) {
       console.error(`[permguard] reconcile: ${e.message}`);
-      const msg = { content: 'Something went wrong.', flags: MessageFlags.Ephemeral };
+      const msg = { content: copy.guards.somethingWrong, flags: MessageFlags.Ephemeral };
       if (interaction.deferred || interaction.replied) interaction.followUp(msg).catch(() => {});
       else interaction.reply(msg).catch(() => {});
     }
@@ -1911,7 +1911,7 @@ client.on('interactionCreate', async (interaction) => {
   // a modal can't hold a dropdown, so this is a select-then-modal step, same shape as the dashboard's
   // Corner/Ban pickers. customId: strike_rule_pick:<memberId>:<channelId>:<messageId>
   if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('strike_rule_pick:')) {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can strike.', flags: MessageFlags.Ephemeral });
+    if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
     const [, memberId, channelId, messageId] = interaction.customId.split(':');
     const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
     return interaction.showModal(strikeReasonModal(memberId, channelId, messageId, ruleN));
@@ -1999,7 +1999,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('strike_reason:')) {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can strike.', flags: MessageFlags.Ephemeral });
+    if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
     try {
       const [, memberId, channelId, messageId, ruleSeg] = interaction.customId.split(':');
       const ruleN = ruleSeg && ruleSeg !== 'x' ? ruleSeg : null;
@@ -2020,7 +2020,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
-      if (!member) return interaction.editReply('That member isn’t in the server.');
+      if (!member) return interaction.editReply(copy.common.notInServer);
       if (member.id === guild.ownerId) return interaction.editReply('You can’t strike the server owner.');
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
@@ -2076,7 +2076,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `${has ? '➖ Removed' : '➕ Added'} MDNI.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
       if (id.startsWith('corner_convert:')) {
-        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can strike.', flags: MessageFlags.Ephemeral });
+        if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
         const [, memberId, ruleN] = id.split(':');
         return interaction.showModal(strikeReasonModal(memberId, 0, 0, ruleN, '(repeat Corner escalation)'));
       }
@@ -2161,7 +2161,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Report to watchlist') {
     if (!canBan(interaction) && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: 'Only staff (mods+) can report.', flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
-    if (!target) return interaction.reply({ content: 'Could not read that message.', flags: MessageFlags.Ephemeral });
+    if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't report a bot's message.", flags: MessageFlags.Ephemeral });
     const ok = await manualWatchReport(target, interaction.user).catch(() => false);
     return interaction.reply({ content: ok ? `🚩 Reported <@${target.author.id}> to the mods — an admin can add them to the watchlist from there.` : 'Failed to post the report.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
@@ -2171,7 +2171,7 @@ client.on('interactionCreate', async (interaction) => {
     if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
       return interaction.reply({ content: 'You need to be verified to report.', flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
-    if (!target) return interaction.reply({ content: 'Could not read that message.', flags: MessageFlags.Ephemeral });
+    if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't report a bot's message.", flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const text = `Reported message: "${(target.content || '[no text — see link]').slice(0, 400)}" — ${target.url}`;
@@ -2182,13 +2182,13 @@ client.on('interactionCreate', async (interaction) => {
     // Same access + tier rules as /corner, but the trigger is a specific message — and that message
     // gets forwarded into the corner so the member (and mods) see exactly what put them there.
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
-    if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: 'Only the mod role can use this.', flags: MessageFlags.Ephemeral });
+    if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
-    if (!target) return interaction.reply({ content: 'Could not read that message.', flags: MessageFlags.Ephemeral });
+    if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't corner a bot.", flags: MessageFlags.Ephemeral });
     const guild = interaction.guild;
     const member = await guild.members.fetch(target.author.id).catch(() => null);
-    if (!member) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
     if (member.id === client.user.id) return interaction.reply({ content: 'I can’t corner myself.', flags: MessageFlags.Ephemeral });
     const RANK = { owner: 3, admin: 2, mod: 1 };
     const actorRank = RANK[opspanel.tierOf(interaction)] || 0;
@@ -2204,12 +2204,12 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.showModal(modal);
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Strike') {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can strike.', flags: MessageFlags.Ephemeral });
+    if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
-    if (!target) return interaction.reply({ content: 'Could not read that message.', flags: MessageFlags.Ephemeral });
+    if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't strike a bot.", flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(target.author.id).catch(() => null);
-    if (!member) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
     // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
     return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
@@ -2306,7 +2306,7 @@ client.on('interactionCreate', async (interaction) => {
     const sub = interaction.options.getSubcommand();
     const user = interaction.options.getUser('user');
     const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-    if (!member) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
     const cap = strikes.BAN_THRESHOLD;
     const R = txt => interaction.reply({ content: txt, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     if (sub === 'view') {
@@ -2383,7 +2383,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!canVerify(interaction)) return interaction.reply({ content: 'Only staff (mods+ or trial mods) can verify members.', flags: MessageFlags.Ephemeral });
     const user = interaction.options.getUser('user');
     const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-    if (!member) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
     if (config.verifiedRoleId && member.roles.cache.has(config.verifiedRoleId))
       return interaction.reply({ content: `<@${user.id}> is already verified.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await member.roles.add(config.verifiedRoleId, `Verified via /verify by ${interaction.user.tag}`).catch(() => {});
@@ -2435,7 +2435,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
   if (name === 'watchlist') {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can use this.', flags: MessageFlags.Ephemeral });
+    if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnly, flags: MessageFlags.Ephemeral });
     if (!config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     if (sub === 'list') {
@@ -2508,7 +2508,7 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(`✅ Graded \`${gid}\` as **${meta.label.split(' (')[0]}** — AI was ${correct ? 'right ✅' : 'wrong ❌'}. ${meta.task} accuracy now **${acc}%**${note ? ' · note saved to guide the judge' : ''}.`);
   }
   if (name === 'watchlist-suggest') {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can use this.', flags: MessageFlags.Ephemeral });
+    if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnly, flags: MessageFlags.Ephemeral });
     const hours = interaction.options.getInteger('hours') || 6;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -2524,7 +2524,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { forum, created } = await suggestions.setup(interaction.guild, config);
-      return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} the suggestions forum <#${forum.id}>. Members post with \`/suggest\`.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} the suggestions forum <#${forum.id}>. Members post with \`/suggest\`.`);
     } catch (e) { console.error(`[suggestions] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'suggest') {
@@ -2537,11 +2537,11 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[suggestions] submit ${e.message}`); return interaction.editReply('Could not post that suggestion.').catch(() => {}); }
   }
   if (name === 'confess-setup') {
-    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, logChannel, created } = await confessions.setup(interaction.guild, config);
-      return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} confessions <#${channel.id}>${logChannel ? ` + staff log <#${logChannel.id}>` : ''}. Members post with \`/confess\`.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} confessions <#${channel.id}>${logChannel ? ` + staff log <#${logChannel.id}>` : ''}. Members post with \`/confess\`.`);
     } catch (e) { console.error(`[confessions] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'confess') {
@@ -2573,7 +2573,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[whistleblow] submit ${e.message}`); return interaction.editReply('Could not send that.').catch(() => {}); }
   }
   if (name === 'apply-mod-setup') {
-    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { forum, apps } = await modapps.setup(interaction.guild, config);
@@ -2709,9 +2709,9 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[roleselect-role] ${e.message}`); return interaction.editReply(`Failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'request-role-setup') {
-    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    try { const { channel, created } = await rolereq.setup(interaction.guild, config); return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} <#${channel.id}>. Members use \`/request-role\`.`); }
+    try { const { channel, created } = await rolereq.setup(interaction.guild, config); return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Members use \`/request-role\`.`); }
     catch (e) { console.error(`[rolereq] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'request-role') {
@@ -2725,19 +2725,19 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[rolereq] ${e.message}`); return interaction.editReply('Could not send that request.').catch(() => {}); }
   }
   if (name === 'appeal-setup') {
-    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, created } = await appeals.setup(interaction.guild, config);
-      return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} <#${channel.id}>. Friends of a banned member appeal with \`/appeal ban <username>\` — it opens a private thread; staff Approve (unbans) or Deny.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Friends of a banned member appeal with \`/appeal ban <username>\` — it opens a private thread; staff Approve (unbans) or Deny.`);
     } catch (e) { console.error(`[appeals] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'appeal-strike-setup') {
-    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, created } = await strikeAppeals.setup(interaction.guild);
-      return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} <#${channel.id}>. A struck member appeals their own strike with \`/appeal strike <strike>\` — it opens a private thread; staff Approve (removes it) or Deny.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. A struck member appeals their own strike with \`/appeal strike <strike>\` — it opens a private thread; staff Approve (removes it) or Deny.`);
     } catch (e) { console.error(`[strikeAppeals] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'appeal') {
@@ -2759,12 +2759,12 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[strikeAppeals] ${e.message}`); return interaction.editReply('Could not open that appeal.').catch(() => {}); }
   }
   if (name === 'report-setup' || name === 'modmail-setup') {
-    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const mod = name === 'report-setup' ? reports : modmail;
       const { channel, created } = await mod.setup(interaction.guild, config);
-      return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} <#${channel.id}>.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>.`);
     } catch (e) { console.error(`[${name}] ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'report') {
@@ -2786,7 +2786,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[modmail] ${e.message}`); return interaction.editReply('Could not send that.').catch(() => {}); }
   }
   if (name === 'watchlist-terms') {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can use this.', flags: MessageFlags.Ephemeral });
+    if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnly, flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     const scope = interaction.options.getString('scope');
     if (sub === 'list') {

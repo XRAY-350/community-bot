@@ -25,6 +25,18 @@ const common = {
   // wording in all three, so they live here.
   onCooldown: min => `You’re on cooldown — try again in ${min} min.`,
   dailyLimit: max => `You’ve hit today’s limit of ${max}. Try again tomorrow.`,
+  notInServer: 'That member isn’t in the server.',
+  alreadySetup: 'ℹ️ Already set up:',
+};
+
+// ── guards (recurring staff/owner permission denials — reused across index.js/opspanel.js) ────────────
+const guards = {
+  ownerSetupOnly: 'Only owners can set this up.',
+  modRoleOnly: 'Only the mod role can use this.',
+  staffOnly: 'Only staff (mods+) can use this.',
+  staffOnlyStrike: 'Only staff (mods+) can strike.',
+  cantReadMessage: 'Could not read that message.',
+  somethingWrong: 'Something went wrong.',
 };
 
 // ── tiers ─────────────────────────────────────────────────────────────────────────────────────────
@@ -179,4 +191,4 @@ const promote = {
   alreadyDecided: 'Already decided.',
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest, roleselect, promote };
+module.exports = { common, guards, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest, roleselect, promote };
