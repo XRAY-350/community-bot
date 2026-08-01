@@ -2540,10 +2540,12 @@ client.on('interactionCreate', async (interaction) => {
     const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
     // Roster in message CONTENT (not an embed) so Discord resolves EVERY @mention to a clickable name — an
     // embed only resolves from the viewer's cache, leaving the rest as raw <@id>. Each: @mention · username · id.
-    const section = (emoji, name, arr) => `\n${emoji} **${name} — ${arr.length}**\n` + (arr.length ? arr.map(m => `<@${m.id}> · ${m.user.username} · \`${m.id}\``).join('\n') : '_(none)_');
+    // Headers are ROLE mentions (<@&id>) so Discord paints each tier in that role's ACTUAL colour, and the member
+    // @mentions already inherit their own role colour — no invented colour emoji needed. parse:[] = resolves, no ping.
+    const section = (roleId, fallback, arr) => `\n${roleId ? `<@&${roleId}>` : `**${fallback}**`} — ${arr.length}\n` + (arr.length ? arr.map(m => `<@${m.id}> · ${m.user.username} · \`${m.id}\``).join('\n') : '_(none)_');
     const out = `👥 **Staff** — ${owner + admin + mod + trial} total (of ${humans} members)\n`
-      + section('🟣', 'Owner', byTier.owner) + section('🔵', 'Admin', byTier.admin)
-      + section('🟢', 'Mod', byTier.mod) + section('✧', 'Trial Mod', byTier.trial);
+      + section(opspanel.OWNER_ROLE_IDS[0], 'Owner', byTier.owner) + section(opspanel.ADMIN_ROLE_ID, 'Admin', byTier.admin)
+      + section(opspanel.MOD_ROLE_ID, 'Mod', byTier.mod) + section(trialId, 'Trial Mod', byTier.trial);
     // Split by line into ≤1900-char messages (Discord's 2000 content cap).
     const chunks = []; let cur = '';
     for (const ln of out.split('\n')) { if (cur.length + ln.length + 1 > 1900) { chunks.push(cur); cur = ''; } cur += (cur ? '\n' : '') + ln; }
