@@ -610,7 +610,7 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       // No Discord-level perm gate: trial mods (who lack Manage Roles) need to reach it too. The handler
       // gates — mod+ get the full panel, trial mods get the read-only view, everyone else is refused.
-      new SlashCommandBuilder().setName('panel').setDescription('Open your private FUBU control panel (only you see it)'),
+      new SlashCommandBuilder().setName('panel').setDescription('Open your private FUBU control panel (only you see it)').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('unban').setDescription('Unban a user by ID (optionally re-watchlist on rejoin)')
         .addStringOption(o => o.setName('user_id').setDescription("The banned user's ID — start typing a name to search").setRequired(true).setAutocomplete(true))
         .addBooleanOption(o => o.setName('watchlist').setDescription('Give them the Watchlist role when they rejoin'))
@@ -644,11 +644,13 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('suggest').setDescription('Post a suggestion to the suggestions forum')
-        .addStringOption(o => o.setName('text').setDescription('Your suggestion').setRequired(true).setMaxLength(500)),
+        .addStringOption(o => o.setName('text').setDescription('Your suggestion').setRequired(true).setMaxLength(500))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('suggest-setup').setDescription('Create/repair the bot-gated suggestions forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('confess').setDescription('Send an anonymous confession')
-        .addStringOption(o => o.setName('text').setDescription('Your confession (your name is hidden from other members)').setRequired(true).setMaxLength(1000)),
+        .addStringOption(o => o.setName('text').setDescription('Your confession (your name is hidden from other members)').setRequired(true).setMaxLength(1000))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('confess-setup').setDescription('Create/repair the confessions + staff log channels (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
 
@@ -656,18 +658,21 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('to').setDescription('Who it goes to / who may unmask you').setRequired(true)
           .addChoices({ name: 'Head admin only', value: 'you' }, { name: 'Server owner only', value: 'her' },
             { name: 'Both', value: 'both' }, { name: 'Anonymous — both see it, no one can unmask', value: 'anonymous' }))
-        .addStringOption(o => o.setName('text').setDescription('What’s the problem?').setRequired(true).setMaxLength(1500)),
+        .addStringOption(o => o.setName('text').setDescription('What’s the problem?').setRequired(true).setMaxLength(1500))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('whistleblow-setup').setDescription('Set who receives whistleblows (bot owner only)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('report').setDescription('Anonymously report a member to staff')
         .addStringOption(o => o.setName('text').setDescription('What happened?').setRequired(true).setMaxLength(1000))
-        .addUserOption(o => o.setName('user').setDescription('Who are you reporting? (optional)')),
+        .addUserOption(o => o.setName('user').setDescription('Who are you reporting? (optional)'))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('report-setup').setDescription('Create the anon-reports channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('modmail').setDescription('Send an anonymous message to the mod team')
-        .addStringOption(o => o.setName('text').setDescription('Your message').setRequired(true).setMaxLength(1000)),
+        .addStringOption(o => o.setName('text').setDescription('Your message').setRequired(true).setMaxLength(1000))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('modmail-setup').setDescription('Create the mod-inbox channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
-      new SlashCommandBuilder().setName('apply-mod').setDescription('Apply to become a moderator'),
+      new SlashCommandBuilder().setName('apply-mod').setDescription('Apply to become a moderator').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('mod-applications').setDescription('Open or close mod applications when the team is full (admin)')
         .addSubcommand(s => s.setName('status').setDescription('Are mod applications open or closed right now?'))
@@ -706,7 +711,8 @@ client.once('ready', async () => {
 
       new SlashCommandBuilder().setName('request-role').setDescription('Request a casual role — staff approves it')
         .addRoleOption(o => o.setName('role').setDescription('The role you want (or already have, if removing)').setRequired(true))
-        .addBooleanOption(o => o.setName('remove').setDescription('Request to give this role UP instead of getting it (default: no)').setRequired(false)),
+        .addBooleanOption(o => o.setName('remove').setDescription('Request to give this role UP instead of getting it (default: no)').setRequired(false))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('request-role-setup').setDescription('Create the role-requests channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       // Appeals — unified /appeal ban|strike. Each subcommand is gated by its OWN feature flag
@@ -718,11 +724,12 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false)))
         .addSubcommand(s => s.setName('strike').setDescription('Appeal one of your own strikes, alone — opens a private thread')
           .addStringOption(o => o.setName('strike_id').setDescription('Which strike — pick from your own active strikes').setRequired(true).setAutocomplete(true))
-          .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false))),
+          .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
-      new SlashCommandBuilder().setName('help').setDescription('What can this bot do? — the member features'),
+      new SlashCommandBuilder().setName('help').setDescription('What can this bot do? — the member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes — weighted units, bans at 10')
         .addSubcommand(s => s.setName('view').setDescription('See a member’s current units + strike history')
@@ -775,14 +782,15 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('contest').setDescription('Which contest').setRequired(true)
           .addChoices({ name: '🎨 Drawing', value: 'drawing' }, { name: '📸 Photography', value: 'photography' }, { name: '✍️ Writing', value: 'writing' }))
         .addAttachmentOption(o => o.setName('image').setDescription('Your entry image (Drawing/Photography — required there)').setRequired(false))
-        .addStringOption(o => o.setName('text').setDescription('Your written entry (Writing)').setRequired(false).setMaxLength(2000)),
+        .addStringOption(o => o.setName('text').setDescription('Your written entry (Writing)').setRequired(false).setMaxLength(2000))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new ContextMenuCommandBuilder().setName('Report to watchlist').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Send to corner').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Strike').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
-      new ContextMenuCommandBuilder().setName('Report').setType(ApplicationCommandType.Message),   // member-facing anon report
+      new ContextMenuCommandBuilder().setName('Report').setType(ApplicationCommandType.Message).setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),   // member-facing anon report
     ];
     // Only register commands whose feature is enabled (fail-off). Disabled features' commands
     // simply don't appear in the server. (Seeded above, before allCmds was built.)
@@ -2007,7 +2015,9 @@ client.on('interactionCreate', async (interaction) => {
         return await rolereq.handleButton(interaction);
       }
       if (id.startsWith('appeal_')) {
-        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can approve or deny ban appeals.', flags: MessageFlags.Ephemeral });
+        // Ban appeals are a BAN decision (approve = unban, deny = uphold the ban) → require ban power (admin+),
+        // the same tier as /unban and the dashboard ban. Mods can't act on ban appeals.
+        if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only staff with **ban power** (admins+) can approve or deny a ban appeal.', flags: MessageFlags.Ephemeral });
         return await appeals.handleButton(interaction);
       }
       if (id.startsWith('strikeappeal_')) {
