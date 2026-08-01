@@ -127,10 +127,11 @@ async function pollAuditLog(guild) {
       const targetIsUser = e.target && (e.target.tag !== undefined || e.target.username !== undefined);
       const target = e.target ? (targetIsUser ? `<@${e.target.id}>` : `**${e.target.name || e.targetId || 'unknown'}**`) : null;
       const reason = e.reason ? ` — _${e.reason}_` : '';
-      const embed = new EmbedBuilder().setColor(0x99AAB5)
-        .setDescription(`${label}\n${actor}${target ? ` → ${target}` : ''}${describeChanges(e)}${reason}`)
-        .setFooter({ text: 'Server audit log' }).setTimestamp(e.createdAt);
-      await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+      // CONTENT, not an embed — so @mentions resolve to clickable names for every viewer (embed mentions
+      // show "@unknown-user" when the viewer's client hasn't cached that member). parse:[] = no pings.
+      // '-#' renders the label as small subtext, marking this as the passive audit feed vs the manual logs.
+      const line = `${actor}${target ? ` → ${target}` : ''}${describeChanges(e)}${reason}`;
+      await ch.send({ content: `-# 🗒️ Server audit log · ${label}\n${line}`, allowedMentions: { parse: [] } }).catch(() => {});
     }
     saveState({ lastAuditLogId: entries[entries.length - 1].id });
     return fresh.length;
