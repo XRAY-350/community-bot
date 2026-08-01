@@ -83,9 +83,9 @@ async function warnInflux(guild, lastHour, baseHourly) {
   const embed = new EmbedBuilder().setColor(0xE67E22).setTitle('📈 Influx detected')
     .setDescription(`**${lastHour} members joined in the last hour** — ${mult} the normal rate.`)
     .addFields(
-      { name: 'What the bot is doing', value: 'The **new-account flag auto-tightened** — during a spike, only the very freshest accounts get the ⚠ note (so normal new arrivals aren’t all tagged).' },
+      { name: 'What the bot is doing', value: 'During a spike the **new-account flag naturally tightens** as the join distribution shifts (refreshed hourly) — so only the very freshest accounts keep the ⚠ note, not every new arrival.' },
       { name: 'Worth a glance', value: 'If this is a **raid** (coordinated joins + immediate rule-breaking) rather than organic growth, consider pausing invites / raising verification. If it’s just growth, nothing to do.' })
-    .setFooter({ text: 'Auto heads-up · tune sensitivity on the dashboard → Watchlist' }).setTimestamp(new Date());
+    .setFooter({ text: 'Auto heads-up · influx sensitivity = influxFactor / influxMinJoins (env)' }).setTimestamp(new Date());
   await ch.send({ embeds: [embed] }).catch(e => console.error('[freshwatch] influx warn:', e.message));
 }
 
@@ -102,7 +102,7 @@ function noteFor(member) {
   } else {                                                // auto
     if (cache.autoCutoffTs) { fresh = joined >= cache.autoCutoffTs; tail = ` · _newest ~${Number(config.smartWatchFreshPercentile) || 1}% of the server_`; }
   }
-  return fresh ? `⚠️ **Brand-new account** — joined ${agoText(now - joined)}${tail}` : null;
+  return fresh ? `⚠️ **Recently joined** — ${agoText(now - joined)}${tail}` : null;
 }
 
 // Dashboard summary.

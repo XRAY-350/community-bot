@@ -72,7 +72,7 @@ function cornerSentMessage(userId, whenPhrase, reason) {
     embeds: [new EmbedBuilder().setColor(CORNER_RED)
       .setDescription(`<@${userId}> has been stripped of their roles and confined here **${whenPhrase}**.`
         + (reason ? `\n\n**Reason:** ${reason}` : '')
-        + `\n\nThis is the only channel you may speak in. Reflect on what brought you here.`)],
+        + `\n\nThis is the only text channel you may speak in (you can also join the corner voice channel). Reflect on what brought you here.`)],
     // Mod controls: release now, add time (+1h / +1d), or set indefinite (no auto-release) — one click.
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:0`).setEmoji('🔓').setLabel('Release now').setStyle(ButtonStyle.Success),
@@ -592,9 +592,9 @@ client.once('ready', async () => {
   try {
     features.ensureSeeded(); // must run before allCmds is built - feature-gated options below read it
     const allCmds = [
-      new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner (strips roles, jails them)')
+      new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner — strips roles, pulls them from voice, jails them (optionally timed)')
         .addUserOption(o => o.setName('user').setDescription('Member to corner').setRequired(true))
-        .addStringOption(o => o.setName('duration').setDescription('e.g. 30m, 2h, 3d — blank = indefinite').setRequired(false))
+        .addStringOption(o => o.setName('duration').setDescription('e.g. 30s, 30m, 2h, 3d — blank = indefinite').setRequired(false))
         .addStringOption(o => o.setName('rule').setDescription('Which rule did they break? (optional)').setRequired(false)
           .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
@@ -602,7 +602,7 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
-        .addStringOption(o => o.setName('duration').setDescription('Optional — e.g. 30m, 2h, 3d — release automatically after this instead of now').setRequired(false))
+        .addStringOption(o => o.setName('duration').setDescription('Optional — e.g. 30s, 30m, 2h, 3d — release automatically after this instead of now').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
@@ -1313,7 +1313,7 @@ async function watchlistAlert(msg, hits, opts = {}) {
   }
   const atts = [...msg.attachments.values()];
   const embed = new EmbedBuilder().setColor(opts.color ?? 0xED4245).setTitle(opts.title || '🚨 Watchlist match')
-    .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) ${opts.verb || 'tripped the watchlist'} in <#${msg.channel.id}>.`)
+    .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) ${opts.verb || 'matched a strict watchlist term'} in <#${msg.channel.id}>.`)
     .addFields(
       { name: 'Matched', value: (hits.map(h => `\`${h}\``).join(', ') || '-').slice(0, 1024) },
       { name: 'What they said (saved copy)', value: (msg.content || (atts.length ? '_(no text — see mirrored attachment)_' : '-')).slice(0, 1024) },
@@ -1503,7 +1503,7 @@ function strikeReasonModal(memberId, channelId, messageId, ruleN, prefillNote) {
   // Optional: ALSO send them to the corner for a duration — same spirit as /strike's timeout field, but
   // the corner (strip roles + jail) instead of a native mute. Blank = strike only.
   const cornerInput = new TextInputBuilder().setCustomId('corner')
-    .setLabel('Also corner them? (30m/2h — blank = no)')
+    .setLabel('Also corner them? (30s/30m/2h — blank = no)')
     .setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10);
   m.addComponents(new ActionRowBuilder().addComponents(reasonInput), new ActionRowBuilder().addComponents(weightInput), new ActionRowBuilder().addComponents(cornerInput));
   return m;
@@ -1781,7 +1781,7 @@ client.on('interactionCreate', async (interaction) => {
       || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
     if (!isAdmin) return interaction.reply({ content: 'Only admins can correct the judge.', flags: MessageFlags.Ephemeral });
     const [, task, aiS] = interaction.customId.split(':');
-    const hint = task === 'welfare' ? 'genuine / hyperbole' : 'fine / glance / corner / strike';
+    const hint = task === 'welfare' ? 'genuine / hyperbole' : 'fine / surface / corner / strike';
     const modal = new ModalBuilder().setCustomId(`sw_notemodal:${task}:${aiS}:${interaction.message.id}`).setTitle('Correct the judge’s read');
     modal.addComponents(
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('verdict').setLabel('Correct verdict').setPlaceholder(hint).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(12)),
@@ -1793,10 +1793,11 @@ client.on('interactionCreate', async (interaction) => {
       || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
     if (!isAdmin) return interaction.reply({ content: 'Only admins can correct the judge.', flags: MessageFlags.Ephemeral });
     const [, task, aiS, cardMsgId] = interaction.customId.split(':');
-    const verdict = (interaction.fields.getTextInputValue('verdict') || '').trim().toLowerCase();
+    let verdict = (interaction.fields.getTextInputValue('verdict') || '').trim().toLowerCase();
+    if (verdict === 'surface') verdict = 'glance';   // accept the button's wording ("Surface, no action")
     const note = (interaction.fields.getTextInputValue('note') || '').trim();
     const meta = smartwatch.VERDICT_META[verdict];
-    if (!meta || meta.task !== task) return interaction.reply({ content: `Verdict must be one of: ${task === 'welfare' ? 'genuine / hyperbole' : 'fine / glance / corner / strike'}.`, flags: MessageFlags.Ephemeral });
+    if (!meta || meta.task !== task) return interaction.reply({ content: `Verdict must be one of: ${task === 'welfare' ? 'genuine / hyperbole' : 'fine / surface / corner / strike'}.`, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     // Read the flagged message content off the card (survives even if the original message was deleted).
     let content = '', authorId = null, channelName = null, card = null;
@@ -1841,7 +1842,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isStringSelectMenu?.() && (interaction.customId === 'roleselect_age' || interaction.customId === 'roleselect_color')) {
     const isAge = interaction.customId === 'roleselect_age';
     if (isAge && config.verifiedRoleId && interaction.member.roles.cache.has(config.verifiedRoleId)) {
-      return interaction.reply({ content: 'Your age bracket is locked once you’re verified. That’s a one-time registration choice. Ask staff if something’s wrong.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Your age bracket is locked once you’re verified — it’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can correct it for you.', flags: MessageFlags.Ephemeral });
     }
     const group = (isAge ? roleselect.AGE : roleselect.COLORS).map(([, id]) => id);
     const chosen = interaction.values[0];
@@ -1983,7 +1984,7 @@ client.on('interactionCreate', async (interaction) => {
         const roleId = id.split(':')[1];
         const has = interaction.member.roles.cache.has(roleId);
         if (config.verifiedRoleId && interaction.member.roles.cache.has(config.verifiedRoleId)) {
-          return interaction.reply({ content: 'MDNI is locked once you’re verified. That’s a one-time choice made during registration. Ask staff if something’s wrong.', flags: MessageFlags.Ephemeral });
+          return interaction.reply({ content: 'MDNI is locked once you’re verified — it’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can change it for you.', flags: MessageFlags.Ephemeral });
         }
         if (!has && !config.adultAgeRoleIds.some(aid => interaction.member.roles.cache.has(aid))) {
           return interaction.reply({ content: 'Pick an adult age bracket (18+) first — MDNI requires it.', flags: MessageFlags.Ephemeral });
@@ -2251,7 +2252,7 @@ client.on('interactionCreate', async (interaction) => {
       let timeoutMs = null;
       if (timeoutStr) {
         timeoutMs = corner.parseDuration(timeoutStr);
-        if (!timeoutMs) return R('Bad timeout duration — use e.g. `30m`, `2h`, `3d`.');
+        if (!timeoutMs) return R('Bad timeout duration — use e.g. `30s`, `30m`, `2h`, `3d`.');
       }
       const cornerStr = interaction.options.getString('corner');
       let cornerMs = null;
@@ -2481,7 +2482,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'apply-mod') {
     if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
-    if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t open right now.', flags: MessageFlags.Ephemeral });
+    if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet — ask an admin to run `/apply-mod-setup`.', flags: MessageFlags.Ephemeral });
     if (!modapps.applicationsOpen()) return interaction.reply({ content: modapps.closedNotice(), flags: MessageFlags.Ephemeral });
     // If language mini-mods are set up, ask which position first; otherwise go straight to the mod modal.
     if (features.enabled('langMiniMod') && langmods.isConfigured()) {
@@ -2722,7 +2723,7 @@ client.on('interactionCreate', async (interaction) => {
       let durationMs = null;
       if (durStr) {
         durationMs = corner.parseDuration(durStr);
-        if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30m`, `2h`, `3d`.', flags: MessageFlags.Ephemeral });
+        if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30s`, `30m`, `2h`, `3d`.', flags: MessageFlags.Ephemeral });
       }
       // Reason: a picked rule and/or a custom typed reason. Show both when present.
       const ruleN = interaction.options.getString('rule');
@@ -2773,7 +2774,7 @@ client.on('interactionCreate', async (interaction) => {
       let durationMs = null;
       if (durStr) {
         durationMs = corner.parseDuration(durStr);
-        if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30m`, `2h`, `3d`.', flags: MessageFlags.Ephemeral });
+        if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30s`, `30m`, `2h`, `3d`.', flags: MessageFlags.Ephemeral });
       }
       await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
       if (durationMs) {

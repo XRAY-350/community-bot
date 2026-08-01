@@ -167,7 +167,7 @@ function answersFromEmbed(e) {
 
 async function submitFromModal(interaction, config) {
   const c = loadConfig();
-  if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: 'Applications aren’t open right now.', flags: MessageFlags.Ephemeral });
+  if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: 'Mod applications aren’t set up yet — tell an admin.', flags: MessageFlags.Ephemeral });
   if (c.applicationsClosed === true) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
   const state = loadState();
   if (Object.values(state.posts).find(p => p.applicantId === interaction.user.id && p.status === 'open'))

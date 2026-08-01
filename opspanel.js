@@ -150,7 +150,7 @@ async function openReadOnly(interaction) {
     .setDescription(
       '`/verify @member` — verify a waiting member (or hit the ✅ **Verify** button in their thread)\n' +
       '`/pending` — flip through everyone waiting to be verified\n' +
-      '`/corner @member` — time a member out — **you must pick a rule AND give a reason, max 1 hour**\n' +
+      '`/corner @member` — time a member out — **you must pick a rule OR give a reason, max 1 hour**\n' +
       '`/uncorner @member` — release someone from the corner\n' +
       '`/panel` — open this read-only dashboard\n\n' +
       '_You’ll get pinged when someone needs verifying. Ban / strike / watchlist stay mod-only — those unlock when you’re promoted._')
@@ -208,7 +208,8 @@ function buildModeration() {
     'No typing needed.\n_(Prefer typing? The buttons under it still take a username or ID.)_\n\n' +
     '⛓️ **Corner** — times them out: removes their roles and locks them to the corner channel until you release them.\n' +
     '✅ **Verify** — gives the **Verified** role and removes **Unverified**.\n' +
-    '🔓 **Uncorner** — lets them out early and gives their roles back.')
+    '🔓 **Uncorner** — lets them out early and gives their roles back.\n' +
+    '⛓️ **Corner several…** — pick up to 10 members and corner them all for the same duration.')
     .setFooter({ text: 'Any mod can use these. The full corner list is on the ⛓️ Corner page.' });
   const pick = new ActionRowBuilder().addComponents(
     new UserSelectMenuBuilder().setCustomId('fops_modpick').setPlaceholder('🎯 pick a member to act on…').setMaxValues(1));
@@ -347,7 +348,7 @@ function buildWatchlist() {
       : '**off** — no new-account note.';
   const embed = new EmbedBuilder().setColor(0x5865F2).setDescription(
     '**⭐ Needs Admin.** Two monitors:\n' +
-    '• **Strict watchlist** — a flagged member posts a **strict term** → alert in **mod-announcements** with **Ban** buttons (+ mod ping).\n' +
+    '• **Strict watchlist** — a flagged member posts a **strict term** → alert in **mod-announcements** with **Strike / Corner / Dismiss** buttons (+ mod ping).\n' +
     "• **Loose watch-log** — *anyone except staff* posts a **loose term** → quiet report in **#watch-log** (buttons, no ping).\n" +
     "• **Welfare** — a distress term (e.g. `i want to die`, `sh`) → soft **check-in** report in #watch-log (no ban button).\n" +
     "All reports keep a **saved copy + mirrored attachments**, so deleting the message can't hide it.\n\n" +
@@ -402,7 +403,7 @@ function commandRefEmbed() {
     .setDescription('Everything the staff toolkit can do. The **live dashboard** — status + point-and-click actions — is the other pinned message in this channel.')
     .addFields(
       { name: '🛡️ Moderation', value:
-        '`/corner @member [30m·2h·3d]` — time-out: strips roles + locks them to the corner (blank = until released)\n' +
+        '`/corner @member [30s·30m·2h·3d]` — time-out: strips roles + locks them to the corner (blank = until released)\n' +
         '`/uncorner @member [time]` — release now, or schedule a release later\n' +
         '`/cornered` — list who’s in the corner, each with a release button\n' +
         '`/strike view·add·remove·clear @member` — raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
@@ -582,12 +583,12 @@ async function handlePanel(interaction) {
   if (id === 'fops_pick_corner') {
     const uid = interaction.values[0];
     return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner — duration',
-      [{ id: 'dur', label: 'Duration (30m, 2h, 3d — blank = indefinite)' }]));
+      [{ id: 'dur', label: 'Duration (30s, 30m, 2h, 3d — blank = indefinite)' }]));
   }
   if (id === 'fops_pick_cornermulti') {
     _cornerMultiStash.set(interaction.user.id, { ids: interaction.values, at: Date.now() });
     return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s) — duration`,
-      [{ id: 'dur', label: 'Duration (30m, 2h, 3d — blank = indefinite)' }]));
+      [{ id: 'dur', label: 'Duration (30s, 30m, 2h, 3d — blank = indefinite)' }]));
   }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
@@ -797,7 +798,7 @@ async function handlePanel(interaction) {
       if (!member) return interaction.editReply('That member is no longer in the server.');
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
-      if (dur && !ms) return interaction.editReply('Bad duration — use `30m`, `2h`, `3d`.');
+      if (dur && !ms) return interaction.editReply('Bad duration — use `30s`, `30m`, `2h`, `3d`.');
       const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id);
       if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'} — stripped ${r.stripped} role(s).`);
