@@ -201,7 +201,10 @@ const taskOf = v => VERDICT_META[v]?.task || 'rule';
 function exemplarBlock(task = 'rule') {
   const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && taskOf(e.verdict) === task).slice(-EXEMPLARS_IN_PROMPT);
   if (!ex.length) return '';
-  const lines = ex.map(e => `- "${String(e.content || '').replace(/\s+/g, ' ').slice(0, 180)}" -> ${VERDICT_META[e.verdict].label}`);
+  const lines = ex.map(e => {
+    const base = `- "${String(e.content || '').replace(/\s+/g, ' ').slice(0, 180)}" -> ${VERDICT_META[e.verdict].label}`;
+    return e.note ? `${base} — correct read: ${String(e.note).replace(/\s+/g, ' ').slice(0, 200)}` : base;
+  });
   const header = task === 'welfare'
     ? 'ADMIN-LABELED WELFARE EXAMPLES from THIS community (real distress-vs-hyperbole calls the admins made — match this bar):'
     : 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made — match this bar; these override your priors when a new message is similar):';

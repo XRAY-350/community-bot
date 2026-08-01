@@ -1349,7 +1349,9 @@ async function labEvaluateAndPost(msg, member) {
     new ButtonBuilder().setCustomId(`sw_label:corner:${aiS}`).setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`sw_label:glance:${aiS}`).setEmoji('👁️').setLabel('Surface, no action').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`sw_label:fine:${aiS}`).setEmoji('⬜').setLabel('Fine (hide)').setStyle(ButtonStyle.Success));
-  await ch.send({ embeds: [emb], components: [row], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
+  const noteRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`sw_note:rule:${aiS}`).setEmoji('✏️').setLabel('Correct its read').setStyle(ButtonStyle.Secondary));
+  await ch.send({ embeds: [emb], components: [row, noteRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] send:', e.message));
   // Multi-action prototype: the judge may also propose strikes/corners on OTHER messages in the read
   // context. Post each as its own gradable card (same 🔨/⛓️/⬜ buttons) so admins can score whether the
   // richer read is trustworthy. aiSurface=1 — proposing an action means the AI would surface/act.
@@ -1364,16 +1366,16 @@ async function labEvaluateAndPost(msg, member) {
         { name: 'Message (saved copy)', value: (a.quote || '_(no text)_').slice(0, 1024) },
         { name: `AI proposes — ${a.action.toUpperCase()}${aRule}`, value: (a.reason || '-').slice(0, 1024) })
       .setFooter({ text: `#${msg.channel?.name || '?'} · proposal` }).setTimestamp(new Date());
-    const aButtons = [
+    const aRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('sw_label:strike:1').setEmoji('🔨').setLabel('Strike-worthy').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('sw_label:corner:1').setEmoji('⛓️').setLabel('Corner-only').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('sw_label:glance:1').setEmoji('👁️').setLabel('Surface, no action').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success)];
-    // Jump to the exact message the proposal is about (a DIFFERENT message than the flag). Link button when
-    // we resolved it back to a real message; else a description link is impossible so we just skip it.
-    if (a.url) aButtons.push(new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(a.url).setEmoji('🔗').setLabel('Jump'));
-    const aRow = new ActionRowBuilder().addComponents(...aButtons);
-    await ch.send({ embeds: [aEmb], components: [aRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
+      new ButtonBuilder().setCustomId('sw_label:fine:1').setEmoji('⬜').setLabel('Fine (overreach)').setStyle(ButtonStyle.Success));
+    // Second row: ✏️ correct-its-read, plus a 🔗 Jump to the exact (different) message the proposal is about.
+    const aRow2 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('sw_note:rule:1').setEmoji('✏️').setLabel('Correct its read').setStyle(ButtonStyle.Secondary));
+    if (a.url) aRow2.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(a.url).setEmoji('🔗').setLabel('Jump'));
+    await ch.send({ embeds: [aEmb], components: [aRow, aRow2], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] action send:', e.message));
   }
 }
 
@@ -1405,7 +1407,9 @@ async function postWelfareLabCard(msg, ch, hits, base) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`sw_label:genuine:${aiS}`).setEmoji('🫂').setLabel('Genuine distress').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`sw_label:hyperbole:${aiS}`).setEmoji('⬜').setLabel('Hyperbole (hide)').setStyle(ButtonStyle.Success));
-  await ch.send({ embeds: [emb], components: [row], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] welfare send:', e.message));
+  const noteRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`sw_note:welfare:${aiS}`).setEmoji('✏️').setLabel('Correct its read').setStyle(ButtonStyle.Secondary));
+  await ch.send({ embeds: [emb], components: [row, noteRow], allowedMentions: { parse: [] } }).catch(e => console.error('[smartwatch-lab] welfare send:', e.message));
 }
 
 // Reason+weight modal for a message-based strike. Carries the flagged message ref so the submit
@@ -1704,10 +1708,60 @@ client.on('interactionCreate', async (interaction) => {
     const e2 = EmbedBuilder.from(emb).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
       name: 'Labeled ✅', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> — AI was ${correct ? '✅ right' : '❌ wrong'}\n` +
         `Judge accuracy so far (${meta.task}): **${acc}%** (${stats.right}/${stats.total}) · this example now guides the ${meta.task} judge.` });
-    // Drop the grade buttons but KEEP any Link (jump) button so the card stays navigable after grading.
-    const links = (interaction.message.components?.[0]?.components || []).filter(b => b.style === ButtonStyle.Link);
+    // Drop the grade/note buttons but KEEP any Link (jump) button (across both rows) so the card stays navigable.
+    const links = (interaction.message.components?.flatMap(r => r.components) || []).filter(b => b.style === ButtonStyle.Link);
     const comps = links.length ? [new ActionRowBuilder().addComponents(...links.map(b => ButtonBuilder.from(b)))] : [];
     return interaction.update({ embeds: [e2], components: comps }).catch(() => {});
+  }
+  // ✏️ Correct-its-read: record the correct verdict + REASONING (a richer calibration example than a plain
+  // grade — the note is fed back into the judge prompt). customId sw_note:<task>:<aiSurface 0/1>.
+  if (interaction.isButton?.() && interaction.customId.startsWith('sw_note:')) {
+    const isAdmin = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)
+      || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
+    if (!isAdmin) return interaction.reply({ content: 'Only admins can correct the judge.', flags: MessageFlags.Ephemeral });
+    const [, task, aiS] = interaction.customId.split(':');
+    const hint = task === 'welfare' ? 'genuine / hyperbole' : 'fine / glance / corner / strike';
+    const modal = new ModalBuilder().setCustomId(`sw_notemodal:${task}:${aiS}:${interaction.message.id}`).setTitle('Correct the judge’s read');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('verdict').setLabel('Correct verdict').setPlaceholder(hint).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(12)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('note').setLabel('The correct read (teaches the judge)').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(300)));
+    return interaction.showModal(modal);
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('sw_notemodal:')) {
+    const isAdmin = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)
+      || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
+    if (!isAdmin) return interaction.reply({ content: 'Only admins can correct the judge.', flags: MessageFlags.Ephemeral });
+    const [, task, aiS, cardMsgId] = interaction.customId.split(':');
+    const verdict = (interaction.fields.getTextInputValue('verdict') || '').trim().toLowerCase();
+    const note = (interaction.fields.getTextInputValue('note') || '').trim();
+    const meta = smartwatch.VERDICT_META[verdict];
+    if (!meta || meta.task !== task) return interaction.reply({ content: `Verdict must be one of: ${task === 'welfare' ? 'genuine / hyperbole' : 'fine / glance / corner / strike'}.`, flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    // Read the flagged message content off the card (survives even if the original message was deleted).
+    let content = '', authorId = null, channelName = null, card = null;
+    try {
+      const labCh = await interaction.guild.channels.fetch(config.smartWatchLabChannelId).catch(() => null);
+      card = labCh && await labCh.messages.fetch(cardMsgId).catch(() => null);
+      const emb = card?.embeds?.[0];
+      content = emb?.fields?.find(f => f.name.startsWith('Message'))?.value || '';
+      const footer = emb?.footer?.text || '';
+      authorId = (footer.match(/flagged (\d+)/) || [])[1] || null;
+      channelName = (footer.match(/#(\S+)/) || [])[1] || null;
+    } catch { /* best-effort */ }
+    const aiWouldSurface = aiS === '1';
+    smartwatch.addExample({ ts: Date.now(), verdict, task: meta.task, content, note, channel: channelName, aiWouldSurface, author: authorId, by: interaction.user.id, byTag: interaction.user.tag });
+    const correct = aiWouldSurface === meta.surface;
+    const stats = smartwatch.labStats(meta.task);
+    const acc = stats.total ? Math.round(100 * stats.right / stats.total) : 0;
+    try {
+      if (card?.embeds?.[0]) {
+        const e2 = EmbedBuilder.from(card.embeds[0]).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
+          name: '✏️ Corrected', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> — AI was ${correct ? '✅ right' : '❌ wrong'}\ncorrect read: _${note}_\nnow guiding the ${meta.task} judge · accuracy **${acc}%** (${stats.right}/${stats.total})`.slice(0, 1024) });
+        const links = (card.components?.flatMap(r => r.components) || []).filter(b => b.style === ButtonStyle.Link);
+        await card.edit({ embeds: [e2], components: links.length ? [new ActionRowBuilder().addComponents(...links.map(b => ButtonBuilder.from(b)))] : [] }).catch(() => {});
+      }
+    } catch { /* annotate best-effort */ }
+    return interaction.editReply(`✏️ Correction saved — the judge will now weigh: _"${note}"_ on cases like this. (${meta.task} accuracy ${acc}%.)`);
   }
   // Rule picker shown before the strike reason+weight modal (watch-log Strike button + right-click Strike) —
   // a modal can't hold a dropdown, so this is a select-then-modal step, same shape as the dashboard's
