@@ -14,6 +14,15 @@
 // every reference site: see COPY-REGISTRY.md (regenerate with `node scripts/copy-registry.js`). When you add
 // a user-facing string, put it HERE and reference it, rather than inlining it.
 
+// ── common ────────────────────────────────────────────────────────────────────────────────────────
+// Short notices reused across many call sites (the "no member" line alone was in 10 places) — centralised
+// so they read identically everywhere and a re-word happens once.
+const common = {
+  noMemberInServer: 'That member is no longer in the server.',
+  noWatchlistRole: 'No Watchlist role configured.',
+  whichRule: 'Which rule (optional)?',
+};
+
 // ── tiers ─────────────────────────────────────────────────────────────────────────────────────────
 const tiers = {
   mod: 'MODS-✰',
@@ -49,4 +58,4 @@ const smartwatch = {
   modeLabel(live) { return live ? '🟢 LIVE — suppressing false positives' : '🟡 shadow — annotating only'; },
 };
 
-module.exports = { tiers, corner, watchlist, smartwatch };
+module.exports = { common, tiers, corner, watchlist, smartwatch };

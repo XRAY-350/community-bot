@@ -260,7 +260,7 @@ async function handleCornerButton(interaction) {
   // Re-corner (from a release announcement): send them straight back, indefinitely.
   if (interaction.customId.startsWith('corner_recorner:')) {
     const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member) return interaction.editReply('That member is no longer in the server.');
+    if (!member) return interaction.editReply(copy.common.noMemberInServer);
     if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === guild.ownerId) {
       return interaction.editReply('You cannot corner an admin.');
     }
@@ -311,7 +311,7 @@ async function handleConflictButton(interaction) {
   if (!modClicked(interaction)) return interaction.reply({ content: 'Only the mod role can resolve conflicts.', flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const member = await interaction.guild.members.fetch(userId).catch(() => null);
-  if (!member) return interaction.editReply('That member is no longer in the server.');
+  if (!member) return interaction.editReply(copy.common.noMemberInServer);
   const roleId = which === 'unver' ? config.unverifiedRoleId : config.verifiedRoleId;
   const roleName = which === 'unver' ? 'Unverified' : 'Verified';
   const kept = which === 'unver' ? 'Verified' : 'Unverified';
@@ -1635,7 +1635,7 @@ async function handleWatchlistButton(interaction) {
     return interaction.update({ content: `🗑️ Dismissed by <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   if (action === 'wl_add') {   // "Add to watchlist" from a report - ADMINS-★ only
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can add to the watchlist.', flags: MessageFlags.Ephemeral });
-    if (!config.watchlistRoleId) return interaction.reply({ content: 'No Watchlist role configured.', flags: MessageFlags.Ephemeral });
+    if (!config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const m = await interaction.guild.members.fetch(userId).catch(() => null);
     if (!m) return interaction.reply({ content: "That member isn't in the server.", flags: MessageFlags.Ephemeral });
     await m.roles.add(config.watchlistRoleId, `Watchlist via report by ${interaction.user.tag}`).catch(() => {});
@@ -1648,7 +1648,7 @@ async function handleWatchlistButton(interaction) {
       return interaction.update({ content: `⚠️ <@${userId}> already left. Ban so they can’t rejoin?`, embeds: keep, components: [banConfirmRow(userId, 'Confirm ban')], allowedMentions: { parse: [] } }).catch(() => {});
     // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
     const ref = originalRefFromAlert(keep[0]);
-    return interaction.reply({ content: 'Which rule (optional)?', components: [ruleRow(`strike_rule_pick:${userId}:${ref?.channelId || 0}:${ref?.messageId || 0}`)], flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${userId}:${ref?.channelId || 0}:${ref?.messageId || 0}`)], flags: MessageFlags.Ephemeral });
   }
   if (action === 'wl_corner') {   // lighter than Strike: a casual, timed cool-off straight from the flag
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
@@ -2211,7 +2211,7 @@ client.on('interactionCreate', async (interaction) => {
     const member = await interaction.guild.members.fetch(target.author.id).catch(() => null);
     if (!member) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
     // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
-    return interaction.reply({ content: 'Which rule (optional)?', components: [ruleRow(`strike_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
   if (!interaction.isChatInputCommand()) return;
   const name = interaction.commandName;
@@ -2436,7 +2436,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'watchlist') {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can use this.', flags: MessageFlags.Ephemeral });
-    if (!config.watchlistRoleId) return interaction.reply({ content: 'No Watchlist role configured.', flags: MessageFlags.Ephemeral });
+    if (!config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     if (sub === 'list') {
       await interaction.guild.members.fetch().catch(() => {});

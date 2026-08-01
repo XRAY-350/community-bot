@@ -575,7 +575,7 @@ async function handlePanel(interaction) {
   if (id.startsWith('fops_pick_strikegive:')) {
     const uid = id.split(':')[1];
     if (!D.strike?.ruleRow) return interaction.reply({ content: 'Strike-giving isn’t wired up.', flags: MessageFlags.Ephemeral });
-    return interaction.reply({ content: 'Which rule (optional)?', components: [D.strike.ruleRow(uid)], flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: copy.common.whichRule, components: [D.strike.ruleRow(uid)], flags: MessageFlags.Ephemeral });
   }
   // Pick exactly which strike to remove (not just the most recent) — a StringSelect of the member's
   // active strikes, human-readable labels via D.strike.label (reuses strikes.js's entryLabel).
@@ -594,7 +594,7 @@ async function handlePanel(interaction) {
   if (id.startsWith('fops_strike_manage:') && interaction.isStringSelectMenu?.()) {
     const uid = id.split(':')[1];
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.update({ content: 'That member is no longer in the server.', components: [] });
+    if (!member) return interaction.update({ content: copy.common.noMemberInServer, components: [] });
     const strikeId = interaction.values[0];
     const entry = (D.strike.entries(member) || []).find(e => e.id === strikeId);
     if (!entry) return interaction.update({ content: 'That strike is gone — it may already have been changed.', components: [] });
@@ -608,7 +608,7 @@ async function handlePanel(interaction) {
     const [, uid, strikeId, wStr] = id.split(':');
     const w = Number(wStr);
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.update({ content: 'That member is no longer in the server.', components: [] });
+    if (!member) return interaction.update({ content: copy.common.noMemberInServer, components: [] });
     const r = w <= 0
       ? await D.strike.removeById(interaction.guild, member, strikeId, interaction.user.tag)
       : await D.strike.setWeight(interaction.guild, member, strikeId, w, interaction.user.tag);
@@ -650,7 +650,7 @@ async function handlePanel(interaction) {
     const uid = interaction.values[0];
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.editReply('That member is no longer in the server.');
+    if (!member) return interaction.editReply(copy.common.noMemberInServer);
     await member.roles.add(D.config.verifiedRoleId, `Verified via dashboard picker by ${interaction.user.tag}`).catch(() => {});
     if (D.config.unverifiedRoleId) await member.roles.remove(D.config.unverifiedRoleId, 'Verified via dashboard').catch(() => {});
     return interaction.editReply(`✅ Verified <@${uid}> (\`${member.user.tag}\`).`);
@@ -663,11 +663,11 @@ async function handlePanel(interaction) {
   }
   if (id === 'fops_pick_wladd' || id === 'fops_pick_wlremove') {
     if (!meets(roleTier, 'admin')) return denyReply('admin');
-    if (!D.config.watchlistRoleId) return interaction.reply({ content: 'No Watchlist role configured.', flags: MessageFlags.Ephemeral });
+    if (!D.config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const uid = interaction.values[0];
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.editReply('That member is no longer in the server.');
+    if (!member) return interaction.editReply(copy.common.noMemberInServer);
     if (id === 'fops_pick_wladd') { await member.roles.add(D.config.watchlistRoleId, `Watchlist via dashboard by ${interaction.user.tag}`); return interaction.editReply(`👁️ <@${uid}> (\`${member.user.tag}\`) added to the Watchlist.`); }
     await member.roles.remove(D.config.watchlistRoleId, `Un-watchlist via dashboard by ${interaction.user.tag}`).catch(() => {}); watchlist.removePending(uid);
     return interaction.editReply(`✅ <@${uid}> (\`${member.user.tag}\`) removed from the Watchlist.`);
@@ -683,7 +683,7 @@ async function handlePanel(interaction) {
     const act = key.slice('fops_do_'.length);
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.editReply('That member is no longer in the server.');
+    if (!member) return interaction.editReply(copy.common.noMemberInServer);
     if (act === 'corner') {
       const r = await D.corner.corner(interaction.guild, member, null, D.state, interaction.user.id);
       return interaction.editReply(r.ok ? `⛓️ Cornered <@${uid}> indefinitely — stripped ${r.stripped} role(s). Release from the ⛓️ Corner page when ready.` : `Failed: ${r.error}`);
@@ -834,7 +834,7 @@ async function handlePanel(interaction) {
     if (id.startsWith('fops_cornermodal2:')) {
       const uid = id.split(':')[1];
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
-      if (!member) return interaction.editReply('That member is no longer in the server.');
+      if (!member) return interaction.editReply(copy.common.noMemberInServer);
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
       if (dur && !ms) return interaction.editReply(copy.corner.badDuration);
@@ -864,7 +864,7 @@ async function handlePanel(interaction) {
       if (!meets(tier, 'admin')) return deny('admin');
       const [, uid, category] = id.split(':');
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
-      if (!member) return interaction.editReply('That member is no longer in the server.');
+      if (!member) return interaction.editReply(copy.common.noMemberInServer);
       if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
         return interaction.editReply('Refusing to ban an admin/owner.');
       const detail = (interaction.fields.getTextInputValue('reason') || '').trim();
@@ -936,7 +936,7 @@ async function handlePanel(interaction) {
       return interaction.editReply(`**Strict (${s.length})** → ban:\n${s.map(t => `\`${t}\``).join(' · ') || '_none_'}\n\n**Loose (${l.length})** → #watch-log:\n${l.map(t => `\`${t}\``).join(' · ') || '_none_'}\n\n**Welfare (${w.length})** → check-in:\n${w.map(t => `\`${t}\``).join(' · ') || '_none_'}`.slice(0, 1900));
     }
     if (id === 'fops_wl_list') {
-      if (!D.config.watchlistRoleId) return interaction.editReply('No Watchlist role configured.');
+      if (!D.config.watchlistRoleId) return interaction.editReply(copy.common.noWatchlistRole);
       await interaction.guild.members.fetch().catch(() => {});
       const role = await interaction.guild.roles.fetch(D.config.watchlistRoleId).catch(() => null);
       const members = role ? [...role.members.values()] : [];

@@ -56,8 +56,11 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 9)
+## copy.js keys (migrated so far — 12)
 
+- `copy.common.noMemberInServer`
+- `copy.common.noWatchlistRole`
+- `copy.common.whichRule`
 - `copy.corner.badDuration`
 - `copy.corner.durationOpt`
 - `copy.corner.units`

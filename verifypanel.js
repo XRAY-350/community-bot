@@ -6,6 +6,7 @@ const { MessageFlags } = require('discord.js');
 const config = require('./config');
 const { kickMember } = require('./threads');
 const ownerlog = require('./ownerlog');
+const copy = require('./copy');
 
 const PREFIX = 'vpanel_';
 
@@ -45,7 +46,7 @@ async function handleVerifyButton(interaction) {
   const member = await guild.members.fetch(targetId).catch(() => null);
 
   if (kind === 'verify') {
-    if (!member) return interaction.editReply('That member is no longer in the server.');
+    if (!member) return interaction.editReply(copy.common.noMemberInServer);
     try {
       if (config.unverifiedRoleId && member.roles.cache.has(config.unverifiedRoleId)) {
         await member.roles.remove(config.unverifiedRoleId, `Verified by ${interaction.user.tag}`);
