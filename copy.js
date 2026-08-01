@@ -37,6 +37,9 @@ const guards = {
   staffOnlyStrike: 'Only staff (mods+) can strike.',
   cantReadMessage: 'Could not read that message.',
   somethingWrong: 'Something went wrong.',
+  couldNotFindMember: 'Could not find that member.',
+  needsAdmin: 'Needs Admin (or Owner).',
+  refuseBanStaff: 'Refusing to ban an admin/owner.',
 };
 
 // ── tiers ─────────────────────────────────────────────────────────────────────────────────────────

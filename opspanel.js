@@ -307,7 +307,7 @@ function buildActions() {
     '🧹 **Run housekeeping now** — the bot normally tidies up once an hour; this makes it run **right now**: warn or remove overdue unverified members, delete dead verification threads, and flag anyone with both roles. ⚠️ It can **actually remove people**, unless Test Mode is on (see the ⚠️ Danger page).\n' +
     '🔨 **Ban a member** — permanently removes them and blocks them from rejoining. Can\'t be undone here.\n' +
     `📋 **Mod applications** — currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime.`)
-    .setFooter({ text: 'Needs Admin (or Owner).' });
+    .setFooter({ text: copy.guards.needsAdmin });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_sweep').setEmoji('🧹').setLabel('Run housekeeping now').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_modapps_toggle').setEmoji(appsOpen ? '🚫' : '✅').setLabel(appsOpen ? 'Close mod applications' : 'Reopen mod applications').setStyle(appsOpen ? ButtonStyle.Danger : ButtonStyle.Success),
@@ -324,7 +324,7 @@ function buildSettings() {
     '✅ **React-resolve** — post a weekly message those members can react to, to fix themselves.\n' +
     '🗒️ **Digest** — a once-a-day recap of everything the bot did.\n' +
     '🧵 **Orphan-reap** — delete verification threads whose owner already left the server.')
-    .setFooter({ text: 'Needs Admin (or Owner).' });
+    .setFooter({ text: copy.guards.needsAdmin });
   const row1 = new ActionRowBuilder().addComponents(
     toggleBtn('featureNudge', 'Nudge'), toggleBtn('conflictPing', 'Conflict-ping'),
     toggleBtn('reactResolveEnabled', 'React-resolve'), toggleBtn('digestEnabled', 'Digest'), toggleBtn('reapOrphans', 'Orphan-reap'));
@@ -551,7 +551,7 @@ async function handlePanel(interaction) {
   if (id === 'fops_modpick') {
     const uid = interaction.values[0];
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.reply({ content: 'Could not find that member.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.guards.couldNotFindMember, flags: MessageFlags.Ephemeral });
     const units = D.strike ? D.strike.total(member) : 0;
     const cap = D.strike ? D.strike.BAN_THRESHOLD : 10;
     const actions = new ActionRowBuilder().addComponents(
@@ -582,7 +582,7 @@ async function handlePanel(interaction) {
   if (id.startsWith('fops_pick_strikeremove:')) {
     const uid = id.split(':')[1];
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return interaction.reply({ content: 'Could not find that member.', flags: MessageFlags.Ephemeral });
+    if (!member) return interaction.reply({ content: copy.guards.couldNotFindMember, flags: MessageFlags.Ephemeral });
     const entries = D.strike ? D.strike.entries(member) : [];
     if (!entries.length) return interaction.reply({ content: `<@${uid}> has no active strikes.`, flags: MessageFlags.Ephemeral });
     const menu = new StringSelectMenuBuilder().setCustomId(`fops_strike_manage:${uid}`).setPlaceholder('Which strike?')
@@ -700,7 +700,7 @@ async function handlePanel(interaction) {
     if (act === 'ban') {
       if (!meets(tier, 'admin')) return interaction.editReply('🔒 Banning is **admin+** only.');
       if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
-        return interaction.editReply('Refusing to ban an admin/owner.');
+        return interaction.editReply(copy.guards.refuseBanStaff);
       try {
         await member.ban({ reason: `Banned via dashboard by ${interaction.user.tag}` });
         if (D.logAction) await D.logAction(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `<@${uid}> (${member.user.tag}) — via dashboard — by <@${interaction.user.id}>.` });
@@ -866,7 +866,7 @@ async function handlePanel(interaction) {
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
       if (!member) return interaction.editReply(copy.common.noMemberInServer);
       if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
-        return interaction.editReply('Refusing to ban an admin/owner.');
+        return interaction.editReply(copy.guards.refuseBanStaff);
       const detail = (interaction.fields.getTextInputValue('reason') || '').trim();
       const reason = `${CATEGORY_LABEL[category] || 'Other'}${detail ? ` — ${detail}` : ''} (via dashboard by ${interaction.user.tag})`;
       await member.ban({ reason });

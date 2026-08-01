@@ -56,7 +56,7 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 109)
+## copy.js keys (migrated so far — 112)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
@@ -92,8 +92,11 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 - `copy.corner.units`
 - `copy.corner.unitsDot`
 - `copy.guards.cantReadMessage`
+- `copy.guards.couldNotFindMember`
 - `copy.guards.modRoleOnly`
+- `copy.guards.needsAdmin`
 - `copy.guards.ownerSetupOnly`
+- `copy.guards.refuseBanStaff`
 - `copy.guards.somethingWrong`
 - `copy.guards.staffOnly`
 - `copy.guards.staffOnlyStrike`
