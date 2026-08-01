@@ -2538,17 +2538,19 @@ client.on('interactionCreate', async (interaction) => {
       else if (trialId && m.roles.cache.has(trialId)) byTier.trial.push(m);
     }
     const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
-    // Each tier: count + every member as @mention · username · copyable user id.
-    const roster = (arr) => { if (!arr.length) return '_(none)_'; const s = arr.map(m => `<@${m.id}> · ${m.user.username} · \`${m.id}\``).join('\n'); return s.length > 1024 ? s.slice(0, 990) + `\n…(+${arr.length})` : s; };
-    const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('👥 Staff')
-      .setDescription(`**${owner + admin + mod + trial}** staff total (of ${humans} members) — each counted at their highest tier.`)
-      .addFields(
-        { name: `🟣 Owner — ${owner}`, value: roster(byTier.owner) },
-        { name: `🔵 Admin — ${admin}`, value: roster(byTier.admin) },
-        { name: `🟢 Mod — ${mod}`, value: roster(byTier.mod) },
-        { name: `✧ Trial Mod — ${trial}`, value: roster(byTier.trial) })
-      .setTimestamp(new Date());
-    return interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+    // Roster in message CONTENT (not an embed) so Discord resolves EVERY @mention to a clickable name — an
+    // embed only resolves from the viewer's cache, leaving the rest as raw <@id>. Each: @mention · username · id.
+    const section = (emoji, name, arr) => `\n${emoji} **${name} — ${arr.length}**\n` + (arr.length ? arr.map(m => `<@${m.id}> · ${m.user.username} · \`${m.id}\``).join('\n') : '_(none)_');
+    const out = `👥 **Staff** — ${owner + admin + mod + trial} total (of ${humans} members)\n`
+      + section('🟣', 'Owner', byTier.owner) + section('🔵', 'Admin', byTier.admin)
+      + section('🟢', 'Mod', byTier.mod) + section('✧', 'Trial Mod', byTier.trial);
+    // Split by line into ≤1900-char messages (Discord's 2000 content cap).
+    const chunks = []; let cur = '';
+    for (const ln of out.split('\n')) { if (cur.length + ln.length + 1 > 1900) { chunks.push(cur); cur = ''; } cur += (cur ? '\n' : '') + ln; }
+    if (cur) chunks.push(cur);
+    await interaction.editReply({ content: chunks[0] || '👥 No staff.', allowedMentions: { parse: [] } }).catch(() => {});
+    for (let i = 1; i < chunks.length; i++) await interaction.followUp({ content: chunks[i], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
+    return;
   }
   if (name === 'promote-trial' || name === 'promote-mod') {
     // promote-trial: any mod may open the vote. promote-mod (→ admin): admin+ only.
