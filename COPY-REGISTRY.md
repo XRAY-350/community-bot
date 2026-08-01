@@ -56,7 +56,7 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 77)
+## copy.js keys (migrated so far — 89)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
@@ -73,6 +73,18 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 - `copy.confessions.tooLong()`
 - `copy.confessions.tooShort()`
 - `copy.confessions.untracked`
+- `copy.contest.alreadyEntered()`
+- `copy.contest.channelMissing`
+- `copy.contest.needImage()`
+- `copy.contest.needVerified`
+- `copy.contest.needWriting()`
+- `copy.contest.noOpenRound`
+- `copy.contest.noRoundNow`
+- `copy.contest.notImage`
+- `copy.contest.notRunning`
+- `copy.contest.organizersOnly`
+- `copy.contest.postFailed`
+- `copy.contest.posted()`
 - `copy.corner.badDuration`
 - `copy.corner.durationOpt`
 - `copy.corner.units`
@@ -158,7 +170,7 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **roleselect** (staff) — _inline (not yet migrated)_
 - **permguard** (core) — _inline (not yet migrated)_
 - **perms** (core) — _inline (not yet migrated)_
-- **contest** (member) — _inline (not yet migrated)_
+- **contest** (member) — copy.js: `contest`
 - **appeals** (member) — copy.js: `appeals`
 - **strikeAppeals** (member) — _inline (not yet migrated)_
 - **smartWatch** (core) — copy.js: `smartwatch`

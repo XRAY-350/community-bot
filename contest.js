@@ -24,6 +24,7 @@ const { EmbedBuilder, ChannelType, PermissionsBitField, ActionRowBuilder, Button
 const config = require('./config');
 const ownerlog = require('./ownerlog');
 const opspanel = require('./opspanel');
+const copy = require('./copy');
 
 const P = PermissionsBitField.Flags;
 const CFG_FILE = process.env.FUBU_CONTEST_FILE || '/home/ubuntu/.fubu_contest.json';
@@ -244,7 +245,7 @@ async function status(guild) {
 // ---- end a round: crown winners ------------------------------------------------------------------
 async function endRound(guild, { auto = false } = {}) {
   const cfg = loadCfg();
-  if (!cfg.round || !cfg.round.active) return { ok: false, msg: 'No open round to end.' };
+  if (!cfg.round || !cfg.round.active) return { ok: false, msg: copy.contest.noOpenRound };
   const role = cfg.winnerRoleId ? await guild.roles.fetch(cfg.winnerRoleId).catch(() => null) : null;
   const theme = cfg.round.theme;
   const monthLabel = cfg.round.month || ymKey();
@@ -388,24 +389,24 @@ async function onMessageDelete(msg) {
 async function submit(interaction) {
   const cfg = loadCfg();
   if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
-    return interaction.reply({ content: 'You need to be verified to enter a contest.', flags: 1 << 6 });
-  if (!cfg.round || !cfg.round.active) return interaction.reply({ content: 'There isn\'t an open contest round right now.', flags: 1 << 6 });
+    return interaction.reply({ content: copy.contest.needVerified, flags: 1 << 6 });
+  if (!cfg.round || !cfg.round.active) return interaction.reply({ content: copy.contest.noRoundNow, flags: 1 << 6 });
   const key = interaction.options.getString('contest');
   const contest = byKey(key);
-  if (!contest || !cfg.round.contests.includes(key)) return interaction.reply({ content: 'That contest isn\'t running this month.', flags: 1 << 6 });
+  if (!contest || !cfg.round.contests.includes(key)) return interaction.reply({ content: copy.contest.notRunning, flags: 1 << 6 });
   const channelId = cfg.channels[key];
   const ch = channelId ? await interaction.guild.channels.fetch(channelId).catch(() => null) : null;
-  if (!ch) return interaction.reply({ content: 'The contest channel is missing. Tell an organizer to run `/contest setup`.', flags: 1 << 6 });
+  if (!ch) return interaction.reply({ content: copy.contest.channelMissing, flags: 1 << 6 });
 
   const entries = (cfg.entries[channelId] = cfg.entries[channelId] || {});
-  if (entries[interaction.user.id]) return interaction.reply({ content: `You've already entered the **${contest.label}** contest this month. One entry per theme 🩷.`, flags: 1 << 6 });
+  if (entries[interaction.user.id]) return interaction.reply({ content: copy.contest.alreadyEntered(contest.label), flags: 1 << 6 });
 
   const image = interaction.options.getAttachment('image');
   const text = interaction.options.getString('text');
-  if (contest.kind === 'image' && !image) return interaction.reply({ content: `The **${contest.label}** contest needs an **image**. Attach one to \`image:\`.`, flags: 1 << 6 });
-  if (contest.kind === 'text' && !text && !image) return interaction.reply({ content: `The **${contest.label}** contest needs your **writing**. Put it in \`text:\` (or attach it).`, flags: 1 << 6 });
+  if (contest.kind === 'image' && !image) return interaction.reply({ content: copy.contest.needImage(contest.label), flags: 1 << 6 });
+  if (contest.kind === 'text' && !text && !image) return interaction.reply({ content: copy.contest.needWriting(contest.label), flags: 1 << 6 });
   if (image && !((image.contentType && image.contentType.startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(image.name || '')))
-    return interaction.reply({ content: 'That attachment isn\'t an image.', flags: 1 << 6 });
+    return interaction.reply({ content: copy.contest.notImage, flags: 1 << 6 });
 
   await interaction.deferReply({ flags: 1 << 6 });
   const embed = new EmbedBuilder().setColor(GOLD)
@@ -415,11 +416,11 @@ async function submit(interaction) {
   if (image) embed.setImage(`attachment://${(image.name || 'entry').replace(/[^\w.\-]/g, '_')}`);
   const files = image ? [{ attachment: image.url, name: (image.name || 'entry').replace(/[^\w.\-]/g, '_') }] : [];
   const posted = await ch.send({ embeds: [embed], files, allowedMentions: { parse: [] } }).catch(e => { console.error('[contest] submit send:', e.message); return null; });
-  if (!posted) return interaction.editReply('Something went wrong posting your entry. Try again, or post it directly in the channel.');
+  if (!posted) return interaction.editReply(copy.contest.postFailed);
   try { await posted.react(VOTE_EMOJI); } catch { /* non-fatal */ }
   entries[interaction.user.id] = { messageId: posted.id, anonymous: true, at: Date.now() };
   saveCfg(cfg);
-  return interaction.editReply(`✅ Your **${contest.label}** entry is posted anonymously in <#${channelId}>. Your name is hidden. Good luck! 🩷`);
+  return interaction.editReply(copy.contest.posted(contest.label, channelId));
 }
 
 // ---- monthly auto-close tick ---------------------------------------------------------------------
@@ -486,7 +487,7 @@ async function buildEventPanel(guild) {
 }
 
 async function openEventPanel(interaction) {
-  if (!canManageEvents(interaction)) return interaction.reply({ content: 'This dashboard is for event organizers and staff.', flags: EPH });
+  if (!canManageEvents(interaction)) return interaction.reply({ content: copy.contest.organizersOnly, flags: EPH });
   return interaction.reply({ ...(await buildEventPanel(interaction.guild)), flags: EPH });
 }
 
@@ -495,7 +496,7 @@ function isEventPanelInteraction(i) {
 }
 
 async function handleEventPanel(interaction) {
-  if (!canManageEvents(interaction)) return interaction.reply({ content: 'This dashboard is for event organizers and staff.', flags: EPH });
+  if (!canManageEvents(interaction)) return interaction.reply({ content: copy.contest.organizersOnly, flags: EPH });
   const id = interaction.customId;
   const guild = interaction.guild;
 

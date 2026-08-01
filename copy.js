@@ -147,4 +147,19 @@ const modapps = {
   whichLang: '🌐 Which language do you want to help moderate?',
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps };
+const contest = {
+  noOpenRound: 'No open round to end.',
+  needVerified: 'You need to be verified to enter a contest.',
+  noRoundNow: 'There isn’t an open contest round right now.',
+  notRunning: 'That contest isn’t running this month.',
+  channelMissing: 'The contest channel is missing. Tell an organizer to run `/contest setup`.',
+  alreadyEntered: label => `You’ve already entered the **${label}** contest this month. One entry per theme 🩷.`,
+  needImage: label => `The **${label}** contest needs an **image**. Attach one to \`image:\`.`,
+  needWriting: label => `The **${label}** contest needs your **writing**. Put it in \`text:\` (or attach it).`,
+  notImage: 'That attachment isn’t an image.',
+  postFailed: 'Something went wrong posting your entry. Try again, or post it directly in the channel.',
+  posted: (label, channelId) => `✅ Your **${label}** entry is posted anonymously in <#${channelId}>. Your name is hidden. Good luck! 🩷`,
+  organizersOnly: 'This dashboard is for event organizers and staff.',
+};
+
+module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest };
