@@ -257,7 +257,8 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     if (member.user?.bot) { skipped.push(`<@${member.id}> (bot)`); continue; }
     if (member.id === guild.ownerId) { skipped.push(`<@${member.id}> (owner)`); continue; }
     const targetTier = opspanel.memberTier(member);
-    if (targetTier) { skipped.push(`<@${member.id}> (${targetTier})`); continue; }   // bulk-corner never touches staff (mod/admin/owner)
+    const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
+    if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
     if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
     else skipped.push(`<@${member.id}> (${r.error})`);
@@ -2000,7 +2001,7 @@ client.on('interactionCreate', async (interaction) => {
         const authorIds = new Set();
         if (recent) for (const m of recent.values()) { if (m.createdTimestamp >= since && !m.author.bot && m.author.id !== member.id) authorIds.add(m.author.id); }
         const sweepMembers = [];
-        for (const id of authorIds) { const mm = await guild.members.fetch(id).catch(() => null); if (mm && !opspanel.memberTier(mm)) sweepMembers.push(mm); }
+        for (const id of authorIds) { const mm = await guild.members.fetch(id).catch(() => null); if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) sweepMembers.push(mm); }
         const actorRank = { owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
         const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, sweepMembers, durationMs, { reasonText: reason });
         sweepNote = `\n🧹 Sweep (${Math.min(mins, 120)}m): +${done.length} more${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;

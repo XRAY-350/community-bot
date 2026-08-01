@@ -74,6 +74,10 @@ async function ensureCornerPerms(guild) {
         if (config.modRoleId && !overwriteMatches(ch, config.modRoleId, { ViewChannel: true, SendMessages: true })) {
           await ch.permissionOverwrites.edit(config.modRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'corner self-heal' }); fixed++;
         }
+        // Trial mods can speak in the corner too (talk to / moderate cornered members).
+        if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true })) {
+          await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'corner self-heal' }); fixed++;
+        }
         continue;
       }
       if (ch.id === config.cornerVcId) {
@@ -87,6 +91,10 @@ async function ensureCornerPerms(guild) {
         if (config.modRoleId) {
           const mDesired = { ViewChannel: true, Connect: true, Speak: true, MuteMembers: true, MoveMembers: true, DeafenMembers: true };
           if (!overwriteMatches(ch, config.modRoleId, mDesired)) { await ch.permissionOverwrites.edit(config.modRoleId, mDesired, { reason: 'corner self-heal' }); fixed++; }
+        }
+        // Trial mods can join + speak in the corner VC (participate, not full voice-mod: no mute/move/deafen).
+        if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, Connect: true, Speak: true })) {
+          await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, Connect: true, Speak: true }, { reason: 'corner self-heal' }); fixed++;
         }
         continue;
       }
