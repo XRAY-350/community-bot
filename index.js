@@ -1875,8 +1875,12 @@ client.on('interactionCreate', async (interaction) => {
         const sweepMembers = [];
         for (const id of authorIds) { const mm = await guild.members.fetch(id).catch(() => null); if (mm && !opspanel.memberTier(mm)) sweepMembers.push(mm); }
         const actorRank = { owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
-        const { done, skipped } = await cornerMany(guild, interaction.user.id, actorRank, sweepMembers, durationMs, { reasonText: reason });
+        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, sweepMembers, durationMs, { reasonText: reason });
         sweepNote = `\n🧹 Sweep (${Math.min(mins, 120)}m): +${done.length} more${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
+        // Public-facing result: announce the sweep in the channel so everyone sees it, not just the mod's ack.
+        if (done.length) await target.channel.send({
+          content: `🧹 **Corner sweep** — <@${interaction.user.id}> cooled this channel down and also sent ${done.map(id => `<@${id}>`).join(', ')} to the corner ${whenPhrase}.`,
+          allowedMentions: { parse: [] } }).catch(e => console.error('[corner-sweep] public announce:', e.message));
       }
       const relSec = Math.floor((Date.now() + durationMs) / 1000);
       return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` — ${reason}` : ''}. Stripped **${res.stripped}** role(s).${sweepNote}`, allowedMentions: { parse: [] } });
