@@ -112,8 +112,7 @@ function relPhrase(releaseAt) {
 
 // Mod gate shared by the button handlers below (MOD role, Administrator overrides).
 function modClicked(interaction) {
-  return (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId))
-    || opspanel.isBotOwner(interaction);   // role-based staff (no Administrator-perm fallback) + bot owner by user id
+  return !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
 }
 
 // /pending — paginated, read-only list of open verify threads (verifying happens in-thread, not here).
@@ -1259,10 +1258,10 @@ async function sweepExistingAutoCornerThreads(guild) {
 // Tier gates via the ops-panel's ROLE-based tiers (NOT the Administrator permission, per owner):
 //   canBan   = any staff tier (mod / admin / owner) — any mod can ban on a violation.
 //   canWLAdmin = ADMINS-★ role or owner ONLY — unban + editing the watchlist/terms.
-// The bot owner passes EVERY authority gate by user id (role-independent — works even cornered/stripped).
-const canBan = (i) => !!opspanel.memberTier(i.member) || opspanel.isBotOwner(i);
-const canWLAdmin = (i) => ['admin', 'owner'].includes(opspanel.memberTier(i.member)) || opspanel.isBotOwner(i);
-const isOwner = (i) => opspanel.memberTier(i.member) === 'owner' || opspanel.isBotOwner(i);   // owner tier or the bot owner
+// Authority via tierOf (bot owner supreme by user id; Administrator PERMISSION = owner tier; ADMINS-★ = admin).
+const canBan = (i) => !!opspanel.tierOf(i);                                        // any staff (mod+)
+const canWLAdmin = (i) => ['admin', 'owner', 'botowner'].includes(opspanel.tierOf(i)); // admin+
+const isOwner = (i) => ['owner', 'botowner'].includes(opspanel.tierOf(i));         // owner (role or Admin-perm) or bot owner
 // Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
 // low-risk, bounded things: VERIFY, view the dashboard read-only, and CORNER (rule+reason, ≤1h).
 const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.has(config.trialModRoleId));
@@ -2086,7 +2085,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Send to corner') {
     // Same access + tier rules as /corner, but the trigger is a specific message — and that message
     // gets forwarded into the corner so the member (and mods) see exactly what put them there.
-    const isMod = (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId)) || opspanel.isBotOwner(interaction);
+    const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
     if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: 'Only the mod role can use this.', flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: 'Could not read that message.', flags: MessageFlags.Ephemeral });
@@ -2154,6 +2153,8 @@ client.on('interactionCreate', async (interaction) => {
       content: `✅ Unbanned <@${id}>.` + (keepWatch ? ' They\'ll get the **Watchlist** role automatically when they rejoin.' : '') });
   }
   if (name === 'contest-submit') {
+    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+      return interaction.reply({ content: 'You need to be **verified** to enter the contest.', flags: MessageFlags.Ephemeral });
     try { return await contest.submit(interaction); }
     catch (e) { console.error('[contest] submit:', e.message); return interaction.reply({ content: 'Something went wrong entering the contest.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
@@ -2478,8 +2479,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
   if (name === 'mod-applications') {
-    const mtier = opspanel.memberTier(interaction.member);
-    if (mtier !== 'admin' && mtier !== 'owner' && !opspanel.isBotOwner(interaction))
+    if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
       return interaction.reply({ content: 'Only admins can open or close mod applications.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     if (sub === 'status') {
@@ -2532,7 +2532,9 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply({ embeds: [embed] }).catch(() => {});
   }
   if (name === 'promote-trial' || name === 'promote-mod') {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can open a promotion vote.', flags: MessageFlags.Ephemeral });
+    // promote-trial: any mod may open the vote. promote-mod (→ admin): admin+ only.
+    if (name === 'promote-mod' ? !canWLAdmin(interaction) : !canBan(interaction))
+      return interaction.reply({ content: name === 'promote-mod' ? 'Only admins can open a mod→admin promotion vote.' : 'Only staff (mods+) can open a promotion vote.', flags: MessageFlags.Ephemeral });
     const target = interaction.options.getMember('member');
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -2679,8 +2681,7 @@ client.on('interactionCreate', async (interaction) => {
     // mods may ALSO corner — but only regular members (the tier check below stops them cornering staff)
     // and under restrictions (rule + reason required, ≤1h), enforced in the corner block.
     const trial = isTrialMod(interaction);
-    const isMod = (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId))
-      || opspanel.isBotOwner(interaction);   // role-based staff (no Administrator-perm fallback) + bot owner
+    const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
     if (!isMod && !trial) return interaction.reply({ content: 'Only staff (mods+ or trial mods) can use this.', flags: MessageFlags.Ephemeral });
 
     const guild = interaction.guild;

@@ -41,12 +41,16 @@ function memberTier(member) {
   if (roles.has(MOD_ROLE_ID)) return 'mod';
   return null;
 }
-// ACTOR authority tier — who can USE things. The bot owner is supreme here BY USER ID (role-independent, so
-// they keep full access even cornered/role-stripped). Tiers are ROLE-based: the raw Administrator PERMISSION
-// does NOT grant a tier ("admin" = the ADMINS-★ role, not the Discord Administrator permission).
+// ACTOR authority tier — who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server
+// owner < bot owner. The bot owner is supreme BY USER ID (role-independent → keeps access even role-stripped).
+// The OWNER role and the Administrator PERMISSION are EQUAL = owner tier (an owner should hold both, but
+// either one alone confers owner). Note "admin" = the ADMINS-★ role, NOT the Administrator permission.
 function tierOf(interaction) {
   if (isBotOwner(interaction)) return 'botowner';
-  return memberTier(interaction.member);
+  const t = memberTier(interaction.member);
+  if (t) return t;
+  if (interaction.memberPermissions && interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) return 'owner';
+  return null;
 }
 
 // page tiers: min tier to USE the actions on the page (everyone mod+ can VIEW every page).
