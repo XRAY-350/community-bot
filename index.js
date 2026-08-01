@@ -113,7 +113,7 @@ function relPhrase(releaseAt) {
 // Mod gate shared by the button handlers below (MOD role, Administrator overrides).
 function modClicked(interaction) {
   return (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId))
-    || interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+    || opspanel.isBotOwner(interaction);   // role-based staff (no Administrator-perm fallback) + bot owner by user id
 }
 
 // /pending — paginated, read-only list of open verify threads (verifying happens in-thread, not here).
@@ -1259,9 +1259,10 @@ async function sweepExistingAutoCornerThreads(guild) {
 // Tier gates via the ops-panel's ROLE-based tiers (NOT the Administrator permission, per owner):
 //   canBan   = any staff tier (mod / admin / owner) — any mod can ban on a violation.
 //   canWLAdmin = ADMINS-★ role or owner ONLY — unban + editing the watchlist/terms.
-const canBan = (i) => !!opspanel.memberTier(i.member);
-const canWLAdmin = (i) => ['admin', 'owner'].includes(opspanel.memberTier(i.member));
-const isOwner = (i) => opspanel.memberTier(i.member) === 'owner';   // owner tier only (role-based, any owner)
+// The bot owner passes EVERY authority gate by user id (role-independent — works even cornered/stripped).
+const canBan = (i) => !!opspanel.memberTier(i.member) || opspanel.isBotOwner(i);
+const canWLAdmin = (i) => ['admin', 'owner'].includes(opspanel.memberTier(i.member)) || opspanel.isBotOwner(i);
+const isOwner = (i) => opspanel.memberTier(i.member) === 'owner' || opspanel.isBotOwner(i);   // owner tier or the bot owner
 // Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
 // low-risk, bounded things: VERIFY, view the dashboard read-only, and CORNER (rule+reason, ≤1h).
 const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.has(config.trialModRoleId));
@@ -1927,6 +1928,7 @@ client.on('interactionCreate', async (interaction) => {
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply('That member isn’t in the server.');
+      if (member.id === guild.ownerId) return interaction.editReply('You can’t strike the server owner.');
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
       if (cornerMs) {
@@ -2013,7 +2015,7 @@ client.on('interactionCreate', async (interaction) => {
       if (id.startsWith('promote_')) {
         if (id === 'promote_confirm' || id === 'promote_reject') {
           const approvers = modapps.loadConfig().approvers || [];
-          if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id))
+          if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
             return interaction.reply({ content: 'Only the **server owner** can confirm or reject a promotion.', flags: MessageFlags.Ephemeral });
         } else if (!canBan(interaction)) {
           return interaction.reply({ content: 'Only staff (mods+) can vote on promotions.', flags: MessageFlags.Ephemeral });
@@ -2027,7 +2029,7 @@ client.on('interactionCreate', async (interaction) => {
           // (used while the real owner is inactive; clear the list once they're back). Undoing a decision
           // is as consequential as making one, so it takes the same tier.
           const approvers = modapps.loadConfig().approvers || [];
-          if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id))
+          if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
             return interaction.reply({ content: `Only the **server owner** can ${id === 'modapp_undo' ? 'undo' : 'accept or deny'} mod applications.`, flags: MessageFlags.Ephemeral });
         }
         if ((id === 'modapp_up' || id === 'modapp_down' || id === 'modapp_askanon') && !canBan(interaction))
@@ -2039,7 +2041,7 @@ client.on('interactionCreate', async (interaction) => {
         return await reports.handleButton(interaction);
       }
       if (id === 'mm_reveal') {
-        if (opspanel.memberTier(interaction.member) !== 'owner') return interaction.reply({ content: 'Only owners can reveal a modmail sender.', flags: MessageFlags.Ephemeral });
+        if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can reveal a modmail sender.', flags: MessageFlags.Ephemeral });
         return await modmail.handleButton(interaction);
       }
       if (id.startsWith('pending_page:')) return await interaction.update(await renderPending(Number(id.split(':')[1] || 0)));
@@ -2084,7 +2086,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Send to corner') {
     // Same access + tier rules as /corner, but the trigger is a specific message — and that message
     // gets forwarded into the corner so the member (and mods) see exactly what put them there.
-    const isMod = (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId)) || interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+    const isMod = (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId)) || opspanel.isBotOwner(interaction);
     if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: 'Only the mod role can use this.', flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: 'Could not read that message.', flags: MessageFlags.Ephemeral });
@@ -2217,6 +2219,7 @@ client.on('interactionCreate', async (interaction) => {
       return R(`⚠️ <@${user.id}> is at **${strikes.formatUnits(total)}/${cap} units** (${strikes.tierName(total)}).${lines.length ? `\n${lines.join('\n')}` : ' No active strikes.'}`);
     }
     if (sub === 'add') {
+      if (member.id === interaction.guild.ownerId) return R('You can’t strike the server owner.');
       const reason = (interaction.options.getString('reason') || '').trim();
       const ruleN = interaction.options.getString('rule');
       if (!ruleN && !reason) return R('Give a reason — pick **which rule** they broke, type a **custom reason**, or both.');
@@ -2292,7 +2295,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'features') {
     const ftier = opspanel.tierOf(interaction);
-    if (ftier !== 'owner') return interaction.reply({ content: '🔒 Feature toggles are **Owner** only.', flags: MessageFlags.Ephemeral });
+    if (ftier !== 'owner' && ftier !== 'botowner') return interaction.reply({ content: '🔒 Feature toggles are **Owner** only.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     if (sub === 'list') {
       const flags = features.load();
@@ -2314,7 +2317,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'permguard') {
     const ptier = opspanel.tierOf(interaction);
-    if (ptier !== 'owner') return interaction.reply({ content: '🔒 Permission-guard controls are **Owner** only.', flags: MessageFlags.Ephemeral });
+    if (ptier !== 'owner' && ptier !== 'botowner') return interaction.reply({ content: '🔒 Permission-guard controls are **Owner** only.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (sub === 'status') {
@@ -2359,7 +2362,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'grade') {
     // OWNER-ONLY. Grade a smart-watch card by its short ID (works when there are no buttons — e.g. live).
-    if (opspanel.tierOf(interaction) !== 'owner') return interaction.reply({ content: 'Only the owner can grade cards.', flags: MessageFlags.Ephemeral });
+    if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the bot owner can grade cards.', flags: MessageFlags.Ephemeral });
     const gid = (interaction.options.getString('id') || '').trim().toUpperCase();
     const verdict = interaction.options.getString('verdict');
     const note = (interaction.options.getString('note') || '').trim() || null;
@@ -2476,7 +2479,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'mod-applications') {
     const mtier = opspanel.memberTier(interaction.member);
-    if (mtier !== 'admin' && mtier !== 'owner' && !interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator))
+    if (mtier !== 'admin' && mtier !== 'owner' && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only admins can open or close mod applications.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     if (sub === 'status') {
@@ -2540,7 +2543,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'demote-trial') {
     // Owner/approver only — the inverse of accepting an application, so it takes the same tier.
     const approvers = modapps.loadConfig().approvers || [];
-    if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id))
+    if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can demote a trial mod.', flags: MessageFlags.Ephemeral });
     const roleId = modapps.loadConfig().trialModRoleId;
     if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured — run `/apply-mod-setup` first.', flags: MessageFlags.Ephemeral });
@@ -2677,7 +2680,7 @@ client.on('interactionCreate', async (interaction) => {
     // and under restrictions (rule + reason required, ≤1h), enforced in the corner block.
     const trial = isTrialMod(interaction);
     const isMod = (config.modRoleId && interaction.member?.roles?.cache?.has(config.modRoleId))
-      || interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+      || opspanel.isBotOwner(interaction);   // role-based staff (no Administrator-perm fallback) + bot owner
     if (!isMod && !trial) return interaction.reply({ content: 'Only staff (mods+ or trial mods) can use this.', flags: MessageFlags.Ephemeral });
 
     const guild = interaction.guild;

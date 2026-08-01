@@ -20,11 +20,19 @@ const OWNER_ROLE_IDS = (process.env.FUBU_OWNER_ROLE_IDS ||
   '1516235123841040394,1517718734989693038,1517718258784927814,1517717893415047328').split(',').map(s => s.trim()).filter(Boolean);
 const ADMIN_ROLE_ID = process.env.FUBU_ADMIN_ROLE_ID || '1516179051105226833';
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1528316361665675316';
-const RANK = { mod: 1, admin: 2, owner: 3 };
+// The BOT owner — the single supreme authority (distinct from the Discord SERVER owner and from the OWNER
+// role). Ranks above everyone: passes every gate ("no command the bot owner can't run") and can hold
+// commands NOBODY else can run. Structural, not role-dependent.
+const BOT_OWNER_ID = process.env.FUBU_BOT_OWNER_ID || '865843812907089940';
+const RANK = { mod: 1, admin: 2, owner: 3, botowner: 4 };
 const meets = (tier, needed) => (RANK[tier] || 0) >= (RANK[needed] || 99);
+// True for the bot owner ONLY. Accepts an interaction (.user.id) or a member (.id).
+function isBotOwner(x) { const id = x && (x.user ? x.user.id : x.id); return !!id && id === BOT_OWNER_ID; }
 
-// ROLE-ONLY tier (no Administrator-permission fallback) — used for the watchlist gates + staff detection,
-// because the owner wants those tied to the ADMINS-★ ROLE, not whoever holds the Administrator permission.
+// ROLE-ONLY tier (no Administrator-permission fallback) — used for the watchlist gates, staff detection,
+// AND who-can-be-cornered TARGETING. Deliberately role-based: the bot owner is NOT special here, so they
+// are treated as their role tier and remain cornerable/targetable (their COMMAND authority is separate —
+// see isBotOwner/tierOf). server owner + OWNER role both sit at 'owner'.
 function memberTier(member) {
   const roles = member && member.roles && member.roles.cache;
   if (!roles) return null;
@@ -33,12 +41,12 @@ function memberTier(member) {
   if (roles.has(MOD_ROLE_ID)) return 'mod';
   return null;
 }
-// Dashboard access tier — role-based, but Administrator-permission holders count as admin (UI access only).
+// ACTOR authority tier — who can USE things. The bot owner is supreme here BY USER ID (role-independent, so
+// they keep full access even cornered/role-stripped). Tiers are ROLE-based: the raw Administrator PERMISSION
+// does NOT grant a tier ("admin" = the ADMINS-★ role, not the Discord Administrator permission).
 function tierOf(interaction) {
-  const t = memberTier(interaction.member);
-  if (t) return t;
-  if (interaction.memberPermissions && interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) return 'admin';
-  return null;
+  if (isBotOwner(interaction)) return 'botowner';
+  return memberTier(interaction.member);
 }
 
 // page tiers: min tier to USE the actions on the page (everyone mod+ can VIEW every page).
@@ -498,7 +506,7 @@ const LABEL = { mod: '✰ Mod', admin: '⭐ Admin', owner: '👑 Owner' };
 async function handlePanel(interaction) {
   const id = interaction.customId;
   const tier = tierOf(interaction);
-  const roleTier = memberTier(interaction.member);   // role-only - the watchlist edits gate on THIS (ADMINS-★, not the Admin perm)
+  const roleTier = isBotOwner(interaction) ? 'botowner' : memberTier(interaction.member);   // role-only (ADMINS-★, not the Admin perm) — but the bot owner passes by user id even role-stripped
   if (!tier) return interaction.reply({ content: 'This dashboard is for the mod team.', flags: MessageFlags.Ephemeral });
   // Gate helper for pre-defer (reply) responses.
   const denyReply = needed => interaction.reply({ content: `🔒 That's **${LABEL[needed]}+** only. You're ${LABEL[tier]}.`, flags: MessageFlags.Ephemeral });
@@ -899,4 +907,4 @@ async function handlePanel(interaction) {
   }
 }
 
-module.exports = { wire, ensurePanel, ensureCommandRef, refreshPanel, isPanelInteraction, handlePanel, openPersonalPanel, openReadOnly, tierOf, memberTier, PAGES, PANEL_FILE, CATEGORY_LABEL, OWNER_ROLE_IDS, ADMIN_ROLE_ID, MOD_ROLE_ID };
+module.exports = { wire, ensurePanel, ensureCommandRef, refreshPanel, isPanelInteraction, handlePanel, openPersonalPanel, openReadOnly, tierOf, memberTier, isBotOwner, BOT_OWNER_ID, PAGES, PANEL_FILE, CATEGORY_LABEL, OWNER_ROLE_IDS, ADMIN_ROLE_ID, MOD_ROLE_ID };
