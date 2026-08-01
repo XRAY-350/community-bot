@@ -50,8 +50,9 @@ async function log(guild, { emoji = '🤖', title, detail, color = 0x5865F2 }) {
     // Mentions go in the message CONTENT, not an embed: a `<@id>` in content is resolved by Discord for
     // every viewer (a clickable @name → opens the profile), while embed mentions only resolve from the
     // viewer's local cache and render "@unknown-user" in a locked/restricted channel. parse:[] keeps them
-    // from pinging anyone. The colored bar is kept as a side accent (no mentions in it, so nothing to break).
-    await ch.send({ content: `${emoji} **${title}**\n${detail}`, embeds: [new EmbedBuilder().setColor(color).setDescription('​')], allowedMentions: { parse: [] } });
+    // from pinging anyone. Content-only (no embed) — the emoji + bold title carry the type; a color-only
+    // embed would just render as an empty box.
+    await ch.send({ content: `${emoji} **${title}**\n${detail}`, allowedMentions: { parse: [] } });
   } catch (e) { console.error('[ownerlog] log:', e.message); }
 }
 

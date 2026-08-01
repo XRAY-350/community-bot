@@ -7,6 +7,7 @@ const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
   UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const { MessageFlags } = require('discord.js');
+const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
 
 const PANEL_FILE = process.env.FUBU_OPS_PANEL_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_ops_panel.json`;
 // Separate pinned message: a static staff command reference (the "what every command does" list that used
@@ -403,7 +404,7 @@ function commandRefEmbed() {
     .setDescription('Everything the staff toolkit can do. The **live dashboard** — status + point-and-click actions — is the other pinned message in this channel.')
     .addFields(
       { name: '🛡️ Moderation', value:
-        '`/corner @member [30s·30m·2h·3d]` — time-out: strips roles + locks them to the corner (blank = until released)\n' +
+        `\`/corner @member [${copy.corner.unitsDot}]\` — time-out: strips roles + locks them to the corner (blank = until released)\n` +
         '`/uncorner @member [time]` — release now, or schedule a release later\n' +
         '`/cornered` — list who’s in the corner, each with a release button\n' +
         '`/strike view·add·remove·clear @member` — raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
@@ -583,12 +584,12 @@ async function handlePanel(interaction) {
   if (id === 'fops_pick_corner') {
     const uid = interaction.values[0];
     return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner — duration',
-      [{ id: 'dur', label: 'Duration (30s, 30m, 2h, 3d — blank = indefinite)' }]));
+      [{ id: 'dur', label: `Duration (${copy.corner.units} — blank = indefinite)` }]));
   }
   if (id === 'fops_pick_cornermulti') {
     _cornerMultiStash.set(interaction.user.id, { ids: interaction.values, at: Date.now() });
     return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s) — duration`,
-      [{ id: 'dur', label: 'Duration (30s, 30m, 2h, 3d — blank = indefinite)' }]));
+      [{ id: 'dur', label: `Duration (${copy.corner.units} — blank = indefinite)` }]));
   }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
@@ -798,7 +799,7 @@ async function handlePanel(interaction) {
       if (!member) return interaction.editReply('That member is no longer in the server.');
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
-      if (dur && !ms) return interaction.editReply('Bad duration — use `30s`, `30m`, `2h`, `3d`.');
+      if (dur && !ms) return interaction.editReply(copy.corner.badDuration);
       const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id);
       if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'} — stripped ${r.stripped} role(s).`);

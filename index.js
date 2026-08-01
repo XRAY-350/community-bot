@@ -35,6 +35,7 @@ const features = require('./features');
 const contest = require('./contest');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
+const copy = require('./copy');   // single source of truth for public-facing text (see copy.js / COPY-REGISTRY.md)
 const rules = require('./rules');
 const strikes = require('./strikes');
 const roleselect = require('./roleselect');
@@ -99,7 +100,8 @@ async function logCorner(guild, entry) {
         const { emoji, title, color, desc } = entry;
         // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone —
         // embed mentions only resolve from the viewer's cache and show "@unknown-user" in this restricted log.
-        await ch.send({ content: `## ${emoji} ${title}\n${desc}`, embeds: [new EmbedBuilder().setColor(color).setDescription('​')], allowedMentions: { parse: [] } });
+        // Content-only: the ## header + emoji carry the signal; a color-only embed would render as an empty box.
+        await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: { parse: [] } });
       }
     }
     // Mirror to the owner-only log too — covers every corner/uncorner call site in one place.
@@ -594,7 +596,7 @@ client.once('ready', async () => {
     const allCmds = [
       new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner — strips roles, pulls them from voice, jails them (optionally timed)')
         .addUserOption(o => o.setName('user').setDescription('Member to corner').setRequired(true))
-        .addStringOption(o => o.setName('duration').setDescription('e.g. 30s, 30m, 2h, 3d — blank = indefinite').setRequired(false))
+        .addStringOption(o => o.setName('duration').setDescription(copy.corner.durationOpt).setRequired(false))
         .addStringOption(o => o.setName('rule').setDescription('Which rule did they break? (optional)').setRequired(false)
           .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
@@ -602,7 +604,7 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
-        .addStringOption(o => o.setName('duration').setDescription('Optional — e.g. 30s, 30m, 2h, 3d — release automatically after this instead of now').setRequired(false))
+        .addStringOption(o => o.setName('duration').setDescription(`Optional — e.g.  — release automatically instead of now`).setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
@@ -680,8 +682,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('close').setDescription('Close mod applications (team full); in-flight applications still finish')
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
-      new SlashCommandBuilder().setName('staff').setDescription('Staff census — how many of each tier (deduped by highest)')
-        .addBooleanOption(o => o.setName('ids').setDescription('List each tier’s members with their user IDs (for Integrations command overrides)').setRequired(false))
+      new SlashCommandBuilder().setName('staff').setDescription('Staff roster — each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
         .addUserOption(o => o.setName('member').setDescription('The trial mod to consider for full Mod').setRequired(true))
@@ -2537,32 +2538,17 @@ client.on('interactionCreate', async (interaction) => {
       else if (trialId && m.roles.cache.has(trialId)) byTier.trial.push(m);
     }
     const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
-    if (interaction.options.getBoolean('ids')) {
-      // Roster with copyable user IDs — for setting per-command overrides in Server Settings → Integrations.
-      const roster = (arr) => { if (!arr.length) return '_(none)_'; const s = arr.map(m => `\`${m.id}\` ${m.displayName}`).join('\n'); return s.length > 1024 ? s.slice(0, 990) + `\n…(+${arr.length} total)` : s; };
-      const one = (id) => { const m = members.get(id); return m ? `\`${id}\` ${m.displayName}` : `\`${id}\``; };
-      const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('👥 Staff roster — user IDs')
-        .setDescription('Members by tier, with copyable IDs (for Integrations per-command overrides). Owner = OWNER role **and** Admin permission.')
-        .addFields(
-          { name: '👑 Bot owner (you)', value: one(opspanel.BOT_OWNER_ID) },
-          { name: '⚜️ Server owner', value: one(interaction.guild.ownerId) },
-          { name: `🟣 Owner (${owner})`, value: roster(byTier.owner) },
-          { name: `🔵 Admin (${admin})`, value: roster(byTier.admin) },
-          { name: `🟢 Mod (${mod})`, value: roster(byTier.mod) },
-          { name: `✧ Trial Mod (${trial})`, value: roster(byTier.trial) })
-        .setFooter({ text: 'Long-press / right-click an ID to copy it.' }).setTimestamp(new Date());
-      return interaction.editReply({ embeds: [embed] }).catch(() => {});
-    }
-    const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('👥 Staff census')
-      .setDescription('Counted by **highest tier** — each person once (higher tiers absorb the lower). Add `ids:true` to list who’s in each tier.')
+    // Each tier: count + every member as @mention · username · copyable user id.
+    const roster = (arr) => { if (!arr.length) return '_(none)_'; const s = arr.map(m => `<@${m.id}> · ${m.user.username} · \`${m.id}\``).join('\n'); return s.length > 1024 ? s.slice(0, 990) + `\n…(+${arr.length})` : s; };
+    const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('👥 Staff')
+      .setDescription(`**${owner + admin + mod + trial}** staff total (of ${humans} members) — each counted at their highest tier.`)
       .addFields(
-        { name: '🟣 Owner', value: String(owner), inline: true },
-        { name: '🔵 Admin', value: String(admin), inline: true },
-        { name: '🟢 Mod', value: String(mod), inline: true },
-        { name: '✧ Trial Mod', value: String(trial), inline: true },
-        { name: '- Total unique staff', value: `**${owner + admin + mod + trial}**`, inline: true })
-      .setFooter({ text: `${humans} human members` }).setTimestamp(new Date());
-    return interaction.editReply({ embeds: [embed] }).catch(() => {});
+        { name: `🟣 Owner — ${owner}`, value: roster(byTier.owner) },
+        { name: `🔵 Admin — ${admin}`, value: roster(byTier.admin) },
+        { name: `🟢 Mod — ${mod}`, value: roster(byTier.mod) },
+        { name: `✧ Trial Mod — ${trial}`, value: roster(byTier.trial) })
+      .setTimestamp(new Date());
+    return interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (name === 'promote-trial' || name === 'promote-mod') {
     // promote-trial: any mod may open the vote. promote-mod (→ admin): admin+ only.
@@ -2742,7 +2728,7 @@ client.on('interactionCreate', async (interaction) => {
       let durationMs = null;
       if (durStr) {
         durationMs = corner.parseDuration(durStr);
-        if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30s`, `30m`, `2h`, `3d`.', flags: MessageFlags.Ephemeral });
+        if (!durationMs) return interaction.reply({ content: copy.corner.badDuration, flags: MessageFlags.Ephemeral });
       }
       // Reason: a picked rule and/or a custom typed reason. Show both when present.
       const ruleN = interaction.options.getString('rule');
@@ -2793,7 +2779,7 @@ client.on('interactionCreate', async (interaction) => {
       let durationMs = null;
       if (durStr) {
         durationMs = corner.parseDuration(durStr);
-        if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30s`, `30m`, `2h`, `3d`.', flags: MessageFlags.Ephemeral });
+        if (!durationMs) return interaction.reply({ content: copy.corner.badDuration, flags: MessageFlags.Ephemeral });
       }
       await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
       if (durationMs) {
