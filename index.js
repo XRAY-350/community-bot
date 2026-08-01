@@ -1149,6 +1149,12 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     // applicant-thread membership is sufficient there. Idempotent either way.
     if (opspanel.memberTier(newMember)) await modapps.archiveOwnApplication(newMember.guild, newMember.id).catch(e => console.error('[modapps archive]', e.message));
     else if (newMember.roles.cache.has(config.trialModRoleId)) await modapps.sealOwnApplication(newMember.guild, newMember.id).catch(e => console.error('[modapps seal]', e.message));
+    // DEMOTION: was mod+, no longer is → Discord keeps their review-thread memberships, so an ex-mod would
+    // still see staff deliberations (this is exactly how two demoted mods lingered, 2026-08-01). Sweep them out.
+    if (oldMember && !oldMember.partial && opspanel.memberTier(oldMember) && !opspanel.memberTier(newMember)) {
+      const n = await modapps.removeDemotedFromReviewThreads(newMember.guild, newMember.id).catch(() => 0);
+      if (n) console.log(`[modapps] demoted ${newMember.user.tag} removed from ${n} review thread(s)`);
+    }
     await enforceMdni(newMember).catch(() => {});   // keep MDNI ⟹ adult on every role change
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
@@ -1172,13 +1178,15 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 client.on('threadMembersUpdate', async (addedMembers, removedMembers, thread) => {
   try {
     if (!addedMembers.size) return;
-    const forumId = modapps.loadConfig().forumId;
-    if (!forumId || thread.parentId !== forumId) return;
-    const removed = await modapps.enforceReviewThreadMembers(thread.guild, thread);
+    const cfg = modapps.loadConfig();
+    let removed = [], kind = '';
+    if (cfg.forumId && thread.parentId === cfg.forumId) { removed = await modapps.enforceReviewThreadMembers(thread.guild, thread); kind = 'review thread — mod+ only'; }
+    else if (cfg.appsChannelId && thread.parentId === cfg.appsChannelId) { removed = await modapps.enforceApplicantThreadMembers(thread.guild, thread); kind = 'application thread — applicant + staff only'; }
+    else return;
     if (!removed.length) return;
-    console.log(`[modapps] auto-removed non-staff member(s) from review thread ${thread.id}: ${removed.map(m => m.user.tag).join(', ')}`);
+    console.log(`[modapps] auto-removed non-staff member(s) from thread ${thread.id}: ${removed.map(m => m.user.tag).join(', ')}`);
     const ch = config.modAnnounceChannelId ? await thread.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null) : null;
-    if (ch) await ch.send({ content: `🔒 Auto-removed ${removed.map(m => `<@${m.id}>`).join(', ')} from a mod-application review thread — that's mod+ only.`, allowedMentions: { parse: [] } }).catch(() => {});
+    if (ch) await ch.send({ content: `🔒 Auto-removed ${removed.map(m => `<@${m.id}>`).join(', ')} from a mod-application ${kind}.`, allowedMentions: { parse: [] } }).catch(() => {});
   } catch (e) { console.error('[modapps] threadMembersUpdate enforcement:', e.message); }
 });
 

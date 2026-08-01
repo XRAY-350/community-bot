@@ -80,6 +80,10 @@ async function setup(guild, config) {
       availableTags: TAGS.map(t => ({ name: t.name, moderated: true, emoji: { id: null, name: t.emoji } })),
       defaultAutoArchiveDuration: 10080, reason: 'Mod applications review forum',
     });
+    // Mods VOTE only (buttons); they must NOT be able to add/remove review-thread members — that's the
+    // thread-membership leak vector (a mod hand-adds a non-mod, bypassing the channel view-deny). Deny
+    // ManageThreads for the mod role here; admins/owners keep it, and the bot keeps it for auto-strip.
+    if (opspanel.MOD_ROLE_ID) await forum.permissionOverwrites.edit(opspanel.MOD_ROLE_ID, { ManageThreads: false }, { reason: 'mods vote only; thread-member management is admin+' }).catch(() => {});
     const fresh = await guild.channels.fetch(forum.id);
     const tagMap = {}; for (const t of TAGS) { const f = fresh.availableTags.find(x => x.name === t.name); if (f) tagMap[t.key] = f.id; }
     c.forumId = forum.id; c.tags = tagMap;
@@ -427,6 +431,21 @@ async function upgradeLegacyVotes(guild) {
 // ask their opinion — which is exactly how a real leak happened (found 2026-07-30: a trial mod was added to
 // a specific application's review thread and could see + post there). This removes anyone below mod+ the
 // moment they're found in a review thread, regardless of how they got there. Returns the list removed.
+// Fetch a member, RETRYING transient failures (rate limits / network) so a sweep never silently SKIPS a
+// leaker just because one fetch got 429'd — that bug let two demoted mods linger in every review thread
+// (2026-08-01). Returns {member} on success, {gone:true} on a real Unknown Member (they left), or
+// {unknown:true} if we still couldn't tell after retries — on which the caller must SKIP, never remove.
+async function fetchMemberResilient(guild, userId, tries = 4) {
+  for (let i = 0; i < tries; i++) {
+    try { return { member: await guild.members.fetch(userId) }; }
+    catch (e) {
+      if (e?.code === 10007) return { gone: true };            // Unknown Member — genuinely left the guild
+      if (i === tries - 1) return { unknown: true };           // transient (rate limit / network) — give up
+      await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+    }
+  }
+  return { unknown: true };
+}
 async function enforceReviewThreadMembers(guild, thread) {
   const removed = [];
   const tm = await thread.members.fetch().catch(() => null);
@@ -434,10 +453,51 @@ async function enforceReviewThreadMembers(guild, thread) {
   for (const [, m] of tm) {
     const userId = m.id;
     if (userId === guild.client.user.id) continue;
-    const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member || opspanel.memberTier(member)) continue;   // no longer in guild, or legitimately mod+
-    await thread.members.remove(userId, 'mod-applications review threads are mod+ only').catch(() => {});
-    removed.push(member);
+    const r = await fetchMemberResilient(guild, userId);
+    if (r.unknown) continue;                                   // couldn't verify — never remove on uncertainty
+    if (r.member && opspanel.memberTier(r.member)) continue;   // legitimately mod+ — belongs here
+    await thread.members.remove(userId).catch(() => {});       // non-staff, or left the guild → strip
+    if (r.member) removed.push(r.member);
+  }
+  return removed;
+}
+// Applicant PRIVATE threads (in the apps channel) should hold ONLY the applicant + staff. Same
+// thread-membership-bypass risk as review threads, but the applicant themselves legitimately belongs — so
+// strip anyone who is neither staff NOR this thread's applicant. If we can't identify the applicant (state
+// lost), we SKIP rather than risk removing the legit applicant.
+async function enforceApplicantThreadMembers(guild, thread) {
+  const removed = [];
+  const post = Object.values(loadState().posts).find(p => p.appThreadId === thread.id);
+  const applicantId = post?.applicantId;
+  if (!applicantId) return removed;                            // unknown applicant → don't touch (safety)
+  const tm = await thread.members.fetch().catch(() => null);
+  if (!tm) return removed;
+  for (const [, m] of tm) {
+    const userId = m.id;
+    if (userId === guild.client.user.id || userId === applicantId) continue;
+    const r = await fetchMemberResilient(guild, userId);
+    if (r.unknown) continue;
+    if (r.member && opspanel.memberTier(r.member)) continue;   // staff belong
+    await thread.members.remove(userId).catch(() => {});
+    if (r.member) removed.push(r.member);
+  }
+  return removed;
+}
+// When someone drops below mod+ (demoted), Discord KEEPS their existing review-thread memberships — an
+// ex-mod would still see staff deliberations. Sweep this specific user out of every review thread on the
+// demotion event (the guildMemberUpdate handler already confirmed they're now non-staff). Returns count.
+async function removeDemotedFromReviewThreads(guild, userId) {
+  const c = loadConfig();
+  if (!c.forumId) return 0;
+  const active = await guild.channels.fetchActiveThreads().catch(() => ({ threads: new Map() }));
+  const forum = await guild.channels.fetch(c.forumId).catch(() => null);
+  if (!forum) return 0;
+  const archived = await forum.threads.fetchArchived({ limit: 100 }).catch(() => ({ threads: new Map() }));
+  const all = [...active.threads.values(), ...archived.threads.values()].filter(t => t.parentId === c.forumId);
+  let removed = 0;
+  for (const t of all) {
+    const tm = await t.members.fetch().catch(() => null);
+    if (tm && tm.has(userId)) { await t.members.remove(userId).catch(() => {}); removed++; }
   }
   return removed;
 }
@@ -626,4 +686,4 @@ async function setApplicationsOpen(guild, open, message) {
 }
 
 module.exports = { setup, buildModal, positionRow, submitFromModal, handleButton, handlePositionSelect, handleAskModal, isConfigured, loadConfig, migrateLegacy, rerender, upgradeLegacyVotes, relayApplicantReply, backfillUndoButtons, sealOwnApplication, archiveOwnApplication,
-  enforceReviewThreadMembers, sweepReviewThreadMembers, applicationsOpen, closedNotice, setApplicationsOpen };
+  enforceReviewThreadMembers, enforceApplicantThreadMembers, removeDemotedFromReviewThreads, sweepReviewThreadMembers, applicationsOpen, closedNotice, setApplicationsOpen };
