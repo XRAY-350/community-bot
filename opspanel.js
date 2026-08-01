@@ -105,6 +105,20 @@ async function pendingCount() {
 }
 function corneredMap() { try { return D.state.listCornered() || {}; } catch { return {}; } }
 
+// A member's label for a dashboard ROSTER line that sits next to a per-member button. Every such button is
+// labelled `…${id.slice(-4)}` (Discord button labels can't be mentions), so pair this with `memberTag(id)` and
+// the two line up — you can tell which "Manage …8228" button belongs to whom. Uses the bot's cached display
+// name (markdown-sanitised) so it renders even where an embed mention would show a raw <@id> for uncached
+// members; falls back to a clickable mention when the name isn't cached.
+function memberLabel(id) {
+  try {
+    const guild = D.client.guilds.cache.get(D.config.guildId) || D.client.guilds.cache.first();
+    const n = guild?.members?.cache.get(id)?.displayName;
+    return n ? `**${n.replace(/[*_`~|<>@:]/g, '').slice(0, 40) || id}**` : `<@${id}>`;
+  } catch { return `<@${id}>`; }
+}
+const memberTag = id => `\`…${String(id).slice(-4)}\``;   // matches the per-member button's last-4 label
+
 // --- render helpers ---------------------------------------------------------------------------------
 function navRow(page) {
   return new ActionRowBuilder().addComponents(
@@ -235,7 +249,7 @@ async function buildCorner() {
   for (const id of ids.slice(0, 20)) {
     const rec = cornered[id] || {};
     const rel = rec.releaseAt ? `<t:${Math.floor(rec.releaseAt / 1000)}:R>` : 'indefinite';
-    lines.push(`• <@${id}> — release ${rel}`);
+    lines.push(`• ${memberLabel(id)} ${memberTag(id)} — release ${rel}`);
     row.addComponents(new ButtonBuilder().setCustomId(`corner_rel:${id}:0`).setEmoji('🔓').setLabel(`Release …${id.slice(-4)}`).setStyle(ButtonStyle.Success));
     if (row.components.length === 5) { rows.push(row); row = new ActionRowBuilder(); }
   }
@@ -257,7 +271,7 @@ async function buildStrikes() {
   let row = new ActionRowBuilder();
   const cap = D.strike ? D.strike.BAN_THRESHOLD : 10;
   for (const m of members.slice(0, 20)) {
-    lines.push(`• <@${m.memberId}> — **${D.strike ? D.strike.format(m.units) : m.units}/${cap} units** (${m.count} strike${m.count > 1 ? 's' : ''})`);
+    lines.push(`• ${memberLabel(m.memberId)} ${memberTag(m.memberId)} — **${D.strike ? D.strike.format(m.units) : m.units}/${cap} units** (${m.count} strike${m.count > 1 ? 's' : ''})`);
     row.addComponents(new ButtonBuilder().setCustomId(`fops_pick_strikeremove:${m.memberId}`).setEmoji('🎯').setLabel(`Manage …${m.memberId.slice(-4)}`).setStyle(ButtonStyle.Danger));
     if (row.components.length === 5) { rows.push(row); row = new ActionRowBuilder(); }
   }
