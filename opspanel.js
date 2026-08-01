@@ -21,6 +21,10 @@ const OWNER_ROLE_IDS = (process.env.FUBU_OWNER_ROLE_IDS ||
   '1516235123841040394,1517718734989693038,1517718258784927814,1517717893415047328').split(',').map(s => s.trim()).filter(Boolean);
 const ADMIN_ROLE_ID = process.env.FUBU_ADMIN_ROLE_ID || '1516179051105226833';
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1528316361665675316';
+// The single VISIBLE OWNER⚜️ role (what members actually see/reference in-server; also in config.identifyingRoleIds,
+// kept when cornering). Owner-tier MEMBERSHIP is still keyed off the 4 personal-admin roles + guild owner above —
+// this is purely the role to DISPLAY for the owner tier (e.g. the /staff header), so it resolves + carries its colour.
+const OWNER_DISPLAY_ROLE_ID = process.env.FUBU_OWNER_DISPLAY_ROLE_ID || '1527430885287264438';
 // The BOT owner — the single supreme authority (distinct from the Discord SERVER owner and from the OWNER
 // role). Ranks above everyone: passes every gate ("no command the bot owner can't run") and can hold
 // commands NOBODY else can run. Structural, not role-dependent.
@@ -913,4 +917,4 @@ async function handlePanel(interaction) {
   }
 }
 
-module.exports = { wire, ensurePanel, ensureCommandRef, refreshPanel, isPanelInteraction, handlePanel, openPersonalPanel, openReadOnly, tierOf, memberTier, isBotOwner, BOT_OWNER_ID, PAGES, PANEL_FILE, CATEGORY_LABEL, OWNER_ROLE_IDS, ADMIN_ROLE_ID, MOD_ROLE_ID };
+module.exports = { wire, ensurePanel, ensureCommandRef, refreshPanel, isPanelInteraction, handlePanel, openPersonalPanel, openReadOnly, tierOf, memberTier, isBotOwner, BOT_OWNER_ID, PAGES, PANEL_FILE, CATEGORY_LABEL, OWNER_ROLE_IDS, OWNER_DISPLAY_ROLE_ID, ADMIN_ROLE_ID, MOD_ROLE_ID };

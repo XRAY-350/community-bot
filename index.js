@@ -2542,15 +2542,16 @@ client.on('interactionCreate', async (interaction) => {
     // mention only from its OWN cache, so uncached members render "@unknown-user" (owner: "only shows who I'm
     // friends with") — content vs embed doesn't change that. displayName always renders correctly. TIER HEADERS
     // use role mentions (<@&id>) — roles ARE always cached, so those resolve + carry the role's real colour.
-    // Owner has no single role (4 personal roles + guild owner), so it's a plain 👑 header. parse:[] = role names
-    // resolve/colour but nobody is pinged. Fancy markdown: ## header, -# subtext, code-styled handle + id.
+    // Owner-tier membership keys off 4 personal roles + guild owner, but the VISIBLE role is OWNER⚜️
+    // (OWNER_DISPLAY_ROLE_ID) — use it for the header so it resolves + colours like the rest. parse:[] = role
+    // names resolve/colour but nobody is pinged. Fancy markdown: ## header, -# subtext, code-styled handle + id.
     const line = (m) => `**${m.displayName}** · \`${m.user.username}\` · \`${m.id}\``;
     const block = (roleId, emoji, label, arr) => {
       const head = roleId ? `<@&${roleId}> — \`${arr.length}\`` : `${emoji} **${label}** — \`${arr.length}\``;
       return `\n${head}\n${arr.length ? arr.map(line).join('\n') : '-# _(none)_'}`;
     };
     const out = `## 👥 Staff — \`${owner + admin + mod + trial}\` total\n-# of ${humans.toLocaleString()} members · counted at their highest tier\n`
-      + block(null, '👑', 'Owner', byTier.owner)
+      + block(opspanel.OWNER_DISPLAY_ROLE_ID, '👑', 'Owner', byTier.owner)
       + block(opspanel.ADMIN_ROLE_ID, '🛡️', 'Admin', byTier.admin)
       + block(opspanel.MOD_ROLE_ID, '⚒️', 'Mod', byTier.mod)
       + block(trialId, '🌱', 'Trial Mod', byTier.trial);
