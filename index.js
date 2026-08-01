@@ -217,8 +217,9 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
       await cornerCh.send({ embeds: [emb], content: files.length ? files.join('\n') : undefined, allowedMentions: { parse: [] } });
     }
   } catch (e) { console.error(`[corner-msg] forward failed: ${e.message}`); }
-  // In-channel notice on the flagged message (no DM) — same pattern the Strike flows use.
-  await target.reply(`⛓️ This message got <@${member.id}> sent to the corner${reason ? `: ${reason}` : '.'}`).catch(e => console.error('[corner-msg] reply on original failed:', e.message));
+  // In-channel notice on the flagged message (no DM) — same pattern the Strike flows use. Shows the duration
+  // and who cornered them (actor mention resolves but doesn't ping — only the cornered member is pinged).
+  await target.reply({ content: `⛓️ This message got <@${member.id}> sent to the corner ${whenPhrase} by <@${actorId}>${reason ? ` — ${reason}` : ''}.`, allowedMentions: { users: [member.id] } }).catch(e => console.error('[corner-msg] reply on original failed:', e.message));
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (via message)', color: CORNER_RED,
     desc: `<@${member.id}> was cornered until ${relPhrase(relSec * 1000)} for a message.\n**By:** <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}\n**Message:** ${target.url}` });
   return { ok: true, stripped: r.stripped };
