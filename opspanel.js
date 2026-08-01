@@ -74,6 +74,7 @@ const PAGES = [
 ];
 const pageIdx = (name) => PAGES.findIndex(p => p.name === name);   // reorder-safe page lookup
 const watchlist = require('./watchlist');
+const features = require('./features');
 
 // Instant-ban reason categories — used to write the ban's audit-log reason AND (in appeals.js) to
 // recognize which bans the "more limited" ban-appeal path must refuse outright.
@@ -372,7 +373,8 @@ function buildWatchlist() {
     "• **Welfare** — a distress term (e.g. `i want to die`, `sh`) → soft **check-in** report in #watch-log (no ban button).\n" +
     "All reports keep a **saved copy + mirrored attachments**, so deleting the message can't hide it.\n\n" +
     '👁️ **Watchlist** add/remove · 🔓 **Unban** (opt. re-watchlist on rejoin) · 🏷️ **Terms** for each list.\n' +
-    `🌱 **New-account flag:** ${freshLine}\n\n` +
+    `🌱 **New-account flag:** ${freshLine}\n` +
+    `🤖 **Monitor mode:** ${copy.watchlist.monitorStatus(features.enabled('smartWatchLab'), !!D.config.smartWatchLive && features.enabled('smartWatch'))}\n\n` +
     `**Now:** ${strict.length} strict · ${loose.length} loose · ${welfare.length} welfare term(s) · ${pending.length} pending.`)
     .setFooter({ text: 'Watchlist + unban + terms = ADMINS-★ role. Banning a flagged message = any mod.' });
   const row1 = new ActionRowBuilder().addComponents(
