@@ -21,6 +21,10 @@ const common = {
   noMemberInServer: 'That member is no longer in the server.',
   noWatchlistRole: 'No Watchlist role configured.',
   whichRule: 'Which rule (optional)?',
+  // Parameterised notices shared by the anonymous member tools (confessions / reports / modmail) — identical
+  // wording in all three, so they live here.
+  onCooldown: min => `You’re on cooldown — try again in ${min} min.`,
+  dailyLimit: max => `You’ve hit today’s limit of ${max}. Try again tomorrow.`,
 };
 
 // ── tiers ─────────────────────────────────────────────────────────────────────────────────────────
@@ -64,4 +68,34 @@ const appeals = {
   denied: '⛔ Appeal denied and closed.',
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch, appeals };
+// ── anonymous member tools (each posts anonymously; the noun differs, so one section each) ────────────
+const reports = {
+  notSetup: 'Reports aren’t set up yet — an admin needs to run `/report-setup`.',
+  channelMissing: 'The reports channel is missing — an admin needs to run `/report-setup` again.',
+  tooShort: min => `Give a bit more detail — at least ${min} characters.`,
+  tooLong: max => `Keep it under ${max} characters.`,
+  filtered: 'That tripped the safety filter — describe the behaviour without threats/slurs and resend.',
+  untracked: 'This report is no longer tracked.',
+  revealLabel: revealed => revealed ? 'Revealed' : 'Reveal reporter (admins)',
+};
+const modmail = {
+  notSetup: 'Modmail isn’t set up yet — an admin needs to run `/modmail-setup`.',
+  channelMissing: 'The modmail inbox is missing — an admin needs to run `/modmail-setup` again.',
+  tooShort: min => `That’s too short — at least ${min} characters.`,
+  tooLong: max => `Keep it under ${max} characters.`,
+  filtered: 'That tripped the safety filter — reword without threats/slurs and resend.',
+  untracked: 'This modmail is no longer tracked.',
+  revealLabel: revealed => revealed ? 'Revealed' : 'Reveal sender (owners)',
+};
+const confessions = {
+  notSetup: 'Confessions aren’t set up yet — an admin needs to run `/confess-setup`.',
+  channelMissing: 'The confessions channel is missing — an admin needs to run `/confess-setup` again.',
+  tooShort: min => `That’s too short — give at least ${min} characters.`,
+  tooLong: max => `That’s too long — keep it under ${max} characters.`,
+  filtered: 'That confession tripped the word filter, so it wasn’t posted. Rephrase it and try again.',
+  untracked: 'This confession is no longer tracked.',
+  alreadyDeleted: 'Already deleted.',
+  delLabel: deleted => deleted ? 'Deleted' : 'Delete confession',
+};
+
+module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions };

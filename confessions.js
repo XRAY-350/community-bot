@@ -9,6 +9,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_CONFESSIONS_FILE || '/home/ubuntu/.fubu_confessions.json';
 const STATE_FILE = process.env.FUBU_CONFESSIONS_STATE_FILE || '/home/ubuntu/.fubu_confessions_state.json';
@@ -68,30 +69,30 @@ function logEmbed(num, text, authorId, deletedBy) {
   return e;
 }
 const delRow = (disabled) => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('conf_del').setEmoji('🗑️').setLabel(disabled ? 'Deleted' : 'Delete confession')
+  new ButtonBuilder().setCustomId('conf_del').setEmoji('🗑️').setLabel(copy.confessions.delLabel(disabled))
     .setStyle(ButtonStyle.Danger).setDisabled(!!disabled));
 
 // ---- submit -----------------------------------------------------------------------------------------
 async function submit(guild, member, text) {
   const c = loadConfig();
-  if (!c.channelId) return { ok: false, msg: 'Confessions aren’t set up yet — an admin needs to run `/confess-setup`.' };
+  if (!c.channelId) return { ok: false, msg: copy.confessions.notSetup };
   text = String(text || '').trim().replace(/\s+/g, ' ');
-  if (text.length < MIN_LEN) return { ok: false, msg: `That’s too short — give at least ${MIN_LEN} characters.` };
-  if (text.length > MAX_LEN) return { ok: false, msg: `That’s too long — keep it under ${MAX_LEN} characters.` };
+  if (text.length < MIN_LEN) return { ok: false, msg: copy.confessions.tooShort(MIN_LEN) };
+  if (text.length > MAX_LEN) return { ok: false, msg: copy.confessions.tooLong(MAX_LEN) };
   const bad = watchlist.matchTerms(text, [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose(), ...watchlist.loadWelfare()])]);
-  if (bad.length) return { ok: false, msg: 'That confession tripped the word filter, so it wasn’t posted. Rephrase it and try again.' };
+  if (bad.length) return { ok: false, msg: copy.confessions.filtered };
 
   const state = loadState();
   const last = state.cooldown[member.id] || 0;
   const waitLeft = COOLDOWN_MS - (Date.now() - last);
-  if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  if (last && waitLeft > 0) return { ok: false, msg: copy.common.onCooldown(Math.ceil(waitLeft / 60000)) };
   const day = new Date().toISOString().slice(0, 10);
   const dc = (state.daily || {})[member.id];
-  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
+  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: copy.common.dailyLimit(DAILY_MAX) };
 
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   const logChannel = c.logChannelId ? await guild.channels.fetch(c.logChannelId).catch(() => null) : null;
-  if (!channel) return { ok: false, msg: 'The confessions channel is missing — an admin needs to run `/confess-setup` again.' };
+  if (!channel) return { ok: false, msg: copy.confessions.channelMissing };
 
   const num = (state.counter || 0) + 1;
   const pub = await channel.send({ embeds: [publicEmbed(num, text)] });
@@ -113,8 +114,8 @@ async function submit(guild, member, text) {
 async function del(interaction) {
   const state = loadState();
   const post = state.posts[interaction.message.id];
-  if (!post) return interaction.reply({ content: 'This confession is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (post.deleted) return interaction.reply({ content: 'Already deleted.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.confessions.untracked, flags: MessageFlags.Ephemeral });
+  if (post.deleted) return interaction.reply({ content: copy.confessions.alreadyDeleted, flags: MessageFlags.Ephemeral });
   const c = loadConfig();
   const ch = c.channelId ? await interaction.guild.channels.fetch(c.channelId).catch(() => null) : null;
   if (ch && post.publicId) await ch.messages.delete(post.publicId).catch(() => {});

@@ -5,6 +5,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_REPORTS_FILE || '/home/ubuntu/.fubu_reports.json';
 const STATE_FILE = process.env.FUBU_REPORTS_STATE_FILE || '/home/ubuntu/.fubu_reports_state.json';
@@ -44,24 +45,24 @@ function reportEmbed(num, text, reportedId, revealedBy, reporterId) {
   return e;
 }
 const revealRow = (disabled) => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('rep_reveal').setEmoji('🔍').setLabel(disabled ? 'Revealed' : 'Reveal reporter (admins)')
+  new ButtonBuilder().setCustomId('rep_reveal').setEmoji('🔍').setLabel(copy.reports.revealLabel(disabled))
     .setStyle(ButtonStyle.Secondary).setDisabled(!!disabled));
 
 async function submit(guild, member, reportedUser, text) {
   const c = loadConfig();
-  if (!c.channelId) return { ok: false, msg: 'Reports aren’t set up yet — an admin needs to run `/report-setup`.' };
+  if (!c.channelId) return { ok: false, msg: copy.reports.notSetup };
   text = String(text || '').trim().replace(/\s+/g, ' ');
-  if (text.length < MIN_LEN) return { ok: false, msg: `Give a bit more detail — at least ${MIN_LEN} characters.` };
-  if (text.length > MAX_LEN) return { ok: false, msg: `Keep it under ${MAX_LEN} characters.` };
-  if (watchlist.matchTerms(text, watchlist.loadTerms()).length) return { ok: false, msg: 'That tripped the safety filter — describe the behaviour without threats/slurs and resend.' };
+  if (text.length < MIN_LEN) return { ok: false, msg: copy.reports.tooShort(MIN_LEN) };
+  if (text.length > MAX_LEN) return { ok: false, msg: copy.reports.tooLong(MAX_LEN) };
+  if (watchlist.matchTerms(text, watchlist.loadTerms()).length) return { ok: false, msg: copy.reports.filtered };
   const state = loadState();
   const last = state.cooldown[member.id] || 0, waitLeft = COOLDOWN_MS - (Date.now() - last);
-  if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  if (last && waitLeft > 0) return { ok: false, msg: copy.common.onCooldown(Math.ceil(waitLeft / 60000)) };
   const day = new Date().toISOString().slice(0, 10);
   const dc = (state.daily || {})[member.id];
-  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
+  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: copy.common.dailyLimit(DAILY_MAX) };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
-  if (!channel) return { ok: false, msg: 'The reports channel is missing — an admin needs to run `/report-setup` again.' };
+  if (!channel) return { ok: false, msg: copy.reports.channelMissing };
   const num = (state.counter || 0) + 1;
   const reportedId = reportedUser ? reportedUser.id : null;
   const msg = await channel.send({ embeds: [reportEmbed(num, text, reportedId)], components: [revealRow(false)] });
@@ -75,7 +76,7 @@ async function submit(guild, member, reportedUser, text) {
 async function reveal(interaction) {
   const state = loadState();
   const post = state.posts[interaction.message.id];
-  if (!post) return interaction.reply({ content: 'This report is no longer tracked.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.reports.untracked, flags: MessageFlags.Ephemeral });
   if (post.revealedBy) return interaction.reply({ content: `Already revealed (by <@${post.revealedBy}>). Reporter: <@${post.reporterId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   post.revealedBy = interaction.user.id; saveState(state);
   await interaction.update({ embeds: [reportEmbed(post.num, interaction.message.embeds[0]?.description || '', post.reportedId, interaction.user.id, post.reporterId)], components: [revealRow(true)] });

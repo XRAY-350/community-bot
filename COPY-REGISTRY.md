@@ -56,17 +56,41 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 14)
+## copy.js keys (migrated so far — 38)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
+- `copy.common.dailyLimit()`
 - `copy.common.noMemberInServer`
 - `copy.common.noWatchlistRole`
+- `copy.common.onCooldown()`
 - `copy.common.whichRule`
+- `copy.confessions.alreadyDeleted`
+- `copy.confessions.channelMissing`
+- `copy.confessions.delLabel()`
+- `copy.confessions.filtered`
+- `copy.confessions.notSetup`
+- `copy.confessions.tooLong()`
+- `copy.confessions.tooShort()`
+- `copy.confessions.untracked`
 - `copy.corner.badDuration`
 - `copy.corner.durationOpt`
 - `copy.corner.units`
 - `copy.corner.unitsDot`
+- `copy.modmail.channelMissing`
+- `copy.modmail.filtered`
+- `copy.modmail.notSetup`
+- `copy.modmail.revealLabel()`
+- `copy.modmail.tooLong()`
+- `copy.modmail.tooShort()`
+- `copy.modmail.untracked`
+- `copy.reports.channelMissing`
+- `copy.reports.filtered`
+- `copy.reports.notSetup`
+- `copy.reports.revealLabel()`
+- `copy.reports.tooLong()`
+- `copy.reports.tooShort()`
+- `copy.reports.untracked`
 - `copy.smartwatch.modeLabel()`
 - `copy.tiers.admin`
 - `copy.tiers.mod`
@@ -86,10 +110,10 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **strikes** (staff) — _inline (not yet migrated)_
 - **watchlist** (staff) — copy.js: `watchlist`
 - **suggestions** (member) — _inline (not yet migrated)_
-- **confessions** (member) — _inline (not yet migrated)_
+- **confessions** (member) — copy.js: `confessions`
 - **whistleblow** (member) — _inline (not yet migrated)_
-- **reports** (member) — _inline (not yet migrated)_
-- **modmail** (member) — _inline (not yet migrated)_
+- **reports** (member) — copy.js: `reports`
+- **modmail** (member) — copy.js: `modmail`
 - **modapps** (member) — _inline (not yet migrated)_
 - **rolereq** (member) — _inline (not yet migrated)_
 - **roleselect** (staff) — _inline (not yet migrated)_

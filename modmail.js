@@ -5,6 +5,7 @@
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
+const copy = require('./copy');
 
 const CONFIG_FILE = process.env.FUBU_MODMAIL_FILE || '/home/ubuntu/.fubu_modmail.json';
 const STATE_FILE = process.env.FUBU_MODMAIL_STATE_FILE || '/home/ubuntu/.fubu_modmail_state.json';
@@ -43,24 +44,24 @@ function mailEmbed(num, text, revealedBy, senderId) {
   return e;
 }
 const revealRow = (disabled) => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('mm_reveal').setEmoji('🔍').setLabel(disabled ? 'Revealed' : 'Reveal sender (owners)')
+  new ButtonBuilder().setCustomId('mm_reveal').setEmoji('🔍').setLabel(copy.modmail.revealLabel(disabled))
     .setStyle(ButtonStyle.Secondary).setDisabled(!!disabled));
 
 async function submit(guild, member, text) {
   const c = loadConfig();
-  if (!c.channelId) return { ok: false, msg: 'Modmail isn’t set up yet — an admin needs to run `/modmail-setup`.' };
+  if (!c.channelId) return { ok: false, msg: copy.modmail.notSetup };
   text = String(text || '').trim().replace(/\s+/g, ' ');
-  if (text.length < MIN_LEN) return { ok: false, msg: `That’s too short — at least ${MIN_LEN} characters.` };
-  if (text.length > MAX_LEN) return { ok: false, msg: `Keep it under ${MAX_LEN} characters.` };
-  if (watchlist.matchTerms(text, watchlist.loadTerms()).length) return { ok: false, msg: 'That tripped the safety filter — reword without threats/slurs and resend.' };
+  if (text.length < MIN_LEN) return { ok: false, msg: copy.modmail.tooShort(MIN_LEN) };
+  if (text.length > MAX_LEN) return { ok: false, msg: copy.modmail.tooLong(MAX_LEN) };
+  if (watchlist.matchTerms(text, watchlist.loadTerms()).length) return { ok: false, msg: copy.modmail.filtered };
   const state = loadState();
   const last = state.cooldown[member.id] || 0, waitLeft = COOLDOWN_MS - (Date.now() - last);
-  if (last && waitLeft > 0) return { ok: false, msg: `You’re on cooldown — try again in ${Math.ceil(waitLeft / 60000)} min.` };
+  if (last && waitLeft > 0) return { ok: false, msg: copy.common.onCooldown(Math.ceil(waitLeft / 60000)) };
   const day = new Date().toISOString().slice(0, 10);
   const dc = (state.daily || {})[member.id];
-  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: `You’ve hit today’s limit of ${DAILY_MAX}. Try again tomorrow.` };
+  if (dc && dc.day === day && dc.n >= DAILY_MAX) return { ok: false, msg: copy.common.dailyLimit(DAILY_MAX) };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
-  if (!channel) return { ok: false, msg: 'The modmail inbox is missing — an admin needs to run `/modmail-setup` again.' };
+  if (!channel) return { ok: false, msg: copy.modmail.channelMissing };
   const num = (state.counter || 0) + 1;
   const msg = await channel.send({ embeds: [mailEmbed(num, text)], components: [revealRow(false)] });
   state.counter = num; state.cooldown[member.id] = Date.now();
@@ -74,7 +75,7 @@ async function submit(guild, member, text) {
 async function reveal(interaction) {
   const state = loadState();
   const post = state.posts[interaction.message.id];
-  if (!post) return interaction.reply({ content: 'This modmail is no longer tracked.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.modmail.untracked, flags: MessageFlags.Ephemeral });
   if (post.revealedBy) return interaction.reply({ content: `Already revealed (by <@${post.revealedBy}>). Sender: <@${post.senderId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   post.revealedBy = interaction.user.id; saveState(state);
   await interaction.update({ embeds: [mailEmbed(post.num, interaction.message.embeds[0]?.description || '', interaction.user.id, post.senderId)], components: [revealRow(true)] });
