@@ -181,8 +181,7 @@ async function handleCorneredList(interaction) {
 // and (when the cornerReason feature is on) the reason-modal path. Optional reason is surfaced in the
 // corner channel + the audit log. Defaults to a TIMED corner (config.cornerDefaultDurationMs) — Corner
 // is meant to be casual/temporary, not indefinite by default. Returns { ok, stripped, error }.
-async function cornerFromMessage(guild, actorId, member, target, reason) {
-  const durationMs = config.cornerDefaultDurationMs;
+async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = config.cornerDefaultDurationMs) {
   const r = await corner.corner(guild, member, durationMs, state, actorId);
   if (!r.ok) return { ok: false, error: r.error };
   const relSec = Math.floor((Date.now() + durationMs) / 1000);
@@ -838,7 +837,7 @@ client.once('ready', async () => {
         }
       }
     } catch (err) { console.error(`[corner] release loop: ${err.message}`); }
-  }, 60 * 1000);
+  }, 20 * 1000);   // every 20s so short (seconds/minutes) corners release reasonably close to their time
 
   // Weekly mod-dashboard tidy (catch-up on boot if due, then hourly gate check).
   const dguild = await client.guilds.fetch(config.guildId).catch(() => null);
@@ -1745,16 +1744,21 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const [, memberId, channelId, messageId] = interaction.customId.split(':');
       const reason = (interaction.fields.getTextInputValue('reason') || '').trim() || null;
+      let durStr = '';
+      try { durStr = (interaction.fields.getTextInputValue('duration') || '').trim(); } catch { /* older modal had no duration field */ }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      let durationMs = config.cornerDefaultDurationMs;
+      if (durStr) { const d = corner.parseDuration(durStr); if (!d) return interaction.editReply('Bad duration — use e.g. `30s`, `10m`, `2h`, `1d` (or leave it blank for 15m).'); durationMs = d; }
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply('That member isn’t in the server anymore.');
       const ch = await guild.channels.fetch(channelId).catch(() => null);
       const target = ch && await ch.messages.fetch(messageId).catch(() => null);
       if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
-      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason);
+      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs);
       if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
-      return interaction.editReply(`🚫 Sent <@${member.id}> to the corner${reason ? ` — ${reason}` : ''}. Stripped **${res.stripped}** role(s).`);
+      const relSec = Math.floor((Date.now() + durationMs) / 1000);
+      return interaction.editReply(`🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` — ${reason}` : ''}. Stripped **${res.stripped}** role(s).`);
     } catch (e) { console.error(`[corner-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not corner.') : interaction.reply({ content: 'Could not corner.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
@@ -1939,17 +1943,12 @@ client.on('interactionCreate', async (interaction) => {
     const targetTier = opspanel.memberTier(member);
     if (member.id === guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
     if ((RANK[targetTier] || 0) > actorRank) return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
-    // When the cornerReason feature is on, ask for an OPTIONAL reason first (modal → corner_reason submit).
-    if (features.enabled('cornerReason')) {
-      const modal = new ModalBuilder().setCustomId(`corner_reason:${member.id}:${target.channelId}:${target.id}`).setTitle('Send to corner');
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
-      return interaction.showModal(modal);
-    }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const res = await cornerFromMessage(guild, interaction.user.id, member, target, null);
-    if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
-    return interaction.editReply(`🚫 Sent <@${member.id}> to the corner and forwarded their message there. Stripped **${res.stripped}** role(s).`);
+    // Always ask: an OPTIONAL duration + reason (modal → corner_reason submit). Blank duration = the 15m default.
+    const modal = new ModalBuilder().setCustomId(`corner_reason:${member.id}:${target.channelId}:${target.id}`).setTitle('Send to corner');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = 15m; 30s, 10m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
+    return interaction.showModal(modal);
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Strike') {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can strike.', flags: MessageFlags.Ephemeral });

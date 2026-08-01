@@ -86,13 +86,13 @@ async function ensureCornerPerms(guild) {
 
 // Parse a duration like "30m", "2h", "3d". Returns ms, or null if unparseable.
 function parseDuration(str) {
-  const m = String(str || '').trim().match(/^(\d+)\s*([mhd])$/i);
+  const m = String(str || '').trim().match(/^(\d+)\s*([smhd])$/i);
   if (!m) return null;
   const n = parseInt(m[1], 10);
   if (!n) return null;
   const unit = m[2].toLowerCase();
-  const mult = unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
-  return n * mult;
+  const mult = unit === 's' ? 1000 : unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
+  return n * mult;   // note: auto-release is checked on a timer (~20s), so sub-20s precision is approximate
 }
 
 // The roles that get stripped when cornering: everything the member has except @everyone,
