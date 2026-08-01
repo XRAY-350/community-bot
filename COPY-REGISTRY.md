@@ -56,7 +56,7 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
 | `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
 
-## copy.js keys (migrated so far — 63)
+## copy.js keys (migrated so far — 77)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
@@ -77,6 +77,20 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 - `copy.corner.durationOpt`
 - `copy.corner.units`
 - `copy.corner.unitsDot`
+- `copy.modapps.alreadyApplied`
+- `copy.modapps.alreadyOpen`
+- `copy.modapps.alreadyResolved`
+- `copy.modapps.applicantWelcome()`
+- `copy.modapps.noThread`
+- `copy.modapps.notSetup`
+- `copy.modapps.notSetupNow`
+- `copy.modapps.sentAnon`
+- `copy.modapps.submitted()`
+- `copy.modapps.threadGone`
+- `copy.modapps.untracked`
+- `copy.modapps.untrackedUndo`
+- `copy.modapps.votingClosed`
+- `copy.modapps.whichLang`
 - `copy.modmail.channelMissing`
 - `copy.modmail.filtered`
 - `copy.modmail.notSetup`
@@ -139,7 +153,7 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **whistleblow** (member) — copy.js: `whistleblow`
 - **reports** (member) — copy.js: `reports`
 - **modmail** (member) — copy.js: `modmail`
-- **modapps** (member) — _inline (not yet migrated)_
+- **modapps** (member) — copy.js: `modapps`
 - **rolereq** (member) — copy.js: `rolereq`
 - **roleselect** (staff) — _inline (not yet migrated)_
 - **permguard** (core) — _inline (not yet migrated)_

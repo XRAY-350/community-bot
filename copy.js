@@ -130,4 +130,21 @@ const whistleblow = {
   notAuthorized: 'You’re not authorized to unseal this — the sender entrusted it to someone else.',
 };
 
-module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow };
+const modapps = {
+  notSetup: 'Mod applications aren’t set up yet — tell an admin.',
+  notSetupNow: 'Applications aren’t set up right now — tell an admin.',
+  alreadyApplied: 'You already have an application under review — hang tight.',
+  submitted: threadId => `✅ Application submitted — view it + chat with staff here: <#${threadId}>`,
+  applicantWelcome: memberId => `<@${memberId}> — thanks for applying to mod! 🌱 This thread is just you + staff. Staff may reach out here with questions; reply anytime.`,
+  untracked: 'This application is no longer tracked.',
+  votingClosed: 'Voting is closed — this application was resolved.',
+  alreadyResolved: 'Already resolved.',
+  noThread: 'There’s no applicant thread to message.',
+  threadGone: 'That applicant thread is gone.',
+  sentAnon: '🕵️ Sent to the applicant anonymously — their reply lands in the thread.',
+  untrackedUndo: 'This application is no longer tracked, so there’s nothing to undo.',
+  alreadyOpen: 'This application is already open — nothing to undo.',
+  whichLang: '🌐 Which language do you want to help moderate?',
+};
+
+module.exports = { common, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps };

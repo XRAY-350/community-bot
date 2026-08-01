@@ -11,6 +11,7 @@ const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField,
   MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const opspanel = require('./opspanel');
+const copy = require('./copy');
 const langmods = require('./langmods');
 const ownerlog = require('./ownerlog');
 
@@ -171,11 +172,11 @@ function answersFromEmbed(e) {
 
 async function submitFromModal(interaction, config) {
   const c = loadConfig();
-  if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: 'Mod applications aren’t set up yet — tell an admin.', flags: MessageFlags.Ephemeral });
+  if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: copy.modapps.notSetup, flags: MessageFlags.Ephemeral });
   if (c.applicationsClosed === true) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
   const state = loadState();
   if (Object.values(state.posts).find(p => p.applicantId === interaction.user.id && p.status === 'open'))
-    return interaction.reply({ content: 'You already have an application under review — hang tight.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: copy.modapps.alreadyApplied, flags: MessageFlags.Ephemeral });
 
   // Which position? customId is 'modapp_submit' (Moderator) or 'modapp_submit:lang:<Language>'.
   const idParts = (interaction.customId || '').split(':');
@@ -186,7 +187,7 @@ async function submitFromModal(interaction, config) {
   const pun = punishment(member, config);
   const forum = await interaction.guild.channels.fetch(c.forumId).catch(() => null);
   const appsCh = await interaction.guild.channels.fetch(c.appsChannelId).catch(() => null);
-  if (!forum || !appsCh) return interaction.reply({ content: 'Applications aren’t set up right now — tell an admin.', flags: MessageFlags.Ephemeral });
+  if (!forum || !appsCh) return interaction.reply({ content: copy.modapps.notSetupNow, flags: MessageFlags.Ephemeral });
 
   // 1) applicant private thread
   const appThread = await appsCh.threads.create({
@@ -194,7 +195,7 @@ async function submitFromModal(interaction, config) {
     reason: `Mod application by ${member.user.tag}`,
   });
   await appThread.members.add(member.id).catch(() => {});
-  await appThread.send({ content: `<@${member.id}> — thanks for applying to mod! 🌱 This thread is just you + staff. Staff may reach out here with questions; reply anytime.`,
+  await appThread.send({ content: copy.modapps.applicantWelcome(member.id),
     embeds: [new EmbedBuilder().setColor(0x5865F2).setTitle('Your application').addFields(
       { name: 'Age', value: answers.age || '-', inline: true }, { name: 'Active', value: (answers.tz || '-').slice(0, 100), inline: true },
       { name: 'Why mod?', value: (answers.why || '-').slice(0, 1024) },
@@ -210,15 +211,15 @@ async function submitFromModal(interaction, config) {
     appliedTags: c.tags.pending ? [c.tags.pending] : [], reason: `Mod application review - ${member.user.tag}`,
   });
   state.posts[review.id] = post; saveState(state);
-  return interaction.reply({ content: `✅ Application submitted — view it + chat with staff here: <#${appThread.id}>`, flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: copy.modapps.submitted(appThread.id), flags: MessageFlags.Ephemeral });
 }
 
 // ---- anonymous mod vote (mods+; gated in index.js) --------------------------------------------------
 async function vote(interaction, dir) {
   const state = loadState();
   const post = state.posts[interaction.channelId];
-  if (!post) return interaction.reply({ content: 'This application is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (post.status !== 'open') return interaction.reply({ content: 'Voting is closed — this application was resolved.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open') return interaction.reply({ content: copy.modapps.votingClosed, flags: MessageFlags.Ephemeral });
   const uid = interaction.user.id;
   // Weight is locked in at the moment you vote (your tier right now) — a later promotion/demotion doesn't
   // retroactively reweigh a vote you already cast; vote again if you want it to count at your new tier.
@@ -241,8 +242,8 @@ async function vote(interaction, dir) {
 async function resolve(interaction, accepted, config) {
   const state = loadState();
   const post = state.posts[interaction.channelId];
-  if (!post) return interaction.reply({ content: 'This application is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (post.status !== 'open') return interaction.reply({ content: 'Already resolved.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open') return interaction.reply({ content: copy.modapps.alreadyResolved, flags: MessageFlags.Ephemeral });
   const c = loadConfig();
   post.status = accepted ? 'accepted' : 'denied'; saveState(state);
   const member = await interaction.guild.members.fetch(post.applicantId).catch(() => null);
@@ -297,7 +298,7 @@ async function migrateLegacy(guild, reviewThreadId, config) {
     const appThread = await appsCh.threads.create({ name: `Application · ${member.user.username}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false, reason: 'migrate legacy mod app' }).catch(() => null);
     if (appThread) {
       await appThread.members.add(member.id).catch(() => {});
-      await appThread.send({ content: `<@${member.id}> — thanks for applying to mod! 🌱 This thread is just you + staff. Staff may reach out here with questions; reply anytime.`, embeds: [applicantEmbed(answers)], allowedMentions: { users: [member.id] } }).catch(() => {});
+      await appThread.send({ content: copy.modapps.applicantWelcome(member.id), embeds: [applicantEmbed(answers)], allowedMentions: { users: [member.id] } }).catch(() => {});
       appThreadId = appThread.id;
     }
   }
@@ -312,8 +313,8 @@ async function migrateLegacy(guild, reviewThreadId, config) {
 // the applicant thread.) The modal carries the applicant thread id so we know where to send it.
 async function askAnonModal(interaction) {
   const post = loadState().posts[interaction.channelId];
-  if (!post) return interaction.reply({ content: 'This application is no longer tracked.', flags: MessageFlags.Ephemeral });
-  if (!post.appThreadId) return interaction.reply({ content: 'There’s no applicant thread to message.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
+  if (!post.appThreadId) return interaction.reply({ content: copy.modapps.noThread, flags: MessageFlags.Ephemeral });
   const m = new ModalBuilder().setCustomId(`modapp_ask:${post.appThreadId}`).setTitle('Ask the applicant (anonymous)');
   m.addComponents(new ActionRowBuilder().addComponents(
     new TextInputBuilder().setCustomId('q').setLabel('Question — sent without your name').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
@@ -323,9 +324,9 @@ async function handleAskModal(interaction) {
   const appThreadId = interaction.customId.split(':')[1];
   const q = interaction.fields.getTextInputValue('q');
   const thread = await interaction.guild.channels.fetch(appThreadId).catch(() => null);
-  if (!thread) return interaction.reply({ content: 'That applicant thread is gone.', flags: MessageFlags.Ephemeral });
+  if (!thread) return interaction.reply({ content: copy.modapps.threadGone, flags: MessageFlags.Ephemeral });
   await thread.send({ embeds: [new EmbedBuilder().setColor(0x9B59B6).setAuthor({ name: '🕵️ A staff member asks…' }).setDescription(q)] }).catch(() => {});
-  return interaction.reply({ content: '🕵️ Sent to the applicant anonymously — their reply lands in the thread.', flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: copy.modapps.sentAnon, flags: MessageFlags.Ephemeral });
 }
 
 // ---- undo a resolved decision (owner/approver-gated in index.js) -----------------------------------
@@ -335,8 +336,8 @@ async function handleAskModal(interaction) {
 async function undo(interaction, config) {
   const state = loadState();
   const post = state.posts[interaction.channelId];
-  if (!post) return interaction.reply({ content: 'This application is no longer tracked, so there’s nothing to undo.', flags: MessageFlags.Ephemeral });
-  if (post.status === 'open') return interaction.reply({ content: 'This application is already open — nothing to undo.', flags: MessageFlags.Ephemeral });
+  if (!post) return interaction.reply({ content: copy.modapps.untrackedUndo, flags: MessageFlags.Ephemeral });
+  if (post.status === 'open') return interaction.reply({ content: copy.modapps.alreadyOpen, flags: MessageFlags.Ephemeral });
   const c = loadConfig();
   const wasAccepted = post.status === 'accepted';
   await interaction.deferUpdate();
@@ -385,7 +386,7 @@ async function handleButton(interaction, config) {
   }
   if (id === 'modapp_pos_lang') {
     if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
-    return interaction.update({ content: '🌐 Which language do you want to help moderate?', components: [languageSelectRow()] });
+    return interaction.update({ content: copy.modapps.whichLang, components: [languageSelectRow()] });
   }
 }
 // The language dropdown chosen → open the mini-mod modal for that language.
