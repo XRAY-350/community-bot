@@ -206,6 +206,21 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
   return { ok: true, stripped: r.stripped };
 }
 
+// Release a member whose timed corner has come due + announce "time served". Called by the per-corner
+// setTimeout (precise) AND the backstop poller. Guarded on current cornered-state so the two can't
+// double-release or double-announce the same member.
+async function releaseCornerAndAnnounce(guild, uid) {
+  if (!state.getCornered(uid)) return;   // already released by the other path
+  const r = await corner.uncorner(guild, uid, state, 'Corner duration expired');
+  if (!r.ok) { console.error(`[corner] timed release failed for ${uid}: ${r.error}`); return; }
+  try {
+    const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
+    if (cornerCh) await cornerCh.send(cornerTimeServedMessage(uid)).catch(e => console.error(`[corner] time-served announce: ${e.message}`));
+  } catch { /* announce best-effort */ }
+  await logCorner(guild, { emoji: '⛓️‍💥', title: 'TIME SERVED', color: CORNER_GREEN,
+    desc: `<@${uid}>'s sentence ended — auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(r.servedMs)}` });
+}
+
 async function handleCornerButton(interaction) {
   const [, userId, msStr] = interaction.customId.split(':');   // corner_rel:<userId>:<ms>  or  corner_recorner:<userId>
   const ms = Number(msStr || 0);
@@ -233,6 +248,7 @@ async function handleCornerButton(interaction) {
     const rec = state.getCornered(userId);
     if (!rec) return interaction.editReply(`<@${userId}> is not in the corner.`);
     state.setCornered(userId, { ...rec, releaseAt: null });   // null = never auto-released
+    corner.clearTimer(userId);                                // cancel the pending precise-release timer
     await logCorner(guild, { emoji: '♾️', title: 'SENTENCE CHANGED', color: CORNER_AMBER,
       desc: `<@${userId}>'s corner is now **indefinite** (no auto-release).\n**By:** <@${interaction.user.id}>` });
     return interaction.editReply(`♾️ <@${userId}> is now cornered **indefinitely** — they stay until manually released.`);
@@ -820,24 +836,21 @@ client.once('ready', async () => {
 
   // Auto-release expired corners every minute (survives restarts via state), announcing each in the
   // corner channel ("time served") — otherwise a timed release is silent.
+  // Precise release: each timed corner arms its own setTimeout (corner.js) that calls this handler at
+  // exactly its time. Guarded so a timer + the backstop poller can't double-release/announce the same member.
+  corner.setReleaseHandler(releaseCornerAndAnnounce);
+  client.guilds.fetch(config.guildId).then(g => { const n = corner.rearmAll(g, state); if (n) console.log(`[corner] re-armed ${n} release timer(s) on boot`); }).catch(() => {});
+  // Backstop poller (per-corner timers are the primary mechanism now): catches corners orphaned by a
+  // restart before re-arm, or any set >24.8d out. Idempotent via releaseCornerAndAnnounce's guard.
   setInterval(async () => {
     try {
       const guild = await client.guilds.fetch(config.guildId);
-      const released = await corner.releaseExpired(guild, state);
-      if (released.length) {
-        console.log(`[corner] auto-released ${released.length} member(s)`);
-        const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
-        for (const { uid, servedMs } of released) {
-          if (cornerCh) {
-            await cornerCh.send(cornerTimeServedMessage(uid))
-              .catch(e => console.error(`[corner] time-served announce failed: ${e.message}`));
-          }
-          await logCorner(guild, { emoji: '⛓️‍💥', title: 'TIME SERVED', color: CORNER_GREEN,
-            desc: `<@${uid}>'s sentence ended — auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(servedMs)}` });
-        }
+      const now = Date.now();
+      for (const [uid, rec] of Object.entries(state.listCornered())) {
+        if (rec.releaseAt && rec.releaseAt <= now) await releaseCornerAndAnnounce(guild, uid);
       }
-    } catch (err) { console.error(`[corner] release loop: ${err.message}`); }
-  }, 20 * 1000);   // every 20s so short (seconds/minutes) corners release reasonably close to their time
+    } catch (err) { console.error(`[corner] release backstop: ${err.message}`); }
+  }, 60 * 1000);
 
   // Weekly mod-dashboard tidy (catch-up on boot if due, then hourly gate check).
   const dguild = await client.guilds.fetch(config.guildId).catch(() => null);

@@ -6,6 +6,33 @@
 const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
 
+// ---- precise per-corner release timers -----------------------------------------------------------
+// A timed corner arms a setTimeout that releases the member at EXACTLY their time (down to the second),
+// instead of relying on the periodic poller — which now only survives as a restart backstop. index.js
+// registers the real release+announce via setReleaseHandler; corner.js just fires it on schedule.
+const _timers = new Map();            // userId -> Timeout handle
+let _releaseHandler = null;           // async (guild, userId) => { uncorner + announce } (set by index.js)
+const MAX_TIMER_MS = 2 ** 31 - 1;     // setTimeout ceiling (~24.8d); longer corners lean on the poller
+function setReleaseHandler(fn) { _releaseHandler = fn; }
+function clearTimer(userId) { const t = _timers.get(userId); if (t) { clearTimeout(t); _timers.delete(userId); } }
+function armTimer(guild, userId, releaseAt) {
+  clearTimer(userId);
+  if (!releaseAt) return;                                   // indefinite → no timer
+  const delay = releaseAt - Date.now();
+  if (delay > MAX_TIMER_MS) return;                         // too far out for setTimeout; poller/rearm handles it
+  const t = setTimeout(() => {
+    _timers.delete(userId);
+    if (_releaseHandler) Promise.resolve(_releaseHandler(guild, userId)).catch(e => console.error('[corner] timed release:', e.message));
+  }, Math.max(0, delay));
+  _timers.set(userId, t);
+}
+// Re-arm every currently-cornered member's timer after a restart (timers don't survive a process exit).
+function rearmAll(guild, state) {
+  let n = 0;
+  for (const [uid, rec] of Object.entries(state.listCornered())) if (rec.releaseAt) { armTimer(guild, uid, rec.releaseAt); n++; }
+  return n;
+}
+
 // Does the corner role's (or given id's) overwrite on a channel already match the desired allow/deny?
 function overwriteMatches(channel, id, desired) {
   const ow = channel.permissionOverwrites.cache.get(id);
@@ -140,6 +167,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   if (existing) {
     // Already cornered — just update the release time (don't re-strip).
     state.setCornered(member.id, { ...existing, releaseAt: durationMs ? now + durationMs : null, by: byId });
+    armTimer(guild, member.id, durationMs ? now + durationMs : null);   // re-arm on a re-corner / duration change
     const repeatCount = logCornerHistory(state, member.id, ruleIndex);
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
   }
@@ -176,6 +204,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
     return { ok: false, error: err.message };
   }
   await restoreTimeout(); // put the Discord timeout back - cornering doesn't cancel it
+  armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
   return { ok: true, stripped: strip.length, repeatCount };
 }
@@ -185,7 +214,7 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
   const rec = state.getCornered(userId);
   const servedMs = rec && rec.at ? Date.now() - rec.at : null;   // how long they were in the corner
   const member = await guild.members.fetch(userId).catch(() => null);
-  if (!member) { state.clearCornered(userId); return { ok: true, left: true, servedMs }; }
+  if (!member) { clearTimer(userId); state.clearCornered(userId); return { ok: true, left: true, servedMs }; }
   // Same as corner: role edits fail on a timed-out member — lift the timeout, restore roles, put it back.
   let restoreTimeoutUntil = null;
   if (member.isCommunicationDisabled?.()) {
@@ -207,6 +236,7 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
     return { ok: false, error: err.message };
   }
   await restoreTimeout(); // keep any active timeout after release
+  clearTimer(userId);
   state.clearCornered(userId);
   return { ok: true, restored: rec && rec.roles ? rec.roles.length : 0, servedMs };
 }
@@ -225,4 +255,5 @@ async function releaseExpired(guild, state) {
   return released;
 }
 
-module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms };
+module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
+  setReleaseHandler, armTimer, clearTimer, rearmAll };
