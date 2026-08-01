@@ -97,7 +97,9 @@ async function logCorner(guild, entry) {
       if (typeof entry === 'string') await ch.send({ content: entry, allowedMentions: { parse: [] } });
       else {
         const { emoji, title, color, desc } = entry;
-        await ch.send({ content: `## ${emoji} ${title}`, embeds: [new EmbedBuilder().setColor(color).setDescription(desc)], allowedMentions: { parse: [] } });
+        // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone —
+        // embed mentions only resolve from the viewer's cache and show "@unknown-user" in this restricted log.
+        await ch.send({ content: `## ${emoji} ${title}\n${desc}`, embeds: [new EmbedBuilder().setColor(color).setDescription('​')], allowedMentions: { parse: [] } });
       }
     }
     // Mirror to the owner-only log too — covers every corner/uncorner call site in one place.
@@ -2405,7 +2407,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
   if (name === 'suggest-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set up the forum.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set up the forum.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { forum, created } = await suggestions.setup(interaction.guild, config);
@@ -2422,7 +2424,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[suggestions] submit ${e.message}`); return interaction.editReply('Could not post that suggestion.').catch(() => {}); }
   }
   if (name === 'confess-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, logChannel, created } = await confessions.setup(interaction.guild, config);
@@ -2439,7 +2441,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[confessions] submit ${e.message}`); return interaction.editReply('Could not post that confession.').catch(() => {}); }
   }
   if (name === 'whistleblow-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up. Run it as the head admin — you become the “you” who can unseal.', flags: MessageFlags.Ephemeral });
+    if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the **bot owner** can set up whistleblows — you become the “you” who can unseal. (This is bot-owner-only.)', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const cfg = await whistleblow.setup(interaction.guild, interaction.user.id);
@@ -2458,7 +2460,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[whistleblow] submit ${e.message}`); return interaction.editReply('Could not send that.').catch(() => {}); }
   }
   if (name === 'apply-mod-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { forum, apps } = await modapps.setup(interaction.guild, config);
@@ -2563,7 +2565,7 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
   }
   if (name === 'roleselect-role') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can manage #roles.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can manage #roles.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     const section = interaction.options.getString('section');
     const role = interaction.options.getRole('role');
@@ -2578,7 +2580,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[roleselect-role] ${e.message}`); return interaction.editReply(`Failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'request-role-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try { const { channel, created } = await rolereq.setup(interaction.guild, config); return interaction.editReply(`${created ? '✅ Created' : 'ℹ️ Already set up:'} <#${channel.id}>. Members use \`/request-role\`.`); }
     catch (e) { console.error(`[rolereq] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
@@ -2594,7 +2596,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[rolereq] ${e.message}`); return interaction.editReply('Could not send that request.').catch(() => {}); }
   }
   if (name === 'appeal-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, created } = await appeals.setup(interaction.guild, config);
@@ -2602,7 +2604,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[appeals] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'appeal-strike-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, created } = await strikeAppeals.setup(interaction.guild);
@@ -2628,7 +2630,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[strikeAppeals] ${e.message}`); return interaction.editReply('Could not open that appeal.').catch(() => {}); }
   }
   if (name === 'report-setup' || name === 'modmail-setup') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can set this up.', flags: MessageFlags.Ephemeral });
+    if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set this up.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const mod = name === 'report-setup' ? reports : modmail;
