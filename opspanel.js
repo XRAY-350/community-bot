@@ -36,21 +36,21 @@ function isBotOwner(x) { const id = x && (x.user ? x.user.id : x.id); return !!i
 function memberTier(member) {
   const roles = member && member.roles && member.roles.cache;
   if (!roles) return null;
-  if ((member.guild && member.id === member.guild.ownerId) || OWNER_ROLE_IDS.some(id => roles.has(id))) return 'owner';
+  // OWNER tier is a SAFEGUARD: the OWNER role AND the Administrator permission must BOTH be true (a partial
+  // owner — one without the other — is not recognized). The Discord SERVER owner is always owner regardless.
+  const ownerCombo = OWNER_ROLE_IDS.some(id => roles.has(id)) && !!(member.permissions && member.permissions.has(PermissionsBitField.Flags.Administrator));
+  if ((member.guild && member.id === member.guild.ownerId) || ownerCombo) return 'owner';
   if (roles.has(ADMIN_ROLE_ID)) return 'admin';
   if (roles.has(MOD_ROLE_ID)) return 'mod';
   return null;
 }
 // ACTOR authority tier — who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server
 // owner < bot owner. The bot owner is supreme BY USER ID (role-independent → keeps access even role-stripped).
-// The OWNER role and the Administrator PERMISSION are EQUAL = owner tier (an owner should hold both, but
-// either one alone confers owner). Note "admin" = the ADMINS-★ role, NOT the Administrator permission.
+// OWNER tier requires BOTH the OWNER role AND the Administrator permission (safeguard; see memberTier).
+// Note "admin" = the ADMINS-★ role, NOT the Administrator permission.
 function tierOf(interaction) {
   if (isBotOwner(interaction)) return 'botowner';
-  const t = memberTier(interaction.member);
-  if (t) return t;
-  if (interaction.memberPermissions && interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) return 'owner';
-  return null;
+  return memberTier(interaction.member);   // owner requires OWNER role AND Admin perm (in memberTier); no perm-alone shortcut
 }
 
 // page tiers: min tier to USE the actions on the page (everyone mod+ can VIEW every page).
