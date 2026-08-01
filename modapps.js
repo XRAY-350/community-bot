@@ -373,11 +373,20 @@ async function handleButton(interaction, config) {
   if (id === 'modapp_undo') return undo(interaction, config);
   // applicant-facing position picker (not staff-gated in index.js): Moderator → mod modal; Language
   // mini-mod → show the language dropdown.
-  if (id === 'modapp_pos_mod') return interaction.showModal(buildModal('mod'));
-  if (id === 'modapp_pos_lang') return interaction.update({ content: '🌐 Which language do you want to help moderate?', components: [languageSelectRow()] });
+  // Re-check the closed gate here too — a stale position picker (opened while apps were open, clicked after
+  // they closed) shouldn't reach the form. Turn them away up front instead of after they've typed it all.
+  if (id === 'modapp_pos_mod') {
+    if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
+    return interaction.showModal(buildModal('mod'));
+  }
+  if (id === 'modapp_pos_lang') {
+    if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
+    return interaction.update({ content: '🌐 Which language do you want to help moderate?', components: [languageSelectRow()] });
+  }
 }
 // The language dropdown chosen → open the mini-mod modal for that language.
 async function handlePositionSelect(interaction) {
+  if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
   return interaction.showModal(buildModal('lang', interaction.values?.[0]));
 }
 
