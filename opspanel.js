@@ -853,7 +853,7 @@ async function handlePanel(interaction) {
       if (dur && !ms) return interaction.editReply('Bad duration — use `30m`, `2h`, `3d`, `30s`.');
       const members = [];
       for (const uid of stash.ids) { const m = await interaction.guild.members.fetch(uid).catch(() => null); if (m) members.push(m); }
-      const actorRank = { owner: 3, admin: 2, mod: 1 }[tierOf(interaction)] || 0;
+      const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[tierOf(interaction)] || 0;
       const { done, skipped } = await D.cornerMany(interaction.guild, interaction.user.id, actorRank, members, ms, {});
       const lines = [];
       if (done.length) lines.push(`⛓️ Cornered **${done.length}**${dur ? ` for ${dur}` : ' indefinitely'}: ${done.map(x => `<@${x}>`).join(', ')}`);

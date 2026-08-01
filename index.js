@@ -2002,7 +2002,7 @@ client.on('interactionCreate', async (interaction) => {
         if (recent) for (const m of recent.values()) { if (m.createdTimestamp >= since && !m.author.bot && m.author.id !== member.id) authorIds.add(m.author.id); }
         const sweepMembers = [];
         for (const id of authorIds) { const mm = await guild.members.fetch(id).catch(() => null); if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) sweepMembers.push(mm); }
-        const actorRank = { owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
+        const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
         const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, sweepMembers, durationMs, { reasonText: reason });
         sweepNote = `\n🧹 Sweep (${Math.min(mins, 120)}m): +${done.length} more${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
         // Public-facing result: announce the sweep in the channel so everyone sees it, not just the mod's ack.
@@ -2207,7 +2207,7 @@ client.on('interactionCreate', async (interaction) => {
     const member = await guild.members.fetch(target.author.id).catch(() => null);
     if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
     if (member.id === client.user.id) return interaction.reply({ content: 'I can’t corner myself.', flags: MessageFlags.Ephemeral });
-    const RANK = { owner: 3, admin: 2, mod: 1 };
+    const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
     const actorRank = RANK[opspanel.tierOf(interaction)] || 0;
     const targetTier = opspanel.memberTier(member);
     if (member.id === guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
@@ -2843,7 +2843,7 @@ client.on('interactionCreate', async (interaction) => {
       // tiers can corner each other (mod↔mod, admin↔admin), staff can corner regular members, but a mod
       // can't corner an admin. Ranks: owner > admin > mod > member. The guild owner is never cornerable
       // (and OWNER⚜️ sits above the bot's role, so the bot couldn't strip it regardless).
-      const RANK = { owner: 3, admin: 2, mod: 1 };
+      const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
       const actorRank = RANK[opspanel.tierOf(interaction)] || 0;      // actor's tier (admin if Administrator-perm)
       const targetTier = opspanel.memberTier(member);                 // target's role-only tier
       const targetRank = RANK[targetTier] || 0;
