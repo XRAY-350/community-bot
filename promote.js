@@ -102,4 +102,16 @@ async function handleButton(interaction, config) {
   if (id === 'promote_reject') return resolve(interaction, false, config);
 }
 
-module.exports = { start, handleButton };
+// Cancel an OPEN promotion record whose poll message was deleted, so the orphaned record can't keep
+// blocking a re-open. Returns the cancelled record (with candidateId) or null if there was nothing open.
+function cancelByMessageId(messageId, reason = 'poll message deleted') {
+  const state = _load();
+  const rec = state.posts[messageId];
+  if (!rec || rec.status !== 'open') return null;
+  rec.status = 'cancelled';
+  rec.cancelledReason = reason;
+  _save(state);
+  return rec;
+}
+
+module.exports = { start, handleButton, cancelByMessageId };

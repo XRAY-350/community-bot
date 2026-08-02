@@ -1854,6 +1854,12 @@ client.on('messageCreate', async (msg) => {
 client.on('messageDelete', async (msg) => {
   try { if (msg.channelId && contest.isContestChannel(msg.channelId)) await contest.onMessageDelete(msg); }
   catch (e) { console.error('[contest] messageDelete:', e.message); }
+  // If a promotion-vote message is deleted by hand, auto-cancel its record so the orphan can't block a
+  // re-open (the poll is unreachable once its message is gone — nothing left to vote on or resolve).
+  try {
+    const rec = promote.cancelByMessageId(msg.id);
+    if (rec) console.log(`[promote] auto-cancelled orphaned vote for ${rec.candidateId} (message ${msg.id} deleted)`);
+  } catch (e) { console.error('[promote] messageDelete:', e.message); }
 });
 
 // Button routing (verify panel · corner controls · conflict resolve) + /corner /uncorner below.
