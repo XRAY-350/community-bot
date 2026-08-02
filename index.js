@@ -102,17 +102,22 @@ async function buildTribe(guild, opts, config) {
   const cat = await guild.channels.create({ name: `${emoji} ${small ? toSmallCaps(opts.shortName || opts.name) : (opts.shortName || opts.name)}`, type: ChannelType.GuildCategory, reason: 'Tribe land',
     permissionOverwrites: [{ id: guild.id, deny: [P.ViewChannel] }, { id: role.id, allow: [P.ViewChannel] }, ...leaderAllow, ...staffAllow([P.ViewChannel]), ...deny] });
   if (slotCatPos != null) await cat.setPosition(slotCatPos).catch(() => {});
-  const throne = await guild.channels.create({ name: chName('throne'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
+  // A tribe can name + set the PURPOSE of its own starter channels at build time (owner: "the land is
+  // personalizable in name and purpose"). Falls back to the framework default base name ("throne"/"hall"/
+  // "voice") and no topic if the founder skips this step in the guided builder.
+  const chNames = opts.channelNames || {};
+  const chTopics = opts.channelTopics || {};
+  const throne = await guild.channels.create({ name: chName(chNames.throne || 'throne'), type: ChannelType.GuildText, parent: cat.id, topic: chTopics.throne || undefined, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions], deny: [P.SendMessages, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePrivateThreads] },
     ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
     ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
-  const hall = await guild.channels.create({ name: chName('hall'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
+  const hall = await guild.channels.create({ name: chName(chNames.hall || 'hall'), type: ChannelType.GuildText, parent: cat.id, topic: chTopics.hall || undefined, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AddReactions, P.EmbedLinks, P.AttachFiles, P.UseExternalEmojis, P.UseExternalStickers, P.MentionEveryone] },
     ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
     ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
-  const vc = await guild.channels.create({ name: chName('voice'), type: ChannelType.GuildVoice, parent: cat.id, permissionOverwrites: [
+  const vc = await guild.channels.create({ name: chName(chNames.voice || 'voice'), type: ChannelType.GuildVoice, parent: cat.id, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.Stream, P.UseVAD, P.MentionEveryone] },
     ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []),
@@ -123,6 +128,82 @@ async function buildTribe(guild, opts, config) {
     leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40),
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
   return { tribe, role, leaderRole, cat, throne, hall, vc };
+}
+// ---- Guided (non-inline) tribe builder wizard ----
+// /tribe-admin create takes ONLY the leader inline (an 8+ option command is unusable); everything else is
+// collected across a short modal + button flow. State lives in-memory, keyed by the founding admin's user id
+// (their status card is ephemeral, so only they can ever see or click it — no separate ownership check needed),
+// and expires after 20 minutes of inactivity so an abandoned build doesn't linger forever.
+const _tribeWizards = new Map();   // adminId -> { leaderId, name, shortName, emoji, pointsName, leaderTitle, color, color2, style, channelNames, channelTopics, expires }
+const parseTribeHex = h => { const m = String(h || '').trim().replace(/^#/, ''); return /^[0-9a-fA-F]{6}$/.test(m) ? parseInt(m, 16) : null; };
+function wizardGet(adminId) {
+  const w = _tribeWizards.get(adminId);
+  if (w && w.expires < Date.now()) { _tribeWizards.delete(adminId); return null; }
+  return w || null;
+}
+function wizardTouch(adminId, patch) {
+  const w = wizardGet(adminId) || {};
+  Object.assign(w, patch, { expires: Date.now() + 20 * 60000 });
+  _tribeWizards.set(adminId, w);
+  return w;
+}
+function tribeIdentityModal() {
+  return new ModalBuilder().setCustomId('tribewiz_identity').setTitle('Found a tribe: identity').addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('name').setLabel('Full tribe name, e.g. "The Tribe of X"').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('short_name').setLabel('Short name for cards (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Tribe emoji (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('points_name').setLabel('Activity points name, e.g. Tides (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(20)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('leader_title').setLabel('What the head is called, e.g. Warden (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)));
+}
+function tribeColorsModal(w) {
+  const colorInput = new TextInputBuilder().setCustomId('color').setLabel('Primary colour hex, e.g. #2A426A').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(7);
+  if (w?.color != null) colorInput.setValue('#' + w.color.toString(16).padStart(6, '0'));
+  const color2Input = new TextInputBuilder().setCustomId('color2').setLabel('Second hex for a gradient (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(7);
+  if (w?.color2 != null) color2Input.setValue('#' + w.color2.toString(16).padStart(6, '0'));
+  return new ModalBuilder().setCustomId('tribewiz_colors').setTitle('Found a tribe: colours')
+    .addComponents(new ActionRowBuilder().addComponents(colorInput), new ActionRowBuilder().addComponents(color2Input));
+}
+function tribeLandModal(w) {
+  const f = (id, label, val, max) => { const t = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(max); if (val) t.setValue(val); return new ActionRowBuilder().addComponents(t); };
+  return new ModalBuilder().setCustomId('tribewiz_land').setTitle('Found a tribe: the land (optional)').addComponents(
+    f('throne_name', 'Throne channel name (default: throne)', w?.channelNames?.throne, 30),
+    f('throne_purpose', 'Throne purpose (shown as the channel topic)', w?.channelTopics?.throne, 200),
+    f('hall_name', 'Hall channel name (default: hall)', w?.channelNames?.hall, 30),
+    f('hall_purpose', 'Hall purpose (shown as the channel topic)', w?.channelTopics?.hall, 200),
+    f('voice_name', 'Voice channel name (default: voice)', w?.channelNames?.voice, 30));
+}
+// The ephemeral status card the whole wizard revolves around: shows what's captured so far, buttons to fill
+// in each piece, and a Build button that only lights up once the two REQUIRED pieces (name + colour) are set.
+function wizardStatusMessage(adminId) {
+  const w = wizardGet(adminId);
+  if (!w) return { content: 'This tribe build expired or was never started. Run `/tribe-admin create` again.', components: [] };
+  const lines = [
+    `**Leader:** <@${w.leaderId}>`,
+    `**Name:** ${w.name || '_not set, use Identity_'}${w.shortName ? ` (${w.shortName})` : ''}`,
+    `**Emoji:** ${w.emoji || '🏴 (default)'}`,
+    `**Points name:** ${w.pointsName || 'points (default)'}`,
+    `**Leader title:** ${w.leaderTitle || 'Chief (default)'}`,
+    `**Colour:** ${w.color != null ? '#' + w.color.toString(16).padStart(6, '0') : '_not set, required_'}${w.color2 != null ? ` to #${w.color2.toString(16).padStart(6, '0')}` : ''}`,
+    `**Style:** ${w.style === 'plain' ? 'plain' : 'small-caps (server style, default)'}`,
+    `**Land:** ${w.channelNames || w.channelTopics ? [...Object.entries(w.channelNames || {}), ...Object.entries(w.channelTopics || {}).map(([k, v]) => [`${k} topic`, v])].map(([k, v]) => `${k}: ${v}`).join(', ') : '_default names, no topics_'}`,
+  ];
+  const identityBtn = new ButtonBuilder().setCustomId('tribewiz_identity_btn').setLabel('✏️ Identity').setStyle(ButtonStyle.Secondary);
+  const colorsBtn = new ButtonBuilder().setCustomId('tribewiz_colors_btn').setLabel('🎨 Colours').setStyle(w.color != null ? ButtonStyle.Secondary : ButtonStyle.Primary);
+  const landBtn = new ButtonBuilder().setCustomId('tribewiz_land_btn').setLabel('🏠 Land: names & purpose').setStyle(ButtonStyle.Secondary);
+  const styleSelect = new StringSelectMenuBuilder().setCustomId('tribewiz_style').setPlaceholder('Channel text style').addOptions(
+    { label: 'Small-caps (server style)', value: 'small', default: w.style !== 'plain' },
+    { label: 'Plain', value: 'plain', default: w.style === 'plain' });
+  const buildBtn = new ButtonBuilder().setCustomId('tribewiz_build').setLabel('✅ Build').setStyle(ButtonStyle.Success).setDisabled(!w.name || w.color == null);
+  const cancelBtn = new ButtonBuilder().setCustomId('tribewiz_cancel').setLabel('❌ Cancel').setStyle(ButtonStyle.Danger);
+  return {
+    content: `## 🏴 Founding a tribe\n${lines.join('\n')}\n-# Fill in Identity + Colours, land is optional, then Build.`,
+    components: [
+      new ActionRowBuilder().addComponents(identityBtn, colorsBtn, landBtn),
+      new ActionRowBuilder().addComponents(styleSelect),
+      new ActionRowBuilder().addComponents(buildBtn, cancelBtn),
+    ],
+    allowedMentions: { parse: [] },
+  };
 }
 // Staff infraction/weight guide — the "how do I punish X" reference trial mods keep asking for. Built
 // live from rules.js (text + decided weight + handling summary) so it never drifts from the real config.
@@ -920,17 +1001,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('rank').setDescription('Which rank').setRequired(true).setAutocomplete(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('tribe-admin').setDescription('Create or register tribes (admin)')
-        .addSubcommand(s => s.setName('create').setDescription('Build a brand-new tribe: role + leader role + private land + register')
-          .addStringOption(o => o.setName('name').setDescription('Full tribe name, e.g. "The Tribe of X"').setRequired(true))
-          .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
-          .addUserOption(o => o.setName('leader').setDescription('The tribe leader (must be an admin)').setRequired(true))
-          .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient role (optional)').setRequired(false))
-          .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false))
-          .addStringOption(o => o.setName('short_name').setDescription('Short name for cards (optional)').setRequired(false))
-          .addStringOption(o => o.setName('points_name').setDescription('What this tribe calls its activity points, e.g. Tides (default: points)').setRequired(false).setMaxLength(20))
-          .addStringOption(o => o.setName('leader_title').setDescription('What this tribe calls its head, e.g. Warden (default: Chief)').setRequired(false).setMaxLength(40))
-          .addStringOption(o => o.setName('style').setDescription('Channel text style (default: small-caps)').setRequired(false)
-            .addChoices({ name: 'small-caps (server style)', value: 'small' }, { name: 'plain', value: 'plain' })))
+        .addSubcommand(s => s.setName('create').setDescription('Found a brand-new tribe: opens a guided setup (identity, colours, land)')
+          .addUserOption(o => o.setName('leader').setDescription('The tribe leader (must be an admin)').setRequired(true)))
         .addSubcommand(s => s.setName('register').setDescription('Adopt an EXISTING role + channels as a tribe')
           .addStringOption(o => o.setName('key').setDescription('Short key, e.g. valith').setRequired(true))
           .addStringOption(o => o.setName('name').setDescription('Full tribe name').setRequired(true))
@@ -2430,6 +2502,95 @@ client.on('interactionCreate', async (interaction) => {
     const r = await strikeAppeals.submit(interaction.guild, interaction.member, state, interaction.values[0], null);
     return interaction.editReply(r.ok ? `⚖️ Opened your strike appeal in <#${r.threadId}>. Head there to explain it to staff.` : `❌ ${r.msg}`);
   }
+  // ---- Guided tribe builder: /tribe-admin create's modal + button flow (see wizardStatusMessage above) ----
+  const wizExpired = () => ({ content: 'This tribe build expired. Run `/tribe-admin create` again.', flags: MessageFlags.Ephemeral });
+  if (interaction.isModalSubmit?.() && interaction.customId === 'tribewiz_identity') {
+    if (!wizardGet(interaction.user.id)) return interaction.reply(wizExpired());
+    const name = interaction.fields.getTextInputValue('name').trim();
+    if (!name) return interaction.reply({ content: 'Give the tribe a name.', flags: MessageFlags.Ephemeral });
+    wizardTouch(interaction.user.id, {
+      name: name.slice(0, 80),
+      shortName: interaction.fields.getTextInputValue('short_name').trim().slice(0, 40) || null,
+      emoji: interaction.fields.getTextInputValue('emoji').trim().slice(0, 10) || null,
+      pointsName: interaction.fields.getTextInputValue('points_name').trim().slice(0, 20) || null,
+      leaderTitle: interaction.fields.getTextInputValue('leader_title').trim().slice(0, 40) || null,
+    });
+    const msg = wizardStatusMessage(interaction.user.id);
+    return interaction.message ? interaction.update(msg) : interaction.reply({ ...msg, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId === 'tribewiz_colors') {
+    if (!wizardGet(interaction.user.id)) return interaction.reply(wizExpired());
+    const color = parseTribeHex(interaction.fields.getTextInputValue('color'));
+    if (color === null) return interaction.reply({ content: 'Bad primary colour. Use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
+    const c2raw = interaction.fields.getTextInputValue('color2');
+    const color2 = c2raw ? parseTribeHex(c2raw) : null;
+    if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
+    wizardTouch(interaction.user.id, { color, color2 });
+    const msg = wizardStatusMessage(interaction.user.id);
+    return interaction.message ? interaction.update(msg) : interaction.reply({ ...msg, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId === 'tribewiz_land') {
+    if (!wizardGet(interaction.user.id)) return interaction.reply(wizExpired());
+    const g = id => interaction.fields.getTextInputValue(id).trim();
+    const channelNames = {}, channelTopics = {};
+    if (g('throne_name')) channelNames.throne = g('throne_name').slice(0, 30);
+    if (g('hall_name')) channelNames.hall = g('hall_name').slice(0, 30);
+    if (g('voice_name')) channelNames.voice = g('voice_name').slice(0, 30);
+    if (g('throne_purpose')) channelTopics.throne = g('throne_purpose').slice(0, 200);
+    if (g('hall_purpose')) channelTopics.hall = g('hall_purpose').slice(0, 200);
+    wizardTouch(interaction.user.id, { channelNames: Object.keys(channelNames).length ? channelNames : null, channelTopics: Object.keys(channelTopics).length ? channelTopics : null });
+    const msg = wizardStatusMessage(interaction.user.id);
+    return interaction.message ? interaction.update(msg) : interaction.reply({ ...msg, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribewiz_identity_btn') {
+    const w = wizardGet(interaction.user.id);
+    if (!w) return interaction.reply(wizExpired());
+    const modal = tribeIdentityModal();
+    if (w.name) modal.components[0].components[0].setValue(w.name);
+    if (w.shortName) modal.components[1].components[0].setValue(w.shortName);
+    if (w.emoji) modal.components[2].components[0].setValue(w.emoji);
+    if (w.pointsName) modal.components[3].components[0].setValue(w.pointsName);
+    if (w.leaderTitle) modal.components[4].components[0].setValue(w.leaderTitle);
+    return interaction.showModal(modal);
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribewiz_colors_btn') {
+    const w = wizardGet(interaction.user.id);
+    if (!w) return interaction.reply(wizExpired());
+    return interaction.showModal(tribeColorsModal(w));
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribewiz_land_btn') {
+    const w = wizardGet(interaction.user.id);
+    if (!w) return interaction.reply(wizExpired());
+    return interaction.showModal(tribeLandModal(w));
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribewiz_style') {
+    if (!wizardGet(interaction.user.id)) return interaction.reply(wizExpired());
+    wizardTouch(interaction.user.id, { style: interaction.values[0] });
+    return interaction.update(wizardStatusMessage(interaction.user.id));
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribewiz_cancel') {
+    _tribeWizards.delete(interaction.user.id);
+    return interaction.update({ content: 'Tribe build cancelled.', components: [] });
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribewiz_build') {
+    const w = wizardGet(interaction.user.id);
+    if (!w || !w.name || w.color == null) return interaction.reply({ content: 'Fill in at least Identity (name) and Colours before building.', flags: MessageFlags.Ephemeral });
+    const leaderMember = await interaction.guild.members.fetch(w.leaderId).catch(() => null);
+    if (!leaderMember || !['admin', 'owner'].includes(opspanel.memberTier(leaderMember))) return interaction.reply({ content: 'The chosen leader no longer holds the admin role. Cancel and start over with a valid admin.', flags: MessageFlags.Ephemeral });
+    await interaction.update({ content: '🏗️ Building the tribe...', components: [] });
+    try {
+      const b = await buildTribe(interaction.guild, {
+        name: w.name, shortName: w.shortName, emoji: w.emoji, color: w.color, color2: w.color2, style: w.style, leaderMember,
+        pointsName: w.pointsName, leaderTitle: w.leaderTitle, channelNames: w.channelNames, channelTopics: w.channelTopics,
+      }, config);
+      for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
+      _tribeWizards.delete(interaction.user.id);
+      return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → <@${leaderMember.id}>\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard.`, allowedMentions: { parse: [] } });
+    } catch (e) {
+      console.error('[tribe-admin create]', e.message);
+      return interaction.editReply(`❌ Build failed: ${e.message}`);
+    }
+  }
   // Public member hub (from /dashboard and the pinned panel). Action buttons DO the thing: open a modal
   // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.
   if (interaction.isButton?.() && interaction.customId.startsWith('pub')) {
@@ -3393,26 +3554,13 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'tribe-admin') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
-    const parseHex = h => { const m = String(h || '').trim().replace(/^#/, ''); return /^[0-9a-fA-F]{6}$/.test(m) ? parseInt(m, 16) : null; };
     if (sub === 'create') {
-      const color = parseHex(interaction.options.getString('color'));
-      if (color === null) return interaction.reply({ content: 'Bad primary colour. Use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
-      const c2raw = interaction.options.getString('color2'); const color2 = c2raw ? parseHex(c2raw) : null;
-      if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
       const leaderMember = interaction.options.getMember('leader');
       // A tribe head must be an admin (owner ruling): the ADMINS-★ ROLE, not the Administrator permission.
       const leaderIsAdmin = leaderMember && ['admin', 'owner'].includes(opspanel.memberTier(leaderMember));
       if (!leaderIsAdmin) return interaction.reply({ content: 'A tribe head has to hold the **admin role**. Pick an admin as the leader, or give them the admin role first.', flags: MessageFlags.Ephemeral });
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      try {
-        const b = await buildTribe(interaction.guild, {
-          name: interaction.options.getString('name'), shortName: interaction.options.getString('short_name'),
-          emoji: interaction.options.getString('emoji'), color, color2, style: interaction.options.getString('style'), leaderMember,
-          pointsName: interaction.options.getString('points_name'), leaderTitle: interaction.options.getString('leader_title'),
-        }, config);
-        for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
-        return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → ${leaderMember ? `<@${leaderMember.id}>` : '_unassigned_'}\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard · drag the role up in Server Settings if you want it higher in the hoist.`, allowedMentions: { parse: [] } });
-      } catch (e) { console.error('[tribe-admin create]', e.message); return interaction.editReply(`❌ Build failed: ${e.message}`); }
+      wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
+      return interaction.showModal(tribeIdentityModal());
     }
     if (sub === 'register') {
       const key = interaction.options.getString('key').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

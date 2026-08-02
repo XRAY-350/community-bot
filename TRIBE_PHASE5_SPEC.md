@@ -185,26 +185,49 @@ flagged to the owner, no action taken** (deleting roles is destructive; needs ex
   holding the restart until the next build step starts (owner: "we'll restart the bot when we start making the
   other stuff"), per §10 below.
 
-## 10. Guided (non-inline) tribe builder — build order item #2
-Owner: "given all of these details the command should probably not be inline." `/tribe-admin create` currently
-takes ~8 inline options and is about to need per-channel name+purpose on top — too much for one slash command.
-New shape: `/tribe-admin create` takes ONLY `leader` inline (must resolve to an ADMINS-★ holder — validate
-before opening anything else), then opens a **modal** for identity (name, short name, emoji, motto), a
-follow-up step (select menus / buttons) for colors + style, then a step to name + set the purpose of the
-starter channels (throne/hall/voice, or fewer if the owner wants), ending on a **Build** confirm button that
-calls the existing `buildTribe()`. Member-nominate (§7) gets a similar small modal (who + why).
+## 10. Guided (non-inline) tribe builder — DONE 2026-08-02, build order item #4
+`/tribe-admin create` now takes ONLY `leader` inline (validated against ADMINS-★/owner via `opspanel.memberTier`
+before anything else opens). Flow, all in `index.js`:
+1. Command handler stores `{ leaderId }` in `_tribeWizards` (in-memory, keyed by the founding admin's user id,
+   20-minute TTL via `wizardGet`/`wizardTouch`) and immediately `showModal(tribeIdentityModal())` — name*,
+   short_name, emoji, points_name, leader_title (5 fields, the modal cap).
+2. On submit, replies with an ephemeral **status card** (`wizardStatusMessage`) showing everything captured so
+   far plus buttons: ✏️ Identity (re-open modal 1, pre-filled), 🎨 Colours (modal: color* hex, color2 optional),
+   🏠 Land (modal: throne/hall names + PURPOSE text for throne/hall, voice name — purpose becomes the channel's
+   real Discord **topic**, new `chNames`/`chTopics` support added to `buildTribe()`), a style select
+   (small-caps/plain), and ✅ Build / ❌ Cancel.
+3. Each modal submit re-renders the SAME status card via `interaction.update()` (a `ModalSubmitInteraction`
+   retains `.message` when the modal was opened from a button on that message — falls back to `.reply()` for
+   the very first submit, which came from the slash command, not a button).
+4. **Build** is disabled until name + colour are both set (the only two hard requirements, matching the old
+   inline command's required options). Re-validates the leader still holds ADMINS-★/owner at build time (they
+   could've been demoted mid-wizard), then calls the existing `buildTribe()` unchanged otherwise.
+Land is fully optional — skip it and channels get the old default names/no topic, exactly like before.
+**NOT interactively tested** — I can restart the bot and confirm the command registers with the right options,
+but I can't click Discord buttons/submit modals from this environment. The owner should run `/tribe-admin
+create` once live and click through Identity → Colours → (optionally Land) → Build before trusting this for a
+real tribe.
 
 ## Build order (REORDERED 2026-08-02, owner: "we should do it first" re: Valith — do NOT skip ahead without checking in)
 1. ~~Valith revamp (§9)~~ — DONE 2026-08-02.
 2. ~~Staff oversight of all tribe land (§9a)~~ — DONE 2026-08-02 (came in as an owner request mid-Valith-build,
    folded into the same session since it touched the same `buildTribe()` code path).
-3. Guided non-inline tribe builder (§10) — CURRENT NEXT STEP
-4. Nominate → approve → accept flow (§7)
-5. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4)
-6. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
-7. Pin the member action guide in each tribe's throne channel (owner: "we also need this pinned in the throne
+3. ~~Category + role hierarchy grouping (§9b)~~ — DONE 2026-08-02.
+4. ~~Guided non-inline tribe builder (§10)~~ — DONE 2026-08-02 (code shipped + bot restarted; owner should
+   click-through test it live before trusting it for a real tribe).
+5. Nominate → approve → accept flow (§7) — CURRENT NEXT STEP
+6. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4)
+7. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
+8. Pin the member action guide in each tribe's throne channel (owner: "we also need this pinned in the throne
    so all members know what they can do" — separate from the shop UI, a static reference post)
-8. Rituals (§8) — design pass, then build
+9. Rituals (§8) — design pass, then build
+
+## Outstanding: launch announcement, revisited
+Still not written (see the dedicated section above) — nothing has shipped to MEMBERS yet (the guided builder is
+an admin-only tool). Worth asking the owner if they want an announcement now that Valith is properly built out
+and the tribe roster/hierarchy is cleaned up, even before the economy/rituals land, since that's a visible,
+member-facing improvement (Valith finally has real land, tribes are visually grouped). Otherwise keep holding
+until more of the roadmap is live.
 
 ## Decisions still genuinely open (ask, don't guess)
 - Stronghold Tier's exact cosmetic payoff per tier (flourish text/visual) — default to a simple numeric badge.
