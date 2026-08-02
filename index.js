@@ -1932,6 +1932,7 @@ async function enforceTribeMembership(member) {
 // Auto-promote (never demote) a member to the highest rank their tenure + Tides have earned.
 async function maybePromoteTribeRank(guild, tribeKey, member) {
   const tribe = tribes.get(tribeKey); if (!tribe || !(tribe.ranks || []).length) return;
+  if (tribes.isLeader(member, tribe)) return;   // the Warden (head) is above the rank ladder, never ranked
   const earned = tribes.earnedRankIndex(tribe, member.id);
   const current = tribes.currentRankIndex(member, tribe);
   if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + Tides', earned >= 1);
