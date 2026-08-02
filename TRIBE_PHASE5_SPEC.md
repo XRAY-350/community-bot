@@ -272,6 +272,36 @@ Pubdash's My Tribe view also got Glory + Treasury fields for consistency.
 refresh on all 3 existing tribes (edited the existing pinned message in place rather than re-posting, found via
 `fetchPinned()` + matching the bot's own message content).
 
+## 14. The land shop — DONE 2026-08-02, build order item #9
+`/tribe expand` (leader or staff) opens `tribeShopView(tribe, guild)`: every §3 unlock shown as 🔒 locked
+(with progress toward its members-OR-crowns gate), 🔓 unlocked-and-buyable (with a Buy button, disabled if
+treasury is short), or ✅ owned — plus the uncapped Stronghold Tier (§3a) always at the bottom with its live
+scaling price (`1000 × (tier + 1)`). All catalog data (`TRIBE_UNLOCKS`) and purchase logic
+(`applyTribeUnlock`) live in `index.js`, since most unlocks need live Discord objects; `tribes.js` only tracks
+what's owned (`hasUnlock`/`addUnlock`/`removeUnlock`/`addStrongholdTier`).
+- **`text2`/`voice2`** actually create a channel in the tribe's category, permissioned to match the framework
+  defaults (member + leader + staff), blessed into permguard. Gated by `TRIBE_CHANNEL_CAP = 6` — checked before
+  allowing the buy.
+- **`extsounds`** grants `UseSoundboard`+`UseExternalSounds` on the tribe's existing voice channel (merged onto
+  the existing overwrite via `.edit()`, not `.set()`, so it doesn't clobber other perms).
+- **`vcboost`** sets the tribe VC's bitrate to 96kbps and video quality to Full.
+- **`fastertides`** sets `tribe.tideCooldownMs = 45000`; the message-earning hook (previously a hardcoded
+  60000ms constant) now reads this per-tribe, defaulting to 60000. Also fixed that same hook to recognize a
+  bought `text2` channel as a valid Tides-earning channel, not just the original hall.
+- **`retheme`** has no purchase-time effect — it just flips on a new `/tribe retheme <color> [color2]` command
+  (leader/staff, requires the unlock) that edits the tribe's role color(s) anytime after.
+- **Every purchase is refunded on failure** — `applyTribeUnlock` throws, the button handler catches and calls
+  `tribes.addTreasury` back before reporting the error, so a tribe is never charged for something it didn't get.
+- **Teardown** (`text2`/`voice2` only, no refund, per spec) deletes the channel and clears both the channel id
+  and the unlock flag, via a 🗑️ button that only appears for owned channel-unlocks.
+- Stronghold Tier and `crownsWon` now show as flourishes in `/tribe info` (title line + footer), `/tribe list`
+  (🏰N next to the tribe name), and pubdash's My Tribe view (Glory/Treasury fields).
+- Throne guide (§12) updated again to mention `/tribe expand` + `/tribe retheme` in the head-only section.
+- **Current live state**: all 3 tribes are at 0 treasury/0 crowns/no unlocks, so the shop is fully functional
+  but shows everything locked or unaffordable until crowns are won / treasury is earned. Confirmed via direct
+  state read, not a live click-through (same caveat as the guided builder, §10 — can't submit Discord
+  interactions from this environment).
+
 ## Build order (REORDERED 2026-08-02, owner: "we should do it first" re: Valith — do NOT skip ahead without checking in)
 1. ~~Valith revamp (§9)~~ — DONE 2026-08-02.
 2. ~~Staff oversight of all tribe land (§9a)~~ — DONE 2026-08-02.
@@ -279,12 +309,12 @@ refresh on all 3 existing tribes (edited the existing pinned message in place ra
 4. ~~Guided non-inline tribe builder (§10)~~ — DONE 2026-08-02 (owner should click-through test it live).
 5. ~~Nominate → approve → accept flow (§7)~~ — DONE 2026-08-02.
 6. ~~Rank-role creation bug fix + backfill (§11)~~ — DONE 2026-08-02.
-7. ~~Pin the member action guide in each tribe's throne (§12)~~ — DONE 2026-08-02, refreshed again in §13.
-8. ~~Treasury / Glory meters + weekly crown cron + Offerings (§13)~~ — DONE 2026-08-02. First live crown check
-   ran clean (no crown awarded yet, correctly, since nothing feeds Glory until contests/rituals are wired).
-9. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a) — CURRENT NEXT STEP
-10. Rituals (§8) — design pass, then build. Once built, wire ritual payouts + monthly contest payouts to
-    replace the `/tribe-admin grant` stopgap.
+7. ~~Pin the member action guide in each tribe's throne (§12)~~ — DONE 2026-08-02, refreshed twice (§13, §14).
+8. ~~Treasury / Glory meters + weekly crown cron + Offerings (§13)~~ — DONE 2026-08-02.
+9. ~~The land shop / `/tribe expand` + Stronghold Tier (§14)~~ — DONE 2026-08-02 (owner should click-through
+   test it live once a tribe actually has treasury to spend).
+10. Rituals (§8) — design pass, then build. CURRENT NEXT STEP. Once built, wire ritual payouts + monthly
+    contest payouts to replace the `/tribe-admin grant` stopgap.
 
 ## Outstanding: launch announcement, revisited
 Still not written. Worth asking the owner if they want an announcement now — Valith has real land, tribes are

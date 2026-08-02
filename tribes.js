@@ -202,10 +202,32 @@ function weekStartMs(nowMs) { const d = new Date(nowMs); return Date.UTC(d.getUT
 function dueForWeeklyCrown(nowMs) { const s = load(); return !s.lastGloryResetWeek || s.lastGloryResetWeek < weekStartMs(nowMs); }
 function markWeeklyCrownDone(nowMs) { const s = load(); s.lastGloryResetWeek = weekStartMs(nowMs); save(s); }
 
+// ---- The land shop: milestone-gated unlocks (see TRIBE_PHASE5_SPEC.md section 3) + the uncapped Stronghold
+// Tier sink (section 3a). The unlock CATALOG (gates, costs, what each one does) lives in index.js since
+// applying most of them needs live Discord objects (channels/roles) — this module just tracks what's owned.
+function hasUnlock(tribe, unlockKey) { return !!(tribe.unlocks || []).includes(unlockKey); }
+function addUnlock(key, unlockKey) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null;
+  if (!t.unlocks) t.unlocks = [];
+  if (!t.unlocks.includes(unlockKey)) t.unlocks.push(unlockKey);
+  save(s); return t.unlocks;
+}
+function removeUnlock(key, unlockKey) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !t.unlocks) return null;
+  t.unlocks = t.unlocks.filter(u => u !== unlockKey);
+  save(s); return t.unlocks;
+}
+function addStrongholdTier(key) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0;
+  t.strongholdTier = (t.strongholdTier || 0) + 1;
+  save(s); return t.strongholdTier;
+}
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
-  dueForWeeklyCrown, markWeeklyCrownDone };
+  dueForWeeklyCrown, markWeeklyCrownDone,
+  hasUnlock, addUnlock, removeUnlock, addStrongholdTier };

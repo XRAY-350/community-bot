@@ -152,7 +152,7 @@ function tribeThroneGuide(tribe) {
       + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
       + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks as you go: ${ranks}. Ranks only ever go up.\n`
       + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n> \`/tribe offer <amount>\`: give up your OWN ${pts} to fill the tribe's treasury (1:1). Never demotes you, just slows your climb to your next rank.\n`
-      + `\n**${title} (or staff) only:**\n> \`/tribe invite\` \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n`
+      + `\n**${title} (or staff) only:**\n> \`/tribe invite\` \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n> \`/tribe expand\`: the land shop, spend treasury on unlocks once you hit their milestone. \`/tribe retheme\`: recolour, once unlocked.\n`
       + `\n-# Once you join, you can't leave or switch on your own, a ${title} must \`/tribe banish\` you first. Your first tribe is a free pick, after that you need to be accepted.`,
     allowedMentions: { parse: [] },
   };
@@ -197,6 +197,93 @@ async function processWeeklyCrownIfDue(guild) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throne.send({ content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
+}
+// ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
+// Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
+// a big one by recruiting. Costs/gates match the locked spec table exactly.
+const TRIBE_UNLOCKS = [
+  { key: 'text2', emoji: '📝', label: '2nd text channel', desc: 'A second text channel added to your land.', memberGate: 50, crownGate: 5, cost: 500 },
+  { key: 'retheme', emoji: '🎨', label: 'Re-theme', desc: 'Recolour your tribe’s role gradient anytime with `/tribe retheme`.', memberGate: 60, crownGate: 6, cost: 400 },
+  { key: 'extsounds', emoji: '🔊', label: 'External Sounds', desc: 'Soundboard + external sounds in your tribe voice channel.', memberGate: 75, crownGate: 10, cost: 700 },
+  { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 85, crownGate: 14, cost: 900 },
+  { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 100, crownGate: 18, cost: 800 },
+  { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 120, crownGate: 25, cost: 2500 },
+];
+const TRIBE_CHANNEL_CAP = 6;
+function unlockGateMet(tribe, guild, u) {
+  const memberCount = guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
+  return memberCount >= u.memberGate || (tribe.crownsWon || 0) >= u.crownGate;
+}
+function strongholdCost(tribe) { return 1000 * ((tribe.strongholdTier || 0) + 1); }
+function tribeChannelCount(tribe) { return [tribe.throneId, tribe.hallId, tribe.vcId, tribe.text2Id, tribe.vc2Id].filter(Boolean).length; }
+// Actually DOES the unlock (channel creation, permission grant, etc). Throws on failure so the caller can
+// refund the treasury spend — nothing here should ever leave a tribe charged for something it didn't get.
+async function applyTribeUnlock(guild, tribe, u) {
+  const P = PermissionsBitField.Flags;
+  const staffAllow = perms => [opspanel.ADMIN_ROLE_ID, opspanel.MOD_ROLE_ID].filter(Boolean).map(id => ({ id, allow: perms }));
+  const deny = config.cornerRoleId ? [{ id: config.cornerRoleId, deny: [P.ViewChannel] }] : [];
+  if (u.key === 'text2') {
+    const ch = await guild.channels.create({ name: `${tribe.emoji || '🏴'}┆${toSmallCaps('hall-ii')}`, type: ChannelType.GuildText, parent: tribe.categoryId, permissionOverwrites: [
+      { id: guild.id, deny: [P.ViewChannel] },
+      { id: tribe.roleId, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AddReactions, P.EmbedLinks, P.AttachFiles, P.UseExternalEmojis, P.UseExternalStickers] },
+      ...(tribe.leaderRoleId ? [{ id: tribe.leaderRoleId, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
+      ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
+    await permguard.blessChannel(guild, ch.id).catch(() => {});
+    tribes.update(tribe.key, { text2Id: ch.id });
+  } else if (u.key === 'voice2') {
+    const ch = await guild.channels.create({ name: `${tribe.emoji || '🏴'}┆${toSmallCaps('voice-ii')}`, type: ChannelType.GuildVoice, parent: tribe.categoryId, permissionOverwrites: [
+      { id: guild.id, deny: [P.ViewChannel] },
+      { id: tribe.roleId, allow: [P.ViewChannel, P.Connect, P.Speak, P.Stream, P.UseVAD] },
+      ...(tribe.leaderRoleId ? [{ id: tribe.leaderRoleId, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []),
+      ...staffAllow([P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers]), ...deny] });
+    await permguard.blessChannel(guild, ch.id).catch(() => {});
+    tribes.update(tribe.key, { vc2Id: ch.id });
+  } else if (u.key === 'extsounds') {
+    const vc = tribe.vcId && await guild.channels.fetch(tribe.vcId).catch(() => null);
+    if (!vc) throw new Error('tribe has no voice channel to grant this on');
+    await vc.permissionOverwrites.edit(tribe.roleId, { UseSoundboard: true, UseExternalSounds: true });
+  } else if (u.key === 'vcboost') {
+    const vc = tribe.vcId && await guild.channels.fetch(tribe.vcId).catch(() => null);
+    if (!vc) throw new Error('tribe has no voice channel to boost');
+    await vc.setBitrate(96000);
+    await vc.setVideoQualityMode(2);
+  } else if (u.key === 'fastertides') {
+    tribes.update(tribe.key, { tideCooldownMs: 45000 });
+  }
+  // 'retheme' has no purchase-time effect — it just flips on the /tribe retheme command below.
+}
+// Tears down a BOUGHT channel (text2/voice2 only, per spec — no refund). Other unlocks aren't reversible.
+async function teardownTribeUnlock(guild, tribe, unlockKey) {
+  const idField = unlockKey === 'text2' ? 'text2Id' : unlockKey === 'voice2' ? 'vc2Id' : null;
+  if (!idField || !tribe[idField]) return;
+  const ch = await guild.channels.fetch(tribe[idField]).catch(() => null);
+  if (ch) await ch.delete('Tribe shop: teardown, no refund').catch(() => {});
+  tribes.update(tribe.key, { [idField]: null });
+  tribes.removeUnlock(tribe.key, unlockKey);
+}
+function tribeShopView(tribe, guild) {
+  const memberCount = guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
+  const lines = TRIBE_UNLOCKS.map(u => {
+    if (tribes.hasUnlock(tribe, u.key)) return `✅ ${u.emoji} **${u.label}** — owned`;
+    if (!unlockGateMet(tribe, guild, u)) return `🔒 ${u.emoji} **${u.label}** — needs **${u.memberGate}** members or **${u.crownGate}** crowns (you have ${memberCount} members, ${tribe.crownsWon || 0} crowns)`;
+    return `🔓 ${u.emoji} **${u.label}** — **${u.cost}** treasury. ${u.desc}`;
+  });
+  const strongCost = strongholdCost(tribe);
+  const strongLine = `🏰 **Stronghold Tier ${tribe.strongholdTier || 0} → ${(tribe.strongholdTier || 0) + 1}** — **${strongCost}** treasury. Purely cosmetic prestige, never runs out.`;
+  const buyable = TRIBE_UNLOCKS.filter(u => !tribes.hasUnlock(tribe, u.key) && unlockGateMet(tribe, guild, u));
+  const atCap = tribeChannelCount(tribe) >= TRIBE_CHANNEL_CAP;
+  const buyBtns = buyable.map(u => new ButtonBuilder().setCustomId(`tribeshop_buy:${tribe.key}:${u.key}`).setLabel(`${u.label} (${u.cost})`).setStyle(ButtonStyle.Success)
+    .setDisabled((tribe.treasury || 0) < u.cost || (['text2', 'voice2'].includes(u.key) && atCap)));
+  const rows = [];
+  for (let i = 0; i < buyBtns.length; i += 5) rows.push(new ActionRowBuilder().addComponents(buyBtns.slice(i, i + 5)));
+  rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribeshop_stronghold:${tribe.key}`).setLabel(`Stronghold Tier ${(tribe.strongholdTier || 0) + 1} (${strongCost})`).setStyle(ButtonStyle.Primary).setDisabled((tribe.treasury || 0) < strongCost)));
+  const ownedChannelUnlocks = ['text2', 'voice2'].filter(k => tribes.hasUnlock(tribe, k));
+  if (ownedChannelUnlocks.length) rows.push(new ActionRowBuilder().addComponents(ownedChannelUnlocks.map(k => new ButtonBuilder().setCustomId(`tribeshop_teardown:${tribe.key}:${k}`).setLabel(`🗑️ Remove ${TRIBE_UNLOCKS.find(u => u.key === k).label}`).setStyle(ButtonStyle.Danger))));
+  return {
+    content: `## 🏪 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: The Shop\n-# Treasury: **${tribe.treasury || 0}** · Land: ${tribeChannelCount(tribe)}/${TRIBE_CHANNEL_CAP} channels${atCap ? ' (at cap)' : ''}\n\n${lines.join('\n')}\n\n${strongLine}`,
+    components: rows.slice(0, 5),
+    allowedMentions: { parse: [] },
+  };
 }
 // ---- Guided (non-inline) tribe builder wizard ----
 // /tribe-admin create takes ONLY the leader inline (an 8+ option command is unusable); everything else is
@@ -1060,6 +1147,10 @@ client.once('ready', async () => {
           .addUserOption(o => o.setName('user').setDescription('Who to nominate').setRequired(true)))
         .addSubcommand(s => s.setName('offer').setDescription('Convert your OWN activity points into your tribe’s treasury (1:1, never demotes you)')
           .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
+        .addSubcommand(s => s.setName('expand').setDescription('The land shop: spend treasury on unlocks (leaders only)'))
+        .addSubcommand(s => s.setName('retheme').setDescription('Recolour your tribe (needs the Re-theme unlock; leaders only)')
+          .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
+          .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
@@ -2148,13 +2239,14 @@ client.on('messageCreate', async (msg) => {
     if (!msg.content) return;
     const member = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
     if (!member) return;
-    // Tribe Tides: +1 for a message in a tribe's hall, capped at once per 60s per member. Records their
-    // join-time (for tenure) and auto-promotes their rank if tenure + Tides now clear the next threshold.
+    // Tribe Tides: +1 for a message in a tribe's hall (or a bought 2nd text channel), capped once per
+    // tideCooldownMs (60s default, 45s with the Faster Tides shop unlock) per member. Records their join-time
+    // (for tenure) and auto-promotes their rank if tenure + Tides now clear the next threshold.
     try {
-      const homeTribe = tribes.all().find(t => t.hallId === msg.channelId && member.roles.cache.has(t.roleId));
+      const homeTribe = tribes.all().find(t => (t.hallId === msg.channelId || t.text2Id === msg.channelId) && member.roles.cache.has(t.roleId));
       if (homeTribe) {
         const ck = `${homeTribe.key}:${member.id}`; const now = Date.now();
-        if (!(_tideCooldown.get(ck) > now - 60000)) {
+        if (!(_tideCooldown.get(ck) > now - (homeTribe.tideCooldownMs || 60000))) {
           _tideCooldown.set(ck, now);
           tribes.recordJoin(homeTribe.key, member.id);
           tribes.addTides(homeTribe.key, member.id, 1);
@@ -2729,6 +2821,51 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.user.id !== targetId) return interaction.reply({ content: 'This invitation isn’t yours.', flags: MessageFlags.Ephemeral });
     tribes.clearNomination(targetId);
     return interaction.update({ content: 'Declined.', components: [] });
+  }
+  // ---- The land shop: /tribe expand's Buy/Teardown buttons ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_buy:')) {
+    const [, tribeKey, unlockKey] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can buy for the tribe.`, flags: MessageFlags.Ephemeral });
+    const u = TRIBE_UNLOCKS.find(x => x.key === unlockKey);
+    if (!u) return interaction.reply({ content: 'Unknown unlock.', flags: MessageFlags.Ephemeral });
+    if (tribes.hasUnlock(tribe, u.key)) return interaction.update(tribeShopView(tribes.get(tribeKey), interaction.guild));
+    if (!unlockGateMet(tribe, interaction.guild, u)) return interaction.reply({ content: 'That milestone isn’t met yet.', flags: MessageFlags.Ephemeral });
+    if (['text2', 'voice2'].includes(u.key) && tribeChannelCount(tribe) >= TRIBE_CHANNEL_CAP) return interaction.reply({ content: `This tribe is already at the ${TRIBE_CHANNEL_CAP}-channel cap.`, flags: MessageFlags.Ephemeral });
+    if (!tribes.spendTreasury(tribe.key, u.cost)) return interaction.reply({ content: `Not enough treasury (need **${u.cost}**, have **${tribes.getTreasury(tribe.key)}**).`, flags: MessageFlags.Ephemeral });
+    await interaction.deferUpdate();
+    try {
+      await applyTribeUnlock(interaction.guild, tribe, u);
+      tribes.addUnlock(tribe.key, u.key);
+    } catch (e) {
+      tribes.addTreasury(tribe.key, u.cost);   // refund — a tribe should never be charged for something it didn't get
+      console.error('[tribe shop]', e.message);
+      return interaction.editReply({ content: `❌ Couldn’t apply that unlock, refunded. (${e.message})`, components: [] });
+    }
+    return interaction.editReply(tribeShopView(tribes.get(tribe.key), interaction.guild));
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_stronghold:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can buy for the tribe.`, flags: MessageFlags.Ephemeral });
+    const cost = strongholdCost(tribe);
+    if (!tribes.spendTreasury(tribe.key, cost)) return interaction.reply({ content: `Not enough treasury (need **${cost}**, have **${tribes.getTreasury(tribe.key)}**).`, flags: MessageFlags.Ephemeral });
+    tribes.addStrongholdTier(tribe.key);
+    return interaction.update(tribeShopView(tribes.get(tribe.key), interaction.guild));
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_teardown:')) {
+    const [, tribeKey, unlockKey] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can tear down tribe channels.`, flags: MessageFlags.Ephemeral });
+    await interaction.deferUpdate();
+    await teardownTribeUnlock(interaction.guild, tribe, unlockKey);
+    return interaction.editReply(tribeShopView(tribes.get(tribe.key), interaction.guild));
   }
   // Public member hub (from /dashboard and the pinned panel). Action buttons DO the thing: open a modal
   // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.
@@ -3589,7 +3726,7 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'list') {
       const board = tribes.standings(interaction.guild);
       if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
-      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}** · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury`).join('\n');
+      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury`).join('\n');
       const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown, and resets each week. Treasury is the tribe’s permanent bank.' });
       return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed] });
     }
@@ -3600,9 +3737,9 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.reply({ content: (!wardenSub && argTribe) ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : (wardenSub ? 'You don’t lead a tribe, so there’s nothing to manage.' : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.'), flags: MessageFlags.Ephemeral });
     if (sub === 'info') {
       const memberCount = interaction.guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
-      const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`].filter(Boolean).join(' · ') || '_none yet_';
+      const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`, tribe.text2Id && `<#${tribe.text2Id}>`, tribe.vc2Id && `<#${tribe.vc2Id}>`].filter(Boolean).join(' · ') || '_none yet_';
       const leader = tribe.leaderRoleId ? `<@&${tribe.leaderRoleId}>` : '_no leader set_';
-      const content = `## ${tribe.emoji || '🏴'} ${tribe.name}\n-# 🏴 Tribe · led by ${leader}`
+      const content = `## ${tribe.emoji || '🏴'} ${tribe.name}${tribe.strongholdTier ? ` · 🏰 Tier ${tribe.strongholdTier} Stronghold` : ''}\n-# 🏴 Tribe · led by ${leader}`
         + (tribe.motto ? `\n> *${tribe.motto}*` : '');
       const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).addFields(
         { name: '🌊 Members', value: String(memberCount), inline: true },
@@ -3663,6 +3800,27 @@ client.on('interactionCreate', async (interaction) => {
       tribes.addTides(tribe.key, interaction.user.id, -amount);
       tribes.addTreasury(tribe.key, amount);
       return interaction.reply({ content: `🪙 Offered **${amount} ${pts}** to **${tribe.shortName || tribe.name}**'s treasury, now **${tribes.getTreasury(tribe.key)}**. Your rank doesn't drop, this only slows your climb to the next one.`, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'expand') {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can open the shop.`, flags: MessageFlags.Ephemeral });
+      return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'retheme') {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can retheme the tribe.`, flags: MessageFlags.Ephemeral });
+      if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check \`/tribe expand\`.`, flags: MessageFlags.Ephemeral });
+      const color = parseTribeHex(interaction.options.getString('color'));
+      if (color === null) return interaction.reply({ content: 'Bad primary colour. Use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
+      const c2raw = interaction.options.getString('color2');
+      const color2 = c2raw ? parseTribeHex(c2raw) : null;
+      if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
+      const role = interaction.guild.roles.cache.get(tribe.roleId);
+      if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
+      try { await role.edit({ colors: color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color } }); }
+      catch { await role.edit({ color }); }
+      tribes.update(tribe.key, { color });
+      return interaction.reply(`🎨 **${tribe.shortName || tribe.name}** has been recoloured.`);
     }
     // ---- Warden's tools: leaders of THIS tribe (or staff) ----
     if (wardenSub) {
