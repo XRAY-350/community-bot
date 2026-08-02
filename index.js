@@ -199,8 +199,8 @@ async function handleCorneredList(interaction) {
 // and (when the cornerReason feature is on) the reason-modal path. Optional reason is surfaced in the
 // corner channel + the audit log. Defaults to a TIMED corner (config.cornerDefaultDurationMs) — Corner
 // is meant to be casual/temporary, not indefinite by default. Returns { ok, stripped, error }.
-async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = config.cornerDefaultDurationMs) {
-  const r = await corner.corner(guild, member, durationMs, state, actorId);
+async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = config.cornerDefaultDurationMs, ruleN = null) {
+  const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
   if (!r.ok) return { ok: false, error: r.error };
   const relSec = Math.floor((Date.now() + durationMs) / 1000);
   const whenPhrase = `until <t:${relSec}:f>`;
@@ -632,7 +632,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('duration').setDescription(`Optional — e.g.  — release automatically instead of now`).setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
       new SlashCommandBuilder().setName('pending').setDescription('Browse open verify threads (paginated)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods verify, so they need /pending too
       // No Discord-level perm gate: trial mods (who lack Manage Roles) need to reach it too. The handler
@@ -718,13 +718,13 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster — each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
-        .addUserOption(o => o.setName('member').setDescription('The trial mod to consider for full Mod').setRequired(true))
+        .addStringOption(o => o.setName('member').setDescription('The trial mod to consider for full Mod').setRequired(true).setAutocomplete(true))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-mod').setDescription('Open a promotion vote for a mod → admin (posts in admin-discussion)')
-        .addUserOption(o => o.setName('member').setDescription('The mod to consider for Admin').setRequired(true))
+        .addStringOption(o => o.setName('member').setDescription('The mod to consider for Admin').setRequired(true).setAutocomplete(true))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('demote-trial').setDescription('Remove the Trial Mod role from a member (owner)')
-        .addUserOption(o => o.setName('member').setDescription('The trial mod to demote').setRequired(true))
+        .addStringOption(o => o.setName('member').setDescription('The trial mod to demote').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('reason').setDescription('Optional note, kept internal').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
 
@@ -1647,6 +1647,15 @@ function ruleRow(customId) {
       ...SERVER_RULES.map((r, i) => ({ label: `${i + 1}. ${r}`.slice(0, 100), value: String(i + 1) })),
       { label: 'Other / no specific rule', value: 'none' }));
 }
+// The "Send to corner" reason/duration/sweep modal. The rule (picked via the corner_rule_pick select
+// BEFORE this modal shows — a modal can't hold the rule dropdown) is carried in the customId so the
+// submit handler can fold it into the reason. ruleN is a 1-based rule number or null.
+function cornerReasonModal(memberId, channelId, messageId, ruleN) {
+  return new ModalBuilder().setCustomId(`corner_reason:${memberId}:${channelId}:${messageId}:${ruleN || 'x'}`).setTitle('Send to corner').addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = 15m; 30s, 10m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
+}
 function banConfirmRow(userId, label) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_banok:${userId}`).setEmoji('🔨').setLabel(label).setStyle(ButtonStyle.Danger),
@@ -1824,6 +1833,24 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.respond(strikes.autocompleteChoices(state, interaction.user.id, { query: focused, excludeCrossedBan: true }));
       } catch (e) { console.error('[appeal-strike] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
+    // Role-filtered member pickers: only list members who actually hold the applicable role, so the
+    // list in the command matches the dropdowns (class fix). promote-trial/demote-trial → trial mods;
+    // promote-mod → mods (excluding admins/owners who hold the mod role via nesting).
+    if (interaction.commandName === 'promote-trial' || interaction.commandName === 'demote-trial' || interaction.commandName === 'promote-mod') {
+      try {
+        const focused = (interaction.options.getFocused() || '').toLowerCase();
+        const roleId = interaction.commandName === 'promote-mod' ? config.modRoleId : config.trialModRoleId;
+        const role = roleId && await interaction.guild.roles.fetch(roleId).catch(() => null);
+        if (!role) return interaction.respond([]);
+        let members = [...role.members.values()];
+        if (interaction.commandName === 'promote-mod') members = members.filter(m => opspanel.memberTier(m) === 'mod');   // real mods only, not admins/owners
+        const matches = members
+          .filter(m => !focused || m.user.username.toLowerCase().includes(focused) || m.displayName.toLowerCase().includes(focused) || m.id.includes(focused))
+          .slice(0, 25)
+          .map(m => ({ name: `${m.displayName} (@${m.user.username})`.slice(0, 100), value: m.id }));
+        return interaction.respond(matches);
+      } catch (e) { console.error(`[${interaction.commandName}] autocomplete:`, e.message); return interaction.respond([]).catch(() => {}); }
+    }
     return interaction.respond([]).catch(() => {});
   }
   // Tier-gated ops dashboard (buttons / select / modal, all customId 'fops_*'). Handles its own tier
@@ -1951,6 +1978,13 @@ client.on('interactionCreate', async (interaction) => {
     const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
     return interaction.showModal(strikeReasonModal(memberId, channelId, messageId, ruleN));
   }
+  // Send-to-corner rule picker → duration/reason/sweep modal. customId: corner_rule_pick:<memberId>:<channelId>:<messageId>
+  if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('corner_rule_pick:')) {
+    const [, memberId, channelId, messageId] = interaction.customId.split(':');
+    if (!opspanel.tierOf(interaction) && !miniModCanActOn(interaction, channelId)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
+    const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
+    return interaction.showModal(cornerReasonModal(memberId, channelId, messageId, ruleN));
+  }
   // #roles pickers (roleselect.js) — any member, no staff gate.
   // Age/Color: single-select dropdown — swap to the chosen role, stripping any other held role in the
   // same group. Age additionally refuses outright once Verified (registration lock; index.js's
@@ -1994,8 +2028,10 @@ client.on('interactionCreate', async (interaction) => {
   // Send-to-corner reason modal (cornerReason feature). customId: corner_reason:<memberId>:<channelId>:<messageId>
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('corner_reason:')) {
     try {
-      const [, memberId, channelId, messageId] = interaction.customId.split(':');
-      const reason = (interaction.fields.getTextInputValue('reason') || '').trim() || null;
+      const [, memberId, channelId, messageId, ruleSeg] = interaction.customId.split(':');
+      const ruleN = ruleSeg && ruleSeg !== 'x' ? ruleSeg : null;
+      const rawReason = (interaction.fields.getTextInputValue('reason') || '').trim();
+      const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? ` — ${rawReason}` : ''}` : (rawReason || null);
       let durStr = '';
       try { durStr = (interaction.fields.getTextInputValue('duration') || '').trim(); } catch { /* older modal had no duration field */ }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -2007,7 +2043,7 @@ client.on('interactionCreate', async (interaction) => {
       const ch = await guild.channels.fetch(channelId).catch(() => null);
       const target = ch && await ch.messages.fetch(messageId).catch(() => null);
       if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
-      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs);
+      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs, ruleN);
       if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
       // Sweep: also corner everyone else (non-staff, non-bot) who posted in this channel in the last N minutes.
       let sweepStr = ''; try { sweepStr = (interaction.fields.getTextInputValue('sweep') || '').trim(); } catch { /* older modal */ }
@@ -2230,13 +2266,9 @@ client.on('interactionCreate', async (interaction) => {
     const targetTier = opspanel.memberTier(member);
     if (member.id === guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
     if ((RANK[targetTier] || 0) > actorRank) return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
-    // Always ask: an OPTIONAL duration + reason (modal → corner_reason submit). Blank duration = the 15m default.
-    const modal = new ModalBuilder().setCustomId(`corner_reason:${member.id}:${target.channelId}:${target.id}`).setTitle('Send to corner');
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = 15m; 30s, 10m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
-    return interaction.showModal(modal);
+    // Rule → duration/reason/sweep modal (two steps — a modal can't hold the rule dropdown). Blank
+    // duration = the 15m default; the rule is optional ("Other / no specific rule").
+    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`corner_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Strike') {
     if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
@@ -2701,7 +2733,7 @@ client.on('interactionCreate', async (interaction) => {
     // promote-trial: any mod may open the vote. promote-mod (→ admin): admin+ only.
     if (name === 'promote-mod' ? !canWLAdmin(interaction) : !canBan(interaction))
       return interaction.reply({ content: name === 'promote-mod' ? 'Only admins can open a mod→admin promotion vote.' : 'Only staff (mods+) can open a promotion vote.', flags: MessageFlags.Ephemeral });
-    const target = interaction.options.getMember('member');
+    const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const kind = name === 'promote-mod' ? 'mod' : 'trial';
@@ -2715,7 +2747,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: 'Only the **server owner** can demote a trial mod.', flags: MessageFlags.Ephemeral });
     const roleId = modapps.loadConfig().trialModRoleId;
     if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured — run `/apply-mod-setup` first.', flags: MessageFlags.Ephemeral });
-    const target = interaction.options.getMember('member');
+    const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
     if (!target.roles.cache.has(roleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Trial Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });

@@ -78,6 +78,14 @@ async function ensureCornerPerms(guild) {
         if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true })) {
           await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'corner self-heal' }); fixed++;
         }
+        // The corner is PUBLIC — everyone (including verified members) can see it. Clear any VERIFIED
+        // view-deny that would otherwise hide the corner from the general verified population.
+        if (config.verifiedRoleId) {
+          const vOw = ch.permissionOverwrites.cache.get(config.verifiedRoleId);
+          if (vOw && vOw.deny.has(PermissionsBitField.Flags.ViewChannel)) {
+            await ch.permissionOverwrites.edit(config.verifiedRoleId, { ViewChannel: null }, { reason: 'corner self-heal: corner is public' }); fixed++;
+          }
+        }
         continue;
       }
       if (ch.id === config.cornerVcId) {
@@ -98,11 +106,27 @@ async function ensureCornerPerms(guild) {
         }
         continue;
       }
-      // Cornered members get view-only on: the verify-and-rules category AND the corner-log channel
-      // (so they can read the log of their own corner entries/exits/sentence changes). Everything else
-      // stays hidden from them.
-      const viewOnly = ch.id === config.cornerViewCategoryId || ch.parentId === config.cornerViewCategoryId
-        || ch.id === config.cornerLogChannelId;
+      if (ch.id === config.cornerLogChannelId) {
+        // The corner-log is PUBLIC read-only: everyone can SEE it (view + history + react) but only
+        // staff/the bot post. Cornered members keep the same view-only access.
+        const readOnly = { ViewChannel: true, ReadMessageHistory: true, AddReactions: true, SendMessages: false };
+        if (!overwriteMatches(ch, everyone, readOnly)) {
+          await ch.permissionOverwrites.edit(everyone, readOnly, { reason: 'corner self-heal: log is public' }); fixed++;
+        }
+        if (config.verifiedRoleId) {
+          const vOw = ch.permissionOverwrites.cache.get(config.verifiedRoleId);
+          if (vOw && vOw.deny.has(PermissionsBitField.Flags.ViewChannel)) {
+            await ch.permissionOverwrites.edit(config.verifiedRoleId, { ViewChannel: null }, { reason: 'corner self-heal: log is public' }); fixed++;
+          }
+        }
+        if (!overwriteMatches(ch, config.cornerRoleId, readOnly)) {
+          await ch.permissionOverwrites.edit(config.cornerRoleId, readOnly, { reason: 'corner self-heal' }); fixed++;
+        }
+        continue;
+      }
+      // Cornered members get view-only on the verify-and-rules category (so they can read the rules).
+      // Everything else stays hidden from them.
+      const viewOnly = ch.id === config.cornerViewCategoryId || ch.parentId === config.cornerViewCategoryId;
       // View-only channels (verify/rules + corner-log): let cornered SEE past messages (ReadMessageHistory
       // — the fix for "can't see the log", since the category denies history by default) and react, but
       // not send. Everything else stays hidden.
