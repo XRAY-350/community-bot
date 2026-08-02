@@ -876,6 +876,12 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Which member').setRequired(true))
           .addStringOption(o => o.setName('text').setDescription('The note — leave blank to read existing notes').setRequired(false)))
+        .addSubcommand(s => s.setName('leaderboard').setDescription('Tribe Tides leaderboard — top members by activity')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('rank').setDescription('Set a member’s rank by hand (leaders only)')
+          .addUserOption(o => o.setName('user').setDescription('Member to rank').setRequired(true))
+          .addStringOption(o => o.setName('rank').setDescription('Which rank').setRequired(true)
+            .addChoices({ name: 'Initiate', value: 'initiate' }, { name: 'Watcher', value: 'watcher' }, { name: 'Sentinel', value: 'sentinel' }, { name: 'Vanguard', value: 'vanguard' })))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('tribe-admin').setDescription('Create or register tribes (admin)')
         .addSubcommand(s => s.setName('create').setDescription('Build a brand-new tribe: role + leader role + private land + register')
@@ -1881,6 +1887,31 @@ async function manualWatchReport(message, reporter) {
 }
 
 // Monitor: a member ON the Watchlist role who trips a flagged term → alert mods. Dormant until terms exist.
+// Tribe Tides: per-member cooldown (in-memory; resets on restart, which is fine — it only rate-limits farming).
+const _tideCooldown = new Map();   // `${tribeKey}:${userId}` -> last-earned ms
+// Set a member's tribe rank to a specific rung (exclusive — removes the other rank roles). announce only for
+// real promotions (rank ≥ 1), never for the baseline Initiate. Never throws into the caller.
+async function applyTribeRank(guild, tribe, member, rankIndex, reason, announce = true) {
+  const ranks = tribe.ranks || []; if (!ranks[rankIndex]) return;
+  const keepId = ranks[rankIndex].roleId;
+  const removeIds = ranks.filter((r, i) => i !== rankIndex && r.roleId && member.roles.cache.has(r.roleId)).map(r => r.roleId);
+  try {
+    if (removeIds.length) await member.roles.remove(removeIds, `tribe rank change — ${reason}`);
+    if (keepId && !member.roles.cache.has(keepId)) await member.roles.add(keepId, `tribe rank: ${ranks[rankIndex].name} — ${reason}`);
+    if (announce && rankIndex >= 1 && tribe.hallId) {
+      const hall = await guild.channels.fetch(tribe.hallId).catch(() => null);
+      if (hall) await hall.send({ content: `## ${tribe.emoji || '🌊'} Rank up\n> <@${member.id}> rose to **${ranks[rankIndex].name}**.`, allowedMentions: { users: [member.id] } }).catch(() => {});
+    }
+  } catch (e) { console.error('[tribe-rank] apply:', e.message); }
+}
+// Auto-promote (never demote) a member to the highest rank their tenure + Tides have earned.
+async function maybePromoteTribeRank(guild, tribeKey, member) {
+  const tribe = tribes.get(tribeKey); if (!tribe || !(tribe.ranks || []).length) return;
+  const earned = tribes.earnedRankIndex(tribe, member.id);
+  const current = tribes.currentRankIndex(member, tribe);
+  if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + Tides', earned >= 1);
+}
+
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author?.bot || !msg.guild) return;
@@ -1897,6 +1928,20 @@ client.on('messageCreate', async (msg) => {
     if (!msg.content) return;
     const member = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
     if (!member) return;
+    // Tribe Tides: +1 for a message in a tribe's hall, capped at once per 60s per member. Records their
+    // join-time (for tenure) and auto-promotes their rank if tenure + Tides now clear the next threshold.
+    try {
+      const homeTribe = tribes.all().find(t => t.hallId === msg.channelId && member.roles.cache.has(t.roleId));
+      if (homeTribe) {
+        const ck = `${homeTribe.key}:${member.id}`; const now = Date.now();
+        if (!(_tideCooldown.get(ck) > now - 60000)) {
+          _tideCooldown.set(ck, now);
+          tribes.recordJoin(homeTribe.key, member.id);
+          tribes.addTides(homeTribe.key, member.id, 1);
+          await maybePromoteTribeRank(msg.guild, homeTribe.key, member);
+        }
+      }
+    } catch (e) { console.error('[tribe-tides]', e.message); }
     // Temporary word filter: staff arm a word/phrase to be auto-deleted for a period. Applies to
     // everyone EXCEPT staff (so mods can still discuss the term). Deleting ends the scan for this message.
     if (features.enabled('wordFilter') && !opspanel.memberTier(member)) {
@@ -3095,7 +3140,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     const argTribe = interaction.options.getString('tribe');
     // Warden tools always act on the tribe you LEAD/belong to; info/roster accept an explicit tribe arg.
-    const wardenSub = ['invite', 'banish', 'announce', 'note'].includes(sub);
+    const wardenSub = ['invite', 'banish', 'announce', 'note', 'rank'].includes(sub);
     const tribe = (!wardenSub && argTribe) ? tribes.resolve(argTribe) : tribes.myTribe(interaction.member);
     if (!tribe) return interaction.reply({ content: (!wardenSub && argTribe) ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : (wardenSub ? 'You don’t lead a tribe, so there’s nothing to manage.' : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.'), flags: MessageFlags.Ephemeral });
     if (sub === 'info') {
@@ -3117,6 +3162,13 @@ client.on('interactionCreate', async (interaction) => {
       const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
       const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body);
       return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} — Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed] });
+    }
+    if (sub === 'leaderboard') {
+      const top = tribes.topTides(tribe.key, 15);
+      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name} — Tides\n> No Tides earned yet — chat in the hall to start climbing.`, allowedMentions: { parse: [] } });
+      const lines = top.map((e, i) => `> ${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> — \`${e.points} 🌊\``);
+      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(lines.join('\n'));
+      return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name} — Tides Leaderboard\n-# top ${top.length} by activity`, embeds: [embed], allowedMentions: { parse: [] } });
     }
     if (sub === 'motto') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
@@ -3168,6 +3220,16 @@ client.on('interactionCreate', async (interaction) => {
         if (!notes.length) return interaction.reply({ content: `No notes on <@${target.id}> yet — add one with \`/tribe note user:@… text:…\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         const body = notes.map(n => `> ${n.text}\n-# — <@${n.by}> · <t:${Math.floor(n.at / 1000)}:R>`).join('\n');
         return interaction.reply({ content: `## 📝 Notes on ${target.displayName}\n${body}`.slice(0, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      }
+      if (sub === 'rank') {
+        if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+        if (!tribes.isMember(target, tribe)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}** — invite them first with \`/tribe invite\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        const rankKey = interaction.options.getString('rank');
+        const idx = (tribe.ranks || []).findIndex(r => r.key === rankKey);
+        if (idx < 0) return interaction.reply({ content: 'That rank isn’t set up for this tribe.', flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await applyTribeRank(interaction.guild, tribe, target, idx, `manual — set by <@${interaction.user.id}>`, false);
+        return interaction.editReply({ content: `${tribe.emoji || '🌊'} Set <@${target.id}> to **${tribe.ranks[idx].name}** in ${tribe.shortName || tribe.name}.`, allowedMentions: { parse: [] } });
       }
     }
   }

@@ -60,6 +60,48 @@ function update(key, patch) {
 }
 function setMotto(key, motto) { return update(key, { motto: String(motto || '').slice(0, 300) }); }
 
+// Default rank ladder — the per-tribe rank ROLES are created from this; each tribe stores its own copy
+// in tribe.ranks (so names/thresholds are tunable per tribe). Ordered lowest→highest. Rank 0 = on join.
+const RANK_LADDER = [
+  { key: 'initiate', name: 'Initiate', days: 0, tides: 0 },
+  { key: 'watcher', name: 'Watcher', days: 1, tides: 50 },
+  { key: 'sentinel', name: 'Sentinel', days: 5, tides: 250 },
+  { key: 'vanguard', name: 'Vanguard', days: 14, tides: 750 },
+];
+
+// ---- Tides (activity points) + tenure ----
+function addTides(key, userId, n = 1) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0;
+  if (!t.tides) t.tides = {};
+  t.tides[userId] = (t.tides[userId] || 0) + n;
+  save(s); return t.tides[userId];
+}
+function getTides(key, userId) { const t = get(key); return ((t && t.tides) || {})[userId] || 0; }
+function topTides(key, n = 15) {
+  const tides = (get(key) || {}).tides || {};
+  return Object.entries(tides).sort((a, b) => b[1] - a[1]).slice(0, n).map(([userId, points]) => ({ userId, points }));
+}
+// Stamp a member's tribe join-time once (for tenure). Called when they first earn a Tide / are invited.
+function recordJoin(key, userId) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return;
+  if (!t.joinedAt) t.joinedAt = {};
+  if (!t.joinedAt[userId]) { t.joinedAt[userId] = Date.now(); save(s); }
+}
+function tenureDays(tribe, userId) { const at = (tribe.joinedAt || {})[userId]; return at ? (Date.now() - at) / 86400000 : 0; }
+// Highest rank index a member has EARNED (days AND tides both met). Rank 0 always qualifies.
+function earnedRankIndex(tribe, userId) {
+  const ranks = tribe.ranks || []; const days = tenureDays(tribe, userId); const tides = (tribe.tides || {})[userId] || 0;
+  let idx = 0;
+  for (let i = 0; i < ranks.length; i++) if (days >= (ranks[i].days || 0) && tides >= (ranks[i].tides || 0)) idx = i;
+  return idx;
+}
+// The rank index a member CURRENTLY holds (by which rank role they have), or -1 if none.
+function currentRankIndex(member, tribe) {
+  const ranks = tribe.ranks || [];
+  for (let i = ranks.length - 1; i >= 0; i--) if (ranks[i].roleId && member.roles.cache.has(ranks[i].roleId)) return i;
+  return -1;
+}
+
 // Members currently holding a tribe's role (needs a populated member cache — fetch members first).
 function roster(guild, tribe) {
   const role = guild.roles.cache.get(tribe.roleId);
@@ -72,4 +114,6 @@ function standings(guild) {
     .sort((a, b) => (b.points || 0) - (a.points || 0) || b.memberCount - a.memberCount);
 }
 
-module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe, addNote, getNotes, register, update, setMotto, roster, standings, STATE_FILE };
+module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
+  addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER,
+  addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex, STATE_FILE };
