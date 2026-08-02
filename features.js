@@ -50,7 +50,7 @@ const REGISTRY = [
   // listed in both features' commands[] so the command registers if EITHER is on; index.js gates each
   // subcommand against its own feature flag individually (a single command -> single feature isn't
   // enough once one command has independently-toggleable subcommands).
-  { key: 'appeals',      audience: 'member', built: false, commands: ['appeal', 'appeal-setup'],
+  { key: 'appeals',      audience: 'member', built: false, commands: ['appeal', 'appeal-setup', 'appeal-reset'],
     help: { name: '⚖️ `/appeal ban` — appeal a friend’s ban', value: 'A banned friend can’t reach the server, so **you** can appeal for them: `/appeal ban <their @username>` opens a private thread for you and staff, and up to 5 friends can join to make the case. Not eligible for the 4 non-negotiable ban categories (false verification, verification bypass, ban evasion, confirmed grooming).' } },
   { key: 'strikeAppeals', audience: 'member', built: false, commands: ['appeal', 'appeal-strike-setup'],
     help: { name: '⚖️ `/appeal strike` — appeal your own strike', value: 'Think a strike was unfair? `/appeal strike` opens a private thread just for you and staff to explain your side. One at a time; a denied appeal has a short cooldown before you can retry. The strike that crossed the ban threshold isn’t appealable this way.' } },

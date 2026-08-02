@@ -205,4 +205,23 @@ async function notifyNew(guild, ban, threadId) {
     allowedMentions: { roles: config.modRoleId ? [config.modRoleId] : [] } }).catch(() => {});
 }
 
-module.exports = { setup, submit, handleButton, isConfigured, loadConfig, ensureBoard };
+// Admin reset: clear a DECIDED (denied/approved) appeal record so the person can be appealed again —
+// for when a denial was premature, or an approved person got re-banned. Archives the old record (keeps
+// any stored transcript) instead of hard-deleting, so history survives. id = bannedId or @username.
+function reset(identifier) {
+  const id = String(identifier || '').trim().replace(/^@/, '');
+  if (!id) return { ok: false, msg: 'Give the banned person’s @username or user ID.' };
+  const state = loadState();
+  const entry = Object.entries(state.appeals || {}).find(([, a]) =>
+    a.bannedId === id || (a.bannedTag || '').toLowerCase() === id.toLowerCase());
+  if (!entry) return { ok: false, msg: `No appeal record found for \`${id}\`. (They may never have been appealed, or it was already reset.)` };
+  const [key, rec] = entry;
+  if (rec.status === 'open') return { ok: false, msg: `**${rec.bannedTag}**’s appeal is still **open** — decide it (approve/deny) or let it run; reset is for clearing an already-decided one.` };
+  if (!Array.isArray(state.archived)) state.archived = [];
+  state.archived.push({ ...rec, resetAt: Date.now() });   // keep history (incl. transcript if present)
+  delete state.appeals[key];
+  saveState(state);
+  return { ok: true, bannedTag: rec.bannedTag, bannedId: rec.bannedId, status: rec.status };
+}
+
+module.exports = { setup, submit, handleButton, isConfigured, loadConfig, ensureBoard, reset };

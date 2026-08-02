@@ -809,6 +809,9 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+      new SlashCommandBuilder().setName('appeal-reset').setDescription('Clear a decided ban-appeal so the person can be appealed again (admin)')
+        .addStringOption(o => o.setName('user').setDescription('The banned person’s @username or user ID').setRequired(true))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('help').setDescription('What can this bot do? — the member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
@@ -2353,6 +2356,14 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'cornered') {
     try { return await handleCorneredList(interaction); }
     catch (e) { console.error(`[cornered] ${e.message}`); return; }
+  }
+  if (name === 'appeal-reset') {
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can reset a ban appeal.', flags: MessageFlags.Ephemeral });
+    const r = appeals.reset(interaction.options.getString('user'));
+    if (!r.ok) return interaction.reply({ content: `❌ ${r.msg}`, flags: MessageFlags.Ephemeral });
+    await ownerlog.log(interaction.guild, { emoji: '♻️', title: 'Ban appeal reset', color: 0x5865F2,
+      detail: `**${r.bannedTag}**’s previously **${r.status}** appeal was cleared by <@${interaction.user.id}> — they can be appealed again. (Archived, not deleted.)` }).catch(() => {});
+    return interaction.reply({ content: `♻️ Cleared **${r.bannedTag}**’s previously **${r.status}** appeal — a friend can open a fresh \`/appeal ban\` for them now. (Archived, history kept.)`, flags: MessageFlags.Ephemeral });
   }
   if (name === 'weights') {
     try {
