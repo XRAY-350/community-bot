@@ -58,4 +58,30 @@ function weightOf(key) { const w = loadWeights()[key]; return (w === 1 || w === 
 function setWeight(key, w) { const all = loadWeights(); all[key] = w; saveWeights(all); }
 function byIndex(i) { return RULES[i - 1]; } // 1-indexed, matching the existing "Rule N" convention
 
-module.exports = { PREAMBLE, RULES, TITLES, weightOf, setWeight, loadWeights, byIndex };
+// Staff-facing handling summary per rule (Corner vs Strike vs instant-ban). Kept here next to the rule
+// text + weight so the staff weight list (/weights) stays a single source of truth and never drifts.
+const ENFORCE = {
+  'black-space': 'Instant permanent ban',
+  'child-safety': 'Grooming → instant ban · "jokes" → Strike',
+  'verify-or-move-on': 'Auto-removal at day 7 — not a strike',
+  'respectful-language': 'Strike — sexual talk in general channels',
+  'respect-everyone': 'Minor → Corner · real/repeat → Strike (hate = extra)',
+  'privacy-sacred': 'Strike — or instant ban if severe (staff judge)',
+  'respect-space': 'First → Corner · repeat → Strike',
+  'no-spam': 'First → Corner · repeat → Strike',
+  'right-channel': 'Usually Corner · repeat → Strike',
+  'no-weaponize': 'Starts as a Strike',
+  'staff-authority': 'Staff authority — not an infraction',
+};
+
+// One row per rule for the staff weight list: { n, title, weighable, weight, weightStr, enforce }.
+// weight is the live decided value (null until its weight-poll concludes); weightStr renders it.
+function infractionLines() {
+  return RULES.map((r, i) => {
+    const weight = r.weighable ? weightOf(r.key) : null;
+    const weightStr = !r.weighable ? '—' : (weight ? `${weight}u` : 'TBD');
+    return { n: i + 1, title: r.title, weighable: r.weighable, weight, weightStr, enforce: ENFORCE[r.key] || '' };
+  });
+}
+
+module.exports = { PREAMBLE, RULES, TITLES, weightOf, setWeight, loadWeights, byIndex, ENFORCE, infractionLines };

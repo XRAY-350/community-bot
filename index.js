@@ -51,6 +51,28 @@ const CORNER_AMBER = 0xE67E22;  // sentence changed / release scheduled (a modif
 // now) — TITLES is a drop-in replacement for the old hardcoded array, used by the /corner + /strike
 // add "why" pickers.
 const SERVER_RULES = rules.TITLES;
+// Staff infraction/weight guide — the "how do I punish X" reference trial mods keep asking for. Built
+// live from rules.js (text + decided weight + handling summary) so it never drifts from the real config.
+function buildWeightsEmbed() {
+  const rows = rules.infractionLines();
+  const cap = strikes.BAN_THRESHOLD;
+  const lines = rows.map(r => {
+    const wtag = r.weighable ? (r.weight ? `\`${r.weight}u\`` : '`TBD`') : '`ban/na`';
+    return `**${r.n}. ${r.title}** ${wtag}\n   ↳ ${r.enforce}`;
+  });
+  return new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle('⚖️ FUBU — Infractions & Strike Weights (staff)')
+    .setDescription(
+      '**How to apply punishments:**\n' +
+      '• **Corner** — cool-off for *minor / first-time* stuff. No strike, just a timed removal.\n' +
+      '• **Strike** — *real or repeated* behavior. Each carries a **weight of 1–3 units**.\n' +
+      `• Units add up: **${cap} total → a ban is offered.** Some rules skip the ladder and are an **instant permanent ban**.\n` +
+      '• **Repeat the same offense → escalate** (Corner → longer Corner → Strike → bigger Strike).\n\n' +
+      '`Nu` = strike weight in units · `ban/na` = instant-ban or not an infraction\n\n' +
+      lines.join('\n'))
+    .setFooter({ text: 'Weights are set by mod weight-polls · pull this anytime with /weights' });
+}
 // Sent to the corner. whenPhrase = `until <t:…:f>` or `indefinitely`. reason optional.
 // Humanize a duration in ms → "2d 3h" / "45m" / "30s" (compact, up to two units).
 function humanDur(ms) {
@@ -648,6 +670,9 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('remove').setDescription('Stop an active word filter early')
           .addStringOption(o => o.setName('word').setDescription('The filtered word/phrase to stop').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
+      new SlashCommandBuilder().setName('weights').setDescription('The staff infraction/weight guide — which rule = Corner / Strike (weight) / ban')
+        .addBooleanOption(o => o.setName('pin').setDescription('Post it publicly here + pin it (admin only) — for a channel trial mods can see').setRequired(false))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods+ can pull the guide anywhere
       new SlashCommandBuilder().setName('stats').setDescription('A member’s moderation record — corners & strikes over a period')
         .addUserOption(o => o.setName('user').setDescription('Whose record to pull').setRequired(true))
         .addStringOption(o => o.setName('period').setDescription('How far back to count (default: 30 days)').setRequired(false)
@@ -2322,6 +2347,20 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'cornered') {
     try { return await handleCorneredList(interaction); }
     catch (e) { console.error(`[cornered] ${e.message}`); return; }
+  }
+  if (name === 'weights') {
+    try {
+      const pin = interaction.options.getBoolean('pin') || false;
+      if (pin && !canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can post + pin the guide. Run `/weights` on its own to view it privately.', flags: MessageFlags.Ephemeral });
+      const embed = buildWeightsEmbed();
+      if (pin) {
+        const sent = await interaction.channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
+        if (!sent) return interaction.reply({ content: 'Couldn’t post here — check my permissions in this channel.', flags: MessageFlags.Ephemeral });
+        await sent.pin().catch(e => console.error('[weights] pin:', e.message));
+        return interaction.reply({ content: `📌 Posted + pinned the infraction guide here. Trial mods with access to this channel can now see it (and anyone can pull it with \`/weights\`).`, flags: MessageFlags.Ephemeral });
+      }
+      return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    } catch (e) { console.error(`[weights] ${e.message}`); return interaction.reply({ content: 'Could not build the guide.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
   if (name === 'stats') {
     try {

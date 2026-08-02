@@ -22,7 +22,7 @@ const REGISTRY = [
   { key: 'features',    audience: 'core',   built: true,  commands: ['features'] }, // owner-only feature toggle command
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
   { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
-  { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike'], contexts: ['Strike'] },
+  { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
   { key: 'watchlist',   audience: 'staff',  built: true,  commands: ['watchlist', 'watchlist-terms', 'watchlist-suggest', 'unban'], contexts: ['Report to watchlist'] },
   { key: 'suggestions', audience: 'member', built: true,  commands: ['suggest', 'suggest-setup'],
