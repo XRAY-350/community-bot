@@ -24,6 +24,7 @@ const REGISTRY = [
   { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
+  { key: 'levelCheck',  audience: 'staff',  built: true,  commands: ['levelcheck'] }, // audit Arcane level roles landing (reads #bot-commands log) + admin resync-fix
   { key: 'tribes',      audience: 'member', built: true,  commands: ['tribe', 'tribe-admin'], // member-run factions: hub/roster/standings/motto + Warden tools + admin create/register (ranks + rivalry to come)
     help: { name: '🏴 Tribes', value: 'Join a tribe with `/request-role`, then `/tribe info`, `/tribe roster`, and `/tribe list` for standings. Leaders set the vibe with `/tribe motto`.' } },
   { key: 'watchlist',   audience: 'staff',  built: true,  commands: ['watchlist', 'watchlist-terms', 'watchlist-suggest', 'unban'], contexts: ['Report to watchlist'] },

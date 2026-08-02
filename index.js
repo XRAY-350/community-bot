@@ -713,6 +713,10 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('weights').setDescription('The staff infraction/weight guide — which rule = Corner / Strike (weight) / ban')
         .addBooleanOption(o => o.setName('pin').setDescription('Post it publicly here + pin it (admin only) — for a channel trial mods can see').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods+ can pull the guide anywhere
+      new SlashCommandBuilder().setName('levelcheck').setDescription('Check Arcane level roles are landing — flag (or fix) members missing earned level roles')
+        .addBooleanOption(o => o.setName('fix').setDescription('Actually grant the missing level roles (admin only)').setRequired(false))
+        .addIntegerOption(o => o.setName('scan').setDescription('Arcane log messages to scan (default 1500, max 3000)').setRequired(false))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new SlashCommandBuilder().setName('stats').setDescription('A member’s moderation record — corners & strikes over a period')
         .addUserOption(o => o.setName('user').setDescription('Whose record to pull').setRequired(true))
         .addStringOption(o => o.setName('period').setDescription('How far back to count (default: 30 days)').setRequired(false)
@@ -2465,6 +2469,45 @@ client.on('interactionCreate', async (interaction) => {
       }
       return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (e) { console.error(`[weights] ${e.message}`); return interaction.reply({ content: 'Could not build the guide.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+  }
+  if (name === 'levelcheck') {
+    const wantFix = interaction.options.getBoolean('fix') || false;
+    if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ModerateMembers)) return interaction.reply({ content: 'Staff only.', flags: MessageFlags.Ephemeral });
+    if (wantFix && !canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can run the fix (grant roles). Run without `fix` to just see the report.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const scan = Math.min(Math.max(interaction.options.getInteger('scan') || 1500, 100), 3000);
+    // [roleId, minLevel] — cumulative: at level N you should hold every role whose threshold ≤ N.
+    const THRESH = [['1529120692845674687', 5], ['1529121181767176313', 10], ['1529121191384842330', 25], ['1529121471946035330', 50]];
+    const RNAME = { '1529120692845674687': 'Novice', '1529121181767176313': 'Inter', '1529121191384842330': 'Elite', '1529121471946035330': 'NOLIFE' };
+    const ARCANE = '437808476106784770', BOTCMD = '1528704767466016870';
+    const ch = await interaction.guild.channels.fetch(BOTCMD).catch(() => null);
+    if (!ch) return interaction.editReply('Couldn’t find the #bot-commands channel to read Arcane’s log.');
+    const level = new Map(); let before, fetched = 0;
+    while (fetched < scan) {
+      const batch = await ch.messages.fetch({ limit: 100, before }).catch(() => null);
+      if (!batch || !batch.size) break;
+      for (const m of batch.values()) {
+        if (m.author.id !== ARCANE) continue;
+        const lm = (m.content || '').match(/reached level \*\*(\d+)\*\*/); const um = (m.content || '').match(/<@!?(\d+)>/);
+        if (lm && um) { const uid = um[1], lvl = +lm[1]; if (!level.has(uid) || level.get(uid) < lvl) level.set(uid, lvl); }
+      }
+      fetched += batch.size; before = batch.last().id; if (batch.size < 100) break;
+    }
+    await interaction.guild.members.fetch().catch(() => {});
+    const missing = []; let fixed = 0, fixErr = 0;
+    for (const [uid, lvl] of level) {
+      const m = interaction.guild.members.cache.get(uid); if (!m || m.user.bot) continue;
+      if (state.getCornered(uid)) continue;   // cornered = roles legitimately stripped + stored
+      const miss = THRESH.filter(([rid, min]) => lvl >= min && !m.roles.cache.has(rid)).map(([rid]) => rid);
+      if (!miss.length) continue;
+      missing.push({ name: m.displayName, id: uid, lvl, miss });
+      if (wantFix) { const ok = await m.roles.add(miss, `levelcheck resync — earned by level ${lvl}`).then(() => true).catch(() => false); ok ? fixed++ : fixErr++; }
+    }
+    missing.sort((a, b) => b.lvl - a.lvl);
+    if (!missing.length) return interaction.editReply(`## ✅ Level roles all landed\n-# scanned ${fetched} log msgs · ${level.size} members seen\n> Every active member has every level role they've earned.`);
+    const lines = missing.slice(0, 35).map(f => `> ${wantFix ? '✅' : '⚠️'} **${f.name}** (<@${f.id}>) · L${f.lvl} — ${wantFix ? 'granted' : 'missing'}: ${f.miss.map(r => RNAME[r]).join(', ')}`);
+    const header = wantFix ? `## 🔧 Level-role resync — granted to ${fixed} member(s)${fixErr ? ` · ${fixErr} failed` : ''}` : `## ⚠️ ${missing.length} member(s) missing earned level roles`;
+    return interaction.editReply({ content: `${header}\n-# scanned ${fetched} log msgs · ${level.size} members${wantFix ? '' : ' · run `/levelcheck fix:true` to grant them'}\n${lines.join('\n')}${missing.length > 35 ? `\n-# +${missing.length - 35} more` : ''}`.slice(0, 1950), allowedMentions: { parse: [] } });
   }
   if (name === 'stats') {
     try {
