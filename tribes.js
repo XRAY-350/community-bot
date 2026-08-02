@@ -29,6 +29,19 @@ function memberTribe(member) {
 function isMember(member, tribe) { return !!(member && tribe && member.roles.cache.has(tribe.roleId)); }
 // A leader holds the tribe's leader role. (Server staff can also manage any tribe — callers add that.)
 function isLeader(member, tribe) { return !!(member && tribe && tribe.leaderRoleId && member.roles.cache.has(tribe.leaderRoleId)); }
+// The tribe a member LEADS (holds the leader role of), or null. A leader often isn't a rank-and-file
+// member of their own tribe (holds the leader role, not the member role) — so "my tribe" checks both.
+function leaderTribe(member) { if (!member) return null; return all().find(t => t.leaderRoleId && member.roles.cache.has(t.leaderRoleId)) || null; }
+function myTribe(member) { return leaderTribe(member) || memberTribe(member); }
+
+// Private leader notes on a member: tribe.notes[userId] = [{ text, by, at }].
+function addNote(key, userId, text, byId) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null;
+  if (!t.notes) t.notes = {}; if (!Array.isArray(t.notes[userId])) t.notes[userId] = [];
+  t.notes[userId].push({ text: String(text || '').slice(0, 500), by: byId, at: Date.now() });
+  save(s); return t.notes[userId];
+}
+function getNotes(key, userId) { return (get(key) && get(key).notes || {})[userId] || []; }
 
 // Upsert a tribe record (merges, so re-registering keeps points/motto/ranks).
 function register(tribe) {
@@ -59,4 +72,4 @@ function standings(guild) {
     .sort((a, b) => (b.points || 0) - (a.points || 0) || b.memberCount - a.memberCount);
 }
 
-module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, register, update, setMotto, roster, standings, STATE_FILE };
+module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe, addNote, getNotes, register, update, setMotto, roster, standings, STATE_FILE };

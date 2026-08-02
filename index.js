@@ -52,6 +52,45 @@ const CORNER_AMBER = 0xE67E22;  // sentence changed / release scheduled (a modif
 // now) — TITLES is a drop-in replacement for the old hardcoded array, used by the /corner + /strike
 // add "why" pickers.
 const SERVER_RULES = rules.TITLES;
+// Small-caps unicode (the server's channel/role aesthetic). Used by /tribe-admin create's style option.
+const SMALL_CAPS = { a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ', j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ', s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ' };
+const toSmallCaps = s => String(s).split('').map(ch => SMALL_CAPS[ch.toLowerCase()] || ch).join('');
+// Build a whole tribe: gradient/solid role + leader role + private "land" category (throne/hall/voice),
+// register it in the framework, and return the pieces. Mirrors how the Cobalt Vigil was built by hand.
+// The ROLE name stays plain (typeable/mentionable); CHANNELS honor the style option (small-caps default).
+async function buildTribe(guild, opts, config) {
+  const P = PermissionsBitField.Flags;
+  const emoji = opts.emoji || '🏴';
+  const small = opts.style !== 'plain';
+  const chName = base => `${emoji}┆${small ? toSmallCaps(base) : base}`;
+  const roleBase = { name: opts.name, hoist: true, mentionable: false, reason: `Tribe: ${opts.name}` };
+  let role;
+  try { role = await guild.roles.create({ ...roleBase, colors: opts.color2 ? { primaryColor: opts.color, secondaryColor: opts.color2 } : { primaryColor: opts.color } }); }
+  catch { role = await guild.roles.create({ ...roleBase, color: opts.color }); }
+  const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null);
+  if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
+  const corner = config.cornerRoleId;
+  const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
+  const leaderAllow = leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel] }] : [];
+  const cat = await guild.channels.create({ name: `${emoji} ${small ? toSmallCaps(opts.shortName || opts.name) : (opts.shortName || opts.name)}`, type: ChannelType.GuildCategory, reason: 'Tribe land',
+    permissionOverwrites: [{ id: guild.id, deny: [P.ViewChannel] }, { id: role.id, allow: [P.ViewChannel] }, ...leaderAllow, ...deny] });
+  const throne = await guild.channels.create({ name: chName('throne'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
+    { id: guild.id, deny: [P.ViewChannel] },
+    { id: role.id, allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions], deny: [P.SendMessages, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePrivateThreads] },
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []), ...deny] });
+  const hall = await guild.channels.create({ name: chName('hall'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
+    { id: guild.id, deny: [P.ViewChannel] },
+    { id: role.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AddReactions, P.EmbedLinks, P.AttachFiles, P.UseExternalEmojis, P.UseExternalStickers, P.MentionEveryone] },
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []), ...deny] });
+  const vc = await guild.channels.create({ name: chName('voice'), type: ChannelType.GuildVoice, parent: cat.id, permissionOverwrites: [
+    { id: guild.id, deny: [P.ViewChannel] },
+    { id: role.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.Stream, P.UseVAD, P.MentionEveryone] },
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []), ...deny] });
+  const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
+  const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color,
+    roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
+  return { tribe, role, leaderRole, cat, throne, hall, vc };
+}
 // Staff infraction/weight guide — the "how do I punish X" reference trial mods keep asking for. Built
 // live from rules.js (text + decided weight + handling summary) so it never drifts from the real config.
 function buildWeightsEmbed() {
@@ -824,7 +863,34 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('list').setDescription('All tribes and their standings'))
         .addSubcommand(s => s.setName('motto').setDescription('Set your tribe’s motto (leaders only)')
           .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
+        .addSubcommand(s => s.setName('invite').setDescription('Add a member to your tribe (leaders only)')
+          .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
+        .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
+          .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
+        .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
+          .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
+        .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
+          .addUserOption(o => o.setName('user').setDescription('Which member').setRequired(true))
+          .addStringOption(o => o.setName('text').setDescription('The note — leave blank to read existing notes').setRequired(false)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('tribe-admin').setDescription('Create or register tribes (admin)')
+        .addSubcommand(s => s.setName('create').setDescription('Build a brand-new tribe: role + leader role + private land + register')
+          .addStringOption(o => o.setName('name').setDescription('Full tribe name, e.g. "The Tribe of X"').setRequired(true))
+          .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
+          .addUserOption(o => o.setName('leader').setDescription('The tribe leader').setRequired(true))
+          .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient role (optional)').setRequired(false))
+          .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false))
+          .addStringOption(o => o.setName('short_name').setDescription('Short name for cards (optional)').setRequired(false))
+          .addStringOption(o => o.setName('style').setDescription('Channel text style (default: small-caps)').setRequired(false)
+            .addChoices({ name: 'small-caps (server style)', value: 'small' }, { name: 'plain', value: 'plain' })))
+        .addSubcommand(s => s.setName('register').setDescription('Adopt an EXISTING role + channels as a tribe')
+          .addStringOption(o => o.setName('key').setDescription('Short key, e.g. valith').setRequired(true))
+          .addStringOption(o => o.setName('name').setDescription('Full tribe name').setRequired(true))
+          .addRoleOption(o => o.setName('role').setDescription('The tribe member role').setRequired(true))
+          .addRoleOption(o => o.setName('leader_role').setDescription('The leader role (optional)').setRequired(false))
+          .addChannelOption(o => o.setName('hall').setDescription('Main tribe channel (optional)').setRequired(false))
+          .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes — weighted units, bans at 10')
         .addSubcommand(s => s.setName('view').setDescription('See a member’s current units + strike history')
@@ -2967,8 +3033,10 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the land`, embeds: [embed] });
     }
     const argTribe = interaction.options.getString('tribe');
-    const tribe = argTribe ? tribes.resolve(argTribe) : tribes.memberTribe(interaction.member);
-    if (!tribe) return interaction.reply({ content: argTribe ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.', flags: MessageFlags.Ephemeral });
+    // Warden tools always act on the tribe you LEAD/belong to; info/roster accept an explicit tribe arg.
+    const wardenSub = ['invite', 'banish', 'announce', 'note'].includes(sub);
+    const tribe = (!wardenSub && argTribe) ? tribes.resolve(argTribe) : tribes.myTribe(interaction.member);
+    if (!tribe) return interaction.reply({ content: (!wardenSub && argTribe) ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : (wardenSub ? 'You don’t lead a tribe, so there’s nothing to manage.' : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.'), flags: MessageFlags.Ephemeral });
     if (sub === 'info') {
       const memberCount = interaction.guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
       const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`].filter(Boolean).join(' · ') || '_none yet_';
@@ -2994,7 +3062,84 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its motto.`, flags: MessageFlags.Ephemeral });
       const text = interaction.options.getString('text');
       tribes.setMotto(tribe.key, text);
-      return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n_“${text.slice(0, 300)}”_`, allowedMentions: { parse: [] } });
+      return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
+    }
+    // ---- Warden's tools: leaders of THIS tribe (or staff) ----
+    if (wardenSub) {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can do that.`, flags: MessageFlags.Ephemeral });
+      const target = interaction.options.getMember('user');
+      if (sub === 'invite') {
+        if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+        if (target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> is already in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        const other = tribes.memberTribe(target);
+        if (other && other.key !== tribe.key) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}** — a member can only be in one tribe. Banish them there first.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const ok = await target.roles.add(tribe.roleId, `Tribe invite by ${interaction.user.tag}`).then(() => true).catch(() => false);
+        if (!ok) return interaction.editReply('Couldn’t add the tribe role — make sure my role sits above it.');
+        if (tribe.hallId) {
+          const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null);
+          if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new member joins ${tribe.shortName || tribe.name}\n-# welcomed by <@${interaction.user.id}>\n> <@${target.id}>, the tribe stands with you.`, allowedMentions: { users: [target.id] } }).catch(() => {});
+        }
+        return interaction.editReply(`✅ Brought <@${target.id}> into **${tribe.shortName || tribe.name}**.`);
+      }
+      if (sub === 'banish') {
+        if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+        if (!target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        if (tribe.leaderRoleId && target.roles.cache.has(tribe.leaderRoleId)) return interaction.reply({ content: 'You can’t banish the tribe’s leader.', flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const ok = await target.roles.remove(tribe.roleId, `Tribe banish by ${interaction.user.tag}`).then(() => true).catch(() => false);
+        return interaction.editReply(ok ? `✅ Removed <@${target.id}> from **${tribe.shortName || tribe.name}**.` : 'Couldn’t remove the role — check my role position.');
+      }
+      if (sub === 'announce') {
+        if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });
+        const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
+        if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
+        const msg = interaction.options.getString('message').slice(0, 1500).replace(/\n/g, '\n> ');
+        await throne.send({ content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name} — Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(e => console.error('[tribe announce]', e.message));
+        return interaction.reply({ content: `📣 Posted to <#${tribe.throneId}> and rallied the tribe.`, flags: MessageFlags.Ephemeral });
+      }
+      if (sub === 'note') {
+        if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+        const text = interaction.options.getString('text');
+        if (text) { tribes.addNote(tribe.key, target.id, text, interaction.user.id); return interaction.reply({ content: `📝 Noted on <@${target.id}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
+        const notes = tribes.getNotes(tribe.key, target.id);
+        if (!notes.length) return interaction.reply({ content: `No notes on <@${target.id}> yet — add one with \`/tribe note user:@… text:…\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        const body = notes.map(n => `> ${n.text}\n-# — <@${n.by}> · <t:${Math.floor(n.at / 1000)}:R>`).join('\n');
+        return interaction.reply({ content: `## 📝 Notes on ${target.displayName}\n${body}`.slice(0, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      }
+    }
+  }
+  if (name === 'tribe-admin') {
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
+    const sub = interaction.options.getSubcommand();
+    const parseHex = h => { const m = String(h || '').trim().replace(/^#/, ''); return /^[0-9a-fA-F]{6}$/.test(m) ? parseInt(m, 16) : null; };
+    if (sub === 'create') {
+      const color = parseHex(interaction.options.getString('color'));
+      if (color === null) return interaction.reply({ content: 'Bad primary colour — use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
+      const c2raw = interaction.options.getString('color2'); const color2 = c2raw ? parseHex(c2raw) : null;
+      if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
+      const leaderMember = interaction.options.getMember('leader');
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        const b = await buildTribe(interaction.guild, {
+          name: interaction.options.getString('name'), shortName: interaction.options.getString('short_name'),
+          emoji: interaction.options.getString('emoji'), color, color2, style: interaction.options.getString('style'), leaderMember,
+        }, config);
+        for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
+        return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name} — founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → ${leaderMember ? `<@${leaderMember.id}>` : '_unassigned_'}\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard · drag the role up in Server Settings if you want it higher in the hoist.`, allowedMentions: { parse: [] } });
+      } catch (e) { console.error('[tribe-admin create]', e.message); return interaction.editReply(`❌ Build failed: ${e.message}`); }
+    }
+    if (sub === 'register') {
+      const key = interaction.options.getString('key').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (!key) return interaction.reply({ content: 'Give a valid key (letters/numbers), e.g. `valith`.', flags: MessageFlags.Ephemeral });
+      const role = interaction.options.getRole('role');
+      const leaderRole = interaction.options.getRole('leader_role');
+      const hall = interaction.options.getChannel('hall');
+      const t = tribes.register({ key, name: interaction.options.getString('name'), shortName: interaction.options.getString('name'),
+        emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
+        roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
+      return interaction.reply({ content: `## ${t.emoji} ${t.name} — registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in \`/tribe list\` and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
   }
   if (name === 'roleselect-role') {
