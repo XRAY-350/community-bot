@@ -143,6 +143,48 @@ restricted exactly as before.
   retrofit step needs to be repeated by hand for its existing channels — `register` doesn't touch permission
   overwrites at all, it just adopts an existing role/channel by id.
 
+## 9b. Category + role hierarchy grouping (DONE 2026-08-02, owner: "make sure new tribes are place under the
+one before it. also make sure roles are put in the correct place/order")
+Fourth tribe surfaced mid-session: **Kayena's Cute Crabs** (key `kayena-s-cute-crabs`), created independently by
+an admin via the now-working `/tribe-admin create` (validates the framework works end to end — role, leader
+role, full land, staff overwrites all came out correct automatically since it was built AFTER the 9a restart).
+Also found ~5 orphaned duplicate role-pairs from earlier failed create attempts (`Kayena's Cute Crabs`/`Leader`
+x4 variants, `The cute tribe`/`cuties! Leader`), all sitting inert at role position 1 — **not yet cleaned up,
+flagged to the owner, no action taken** (deleting roles is destructive; needs explicit go-ahead, not asked yet).
+- **Categories:** fixed live — Cobalt Vigil → Valith → Kayena's Cute Crabs categories are now contiguous
+  (positions 1/2/3), right after Verify/Rules. **Baked into `buildTribe()` for future tribes**: computes
+  `slotCatPos = Math.max(existing tribe category positions) + 1` from the currently-registered tribes before
+  creating the new category, then `cat.setPosition(slotCatPos)`. NOTE: channel/category position and role
+  position run in OPPOSITE directions in Discord's model (higher channel-position = further down the list;
+  higher role-position = further UP the hierarchy) — caught and fixed a bug where the first draft used the same
+  `min - 1` formula for both, which would have put a 4th tribe's category at the TOP of the server instead of
+  the bottom.
+- **Roles:** also baked into `buildTribe()` — `slotRolePos`/`slotLeaderPos` = `Math.min(existing tribe
+  role/leader-role positions) - 1`, so a new tribe's role lands directly under the previous tribe's, and its
+  leader role lands directly under the previous tribe's leader role.
+- **Live fix for the existing 3 tribes:** the TRIBE-role cluster (Cobalt Vigil → Valith → Kayena's Cute Crabs,
+  contiguous, right under the anchor) was fixed by the bot via a bulk role-position PATCH — safe because it only
+  touched tribe roles + Server Booster + Event Winner, no staff roles. The LEADER-role cluster (Warden → Valith's
+  leader → Kayena's leader, near the owner's own roles) required shifting ADMINS-★/MODS-✰/TRIAL MODS/mini-mod
+  roles down a few numeric slots to close the gap (no permission change, purely position) — the auto-mode
+  classifier correctly blocked the bot from doing this unprompted (shared/staff role hierarchy on production).
+  **The owner did this part by hand** via Discord's UI. Final state confirmed by the bot via the API: Warden
+  (142) → [Pelz!/Pwincess Perk/Perk!/Chrissy — owner's personal roles, untouched by design] → Valith! (137) →
+  Kayena's Cute Crabs Leader (136) → ADMINS-★ (135). Good enough grouping per the owner, no further bot action
+  taken here.
+- **A bulk role-position PATCH is fragile with multiple simultaneous cross-region moves** — learned the hard way
+  this session: sending `{id, position}` for roles in two different clusters in ONE call produced an
+  unpredictable interleaved result (Discord doesn't do a clean "insert and shift" per entry when a batch spans
+  disjoint regions). The reliable pattern going forward: EITHER move one role at a time via the single-role PATCH
+  (like a manual drag), OR if using the bulk endpoint, explicitly list every single role in the affected
+  contiguous range with a fully pinned position (not just the ones you're moving), so there's no room for Discord
+  to infer wrong. `buildTribe()`'s per-tribe-creation calls use single-role `setPosition()` (one role, one call),
+  which is the safe pattern — the fragile case is specifically "reorder several already-existing roles across
+  a wide/discontiguous span in one shot."
+- **NOT deployed yet** — `buildTribe()` has the 9a + 9b code changes but the bot has not been restarted since;
+  holding the restart until the next build step starts (owner: "we'll restart the bot when we start making the
+  other stuff"), per §10 below.
+
 ## 10. Guided (non-inline) tribe builder — build order item #2
 Owner: "given all of these details the command should probably not be inline." `/tribe-admin create` currently
 takes ~8 inline options and is about to need per-channel name+purpose on top — too much for one slash command.
@@ -168,4 +210,8 @@ calls the existing `buildTribe()`. Member-nominate (§7) gets a similar small mo
 - Rally-ping-as-perk: owner said "nsh" which was read as a soft no and NOT included in the shop. If that
   was meant as a yes, it needs to be added back with a gate + price.
 - Stronghold Tier's exact cosmetic payoff per tier (flourish text/visual) — default to a simple numeric badge.
-- Valith's new identity for the revamp (§9).
+- ~5 orphaned duplicate role-pairs from failed Kayena tribe-creation attempts, sitting inert at role position 1
+  (see §9b) — flagged, not deleted. Ask before cleaning these up.
+- Whether Valith's actual Discord LEADER ROLE object should be renamed from "Valith!" to something reflecting
+  its new leaderTitle "Warlord" (only the bot-text label was changed in §9, not the literal Discord role name) —
+  noticed, not changed, not asked yet.

@@ -64,11 +64,33 @@ async function buildTribe(guild, opts, config) {
   const emoji = opts.emoji || '🏴';
   const small = opts.style !== 'plain';
   const chName = base => `${emoji}┆${small ? toSmallCaps(base) : base}`;
+
+  // Slot a new tribe directly under the most-recently-founded one, so as more tribes get created they stay
+  // visually grouped instead of landing wherever Discord defaults a fresh role/category (the bottom of the
+  // list): leader roles cluster near the owner's own roles, tribe roles cluster under Cobalt Vigil, tribe
+  // land categories cluster under the prior tribe's. Computed from the EXISTING registered tribes before
+  // this one is registered, so each new tribe just appends one slot below the current bottom of its cluster.
+  const existingTribes = tribes.all();
+  let slotRolePos = null, slotLeaderPos = null, slotCatPos = null;
+  if (existingTribes.length) {
+    await guild.roles.fetch();
+    const roleP = existingTribes.map(t => guild.roles.cache.get(t.roleId)?.position).filter(p => p != null);
+    const leadP = existingTribes.map(t => t.leaderRoleId && guild.roles.cache.get(t.leaderRoleId)?.position).filter(p => p != null);
+    if (roleP.length) slotRolePos = Math.min(...roleP) - 1;
+    if (leadP.length) slotLeaderPos = Math.min(...leadP) - 1;
+    const cats = (await Promise.all(existingTribes.map(t => t.categoryId ? guild.channels.fetch(t.categoryId).catch(() => null) : null))).filter(Boolean);
+    // Channel/category position is the OPPOSITE convention from role position: higher number = further DOWN
+    // the list, so "under the last tribe" means one past the highest existing tribe category position.
+    if (cats.length) slotCatPos = Math.max(...cats.map(c => c.rawPosition)) + 1;
+  }
+
   const roleBase = { name: opts.name, hoist: true, mentionable: false, reason: `Tribe: ${opts.name}` };
   let role;
   try { role = await guild.roles.create({ ...roleBase, colors: opts.color2 ? { primaryColor: opts.color, secondaryColor: opts.color2 } : { primaryColor: opts.color } }); }
   catch { role = await guild.roles.create({ ...roleBase, color: opts.color }); }
+  if (slotRolePos != null) await role.setPosition(slotRolePos).catch(() => {});
   const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null);
+  if (leaderRole && slotLeaderPos != null) await leaderRole.setPosition(slotLeaderPos).catch(() => {});
   if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
   const corner = config.cornerRoleId;
   const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
@@ -79,6 +101,7 @@ async function buildTribe(guild, opts, config) {
   const staffAllow = perms => staffIds.map(id => ({ id, allow: perms }));
   const cat = await guild.channels.create({ name: `${emoji} ${small ? toSmallCaps(opts.shortName || opts.name) : (opts.shortName || opts.name)}`, type: ChannelType.GuildCategory, reason: 'Tribe land',
     permissionOverwrites: [{ id: guild.id, deny: [P.ViewChannel] }, { id: role.id, allow: [P.ViewChannel] }, ...leaderAllow, ...staffAllow([P.ViewChannel]), ...deny] });
+  if (slotCatPos != null) await cat.setPosition(slotCatPos).catch(() => {});
   const throne = await guild.channels.create({ name: chName('throne'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions], deny: [P.SendMessages, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePrivateThreads] },
