@@ -1,9 +1,9 @@
-// tribes.js — the FUBU TRIBE FRAMEWORK. A "tribe" is a member-run faction: a hoisted role, a leader
+// tribes.js - the FUBU TRIBE FRAMEWORK. A "tribe" is a member-run faction: a hoisted role, a leader
 // role, and (usually) a private category of channels ("their land"). This module is the single source of
 // truth for which tribes exist + their metadata, and the helpers every tribe feature builds on
 // (membership, leadership, roster, motto, and points for the future territory/rivalry system). All state
 // lives in one JSON file so tribes survive restarts. Any tribe (Cobalt Vigil, Valith, future ones) plugs
-// in the same way — this is a framework, not a one-off.
+// in the same way - this is a framework, not a one-off.
 const fs = require('fs');
 const STATE_FILE = process.env.FUBU_TRIBES_FILE || '/home/ubuntu/.fubu_tribes.json';
 
@@ -27,10 +27,10 @@ function memberTribe(member) {
   return all().find(t => member.roles.cache.has(t.roleId)) || null;
 }
 function isMember(member, tribe) { return !!(member && tribe && member.roles.cache.has(tribe.roleId)); }
-// A leader holds the tribe's leader role. (Server staff can also manage any tribe — callers add that.)
+// A leader holds the tribe's leader role. (Server staff can also manage any tribe - callers add that.)
 function isLeader(member, tribe) { return !!(member && tribe && tribe.leaderRoleId && member.roles.cache.has(tribe.leaderRoleId)); }
 // The tribe a member LEADS (holds the leader role of), or null. A leader often isn't a rank-and-file
-// member of their own tribe (holds the leader role, not the member role) — so "my tribe" checks both.
+// member of their own tribe (holds the leader role, not the member role) - so "my tribe" checks both.
 function leaderTribe(member) { if (!member) return null; return all().find(t => t.leaderRoleId && member.roles.cache.has(t.leaderRoleId)) || null; }
 function myTribe(member) { return leaderTribe(member) || memberTribe(member); }
 
@@ -60,7 +60,7 @@ function update(key, patch) {
 }
 function setMotto(key, motto) { return update(key, { motto: String(motto || '').slice(0, 300) }); }
 
-// Default rank ladder — the per-tribe rank ROLES are created from this; each tribe stores its own copy
+// Default rank ladder - the per-tribe rank ROLES are created from this; each tribe stores its own copy
 // in tribe.ranks (so names/thresholds are tunable per tribe). Ordered lowest→highest. Rank 0 = on join.
 const RANK_LADDER = [
   { key: 'initiate', name: 'Initiate', days: 0, tides: 0 },
@@ -79,12 +79,12 @@ function addTides(key, userId, n = 1) {
 function getTides(key, userId) { const t = get(key); return ((t && t.tides) || {})[userId] || 0; }
 
 // "Veterans" = anyone who has EVER been in a tribe. Loyalty model: your first tribe is a free self-join,
-// but once you've been in one you can't self-join again — a new tribe must accept you (request/invite).
-// Marked whenever any tribe role is added (guildMemberUpdate) — permanent history, survives release.
+// but once you've been in one you can't self-join again - a new tribe must accept you (request/invite).
+// Marked whenever any tribe role is added (guildMemberUpdate) - permanent history, survives release.
 function markVeteran(userId) { const s = load(); if (!s.veterans) s.veterans = {}; if (!s.veterans[userId]) { s.veterans[userId] = Date.now(); save(s); } }
 function isVeteran(userId) { return !!(load().veterans || {})[userId]; }
 
-// Authoritative tribe membership — the SOURCE OF TRUTH for who is legitimately in a tribe. Set ONLY by
+// Authoritative tribe membership - the SOURCE OF TRUTH for who is legitimately in a tribe. Set ONLY by
 // sanctioned flows (picker first-join / invite / request-approve / banish). The guildMemberUpdate guard
 // reverts any manual role add/strip that disagrees with this. Joining also stamps veteran + join-time.
 function setMembership(key, userId, isMember) {
@@ -123,7 +123,7 @@ function currentRankIndex(member, tribe) {
   return -1;
 }
 
-// Members currently holding a tribe's role (needs a populated member cache — fetch members first).
+// Members currently holding a tribe's role (needs a populated member cache - fetch members first).
 function roster(guild, tribe) {
   const role = guild.roles.cache.get(tribe.roleId);
   return role ? [...role.members.values()].sort((a, b) => a.displayName.localeCompare(b.displayName)) : [];

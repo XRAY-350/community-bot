@@ -1,4 +1,4 @@
-// verifypanel.js — mod-facing Verify / Deny&kick button panel, posted by the bot in every thread
+// verifypanel.js - mod-facing Verify / Deny&kick button panel, posted by the bot in every thread
 // opened in the verify-here channel. One click does the role swap (Unverified -> Verified) or kicks
 // the applicant, instead of a mod editing roles by hand. Mod-gated; verified/left owners get swept.
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
@@ -58,9 +58,9 @@ async function handleVerifyButton(interaction) {
       return interaction.editReply(`Failed to verify: ${e.message}`);
     }
     await interaction.editReply(`✅ Verified **${member.user.tag}**.`);
-    await ownerlog.log(guild, { emoji: '✅', title: 'Member verified', color: 0x57F287, detail: `<@${member.id}> (${member.user.tag}) — by <@${interaction.user.id}>.` });
+    await ownerlog.log(guild, { emoji: '✅', title: 'Member verified', color: 0x57F287, detail: `<@${member.id}> (${member.user.tag}) - by <@${interaction.user.id}>.` });
     // Freeze the panel to a persistent record; the now-verified owner's thread is swept normally.
-    // Real notification (they're still in the server and can see this thread) — mention in CONTENT,
+    // Real notification (they're still in the server and can see this thread) - mention in CONTENT,
     // not just the embed, since embeds never ping.
     await interaction.message.edit({
       content: `## ✅ Verified\n<@${targetId}>`,
@@ -81,7 +81,7 @@ async function handleVerifyButton(interaction) {
     }
     const nameStr = member ? `**${member.user.tag}**` : `\`${targetId}\``;
     await interaction.editReply(ok ? `🚫 Denied & kicked ${nameStr}.` : `Couldn't kick ${nameStr} (permission/hierarchy?).`);
-    if (ok) await ownerlog.log(guild, { emoji: '🚫', title: 'Verification denied + kicked', color: 0xED4245, detail: `${nameStr} — by <@${interaction.user.id}>.` });
+    if (ok) await ownerlog.log(guild, { emoji: '🚫', title: 'Verification denied + kicked', color: 0xED4245, detail: `${nameStr} - by <@${interaction.user.id}>.` });
     // Escalation: leave a Ban button so a repeat / bad-faith join can be banned in one more click.
     await interaction.message.edit({
       content: '## 🚫 Denied',
@@ -101,7 +101,7 @@ async function handleVerifyButton(interaction) {
       return interaction.editReply(`Failed to ban: ${e.message}`);
     }
     await interaction.editReply(`🔨 Banned \`${targetId}\`.`);
-    await ownerlog.log(guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `\`${targetId}\` — by <@${interaction.user.id}> (via verify-panel escalation).` });
+    await ownerlog.log(guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `\`${targetId}\` - by <@${interaction.user.id}> (via verify-panel escalation).` });
     await interaction.message.edit({
       content: '## 🔨 Banned',
       embeds: [new EmbedBuilder().setColor(0x992d22)

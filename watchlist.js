@@ -1,4 +1,4 @@
-// watchlist.js — flagged-term monitoring for members on the Watchlist role, plus the editable term store.
+// watchlist.js - flagged-term monitoring for members on the Watchlist role, plus the editable term store.
 // The term list lives in a JSON file (no redeploy to edit) that the /watchlist-terms command manages.
 const fs = require('fs');
 const TERMS_FILE = process.env.FUBU_WATCHLIST_TERMS_FILE || '/home/ubuntu/.fubu_watchlist_terms.json';
@@ -22,9 +22,9 @@ function removeTerm(term) {
   return saveTerms(loadTerms().filter(x => x.toLowerCase() !== v));
 }
 // De-obfuscating matcher. Each term compiles ONCE (cached) to a regex that tolerates the usual evasions:
-//   • separators between letters — "k y s", "k.y.s", "k-y-s"   (SEP allows up to 3 non-word chars)
-//   • leet / look-alikes — "k1ll", "@ss", "sh1t", "he11o"      (per-letter character classes)
-//   • repeated letters — "killlll", "kysss"                    (each class is +)
+//   • separators between letters - "k y s", "k.y.s", "k-y-s"   (SEP allows up to 3 non-word chars)
+//   • leet / look-alikes - "k1ll", "@ss", "sh1t", "he11o"      (per-letter character classes)
+//   • repeated letters - "killlll", "kysss"                    (each class is +)
 //   • accents/decomposable unicode on the message side (NFKD + strip combining marks)
 // It still won't fire on an intervening LETTER (SEP is non-word only), so "kys" ≠ "keys".
 const LEET = { a: 'a4@∆', b: 'b8', c: 'c(<', d: 'd', e: 'e3€', f: 'f', g: 'g9', h: 'h#', i: 'i1!|íì',
@@ -54,7 +54,7 @@ function matchTerms(content, terms) {
   return (terms || []).filter(t => { const re = _termRe(String(t).trim()); return re && re.test(norm); });
 }
 // Pending watchlist: user IDs to auto-apply the Watchlist role to WHEN THEY REJOIN (unban keeps them
-// watched — but an unbanned user isn't in the guild, so the role can only be added once they come back).
+// watched - but an unbanned user isn't in the guild, so the role can only be added once they come back).
 const PENDING_FILE = process.env.FUBU_WATCHLIST_PENDING_FILE || '/home/ubuntu/.fubu_watchlist_pending.json';
 function loadPending() { try { const a = JSON.parse(fs.readFileSync(PENDING_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
 function savePending(ids) { try { fs.writeFileSync(PENDING_FILE, JSON.stringify([...new Set(ids)])); } catch (e) { console.error('[watchlist] pending save:', e.message); } }
@@ -62,7 +62,7 @@ function addPending(id) { const p = loadPending(); if (!p.includes(id)) { p.push
 function removePending(id) { savePending(loadPending().filter(x => x !== id)); }
 function isPending(id) { return loadPending().includes(id); }
 
-// Loose "day-to-day" term list — a second, softer set matched against everyone-except-staff, reported
+// Loose "day-to-day" term list - a second, softer set matched against everyone-except-staff, reported
 // quietly to #watch-log (no ping). Same matcher; its own editable file.
 const LOOSE_FILE = process.env.FUBU_WATCHLIST_LOOSE_FILE || '/home/ubuntu/.fubu_watchlist_loose.json';
 function loadLoose() { try { const a = JSON.parse(fs.readFileSync(LOOSE_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
@@ -73,7 +73,7 @@ function saveLoose(terms) {
 function addLoose(term) { const t = loadLoose(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return saveLoose(t); }
 function removeLoose(term) { const v = String(term).trim().toLowerCase(); return saveLoose(loadLoose().filter(x => x.toLowerCase() !== v)); }
 
-// Welfare list — distress signals ("i want to die", "sh") matched against everyone-except-staff, reported
+// Welfare list - distress signals ("i want to die", "sh") matched against everyone-except-staff, reported
 // to #watch-log as a SUPPORT check-in (soft, no ban button), kept separate so it reads differently.
 const WELFARE_FILE = process.env.FUBU_WATCHLIST_WELFARE_FILE || '/home/ubuntu/.fubu_watchlist_welfare.json';
 function loadWelfare() { try { const a = JSON.parse(fs.readFileSync(WELFARE_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
@@ -84,7 +84,7 @@ function saveWelfare(terms) {
 function addWelfare(term) { const t = loadWelfare(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return saveWelfare(t); }
 function removeWelfare(term) { const v = String(term).trim().toLowerCase(); return saveWelfare(loadWelfare().filter(x => x.toLowerCase() !== v)); }
 
-// LAB expansion lists (feature 'smartWatchLab') — EXTRA strict/loose terms that ONLY feed the private
+// LAB expansion lists (feature 'smartWatchLab') - EXTRA strict/loose terms that ONLY feed the private
 // admin eval channel, never the public watch-log. Deliberately broad/noisy: they exist to stress-test the
 // AI judge with more borderline candidates (reclaimed words, benign homonyms, mild profanity) so admins can
 // see whether it correctly hides the false positives and surfaces the real ones. Same matcher, own files.

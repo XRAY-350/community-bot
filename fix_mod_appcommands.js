@@ -1,4 +1,4 @@
-// fix_mod_appcommands.js — staff can VIEW many channels but a server-wide "no slash commands"
+// fix_mod_appcommands.js - staff can VIEW many channels but a server-wide "no slash commands"
 // restriction (denying @everyone Use Application Commands) also blocks the MOD/ADMIN roles, so mods
 // get a native "Missing Permissions" trying to run /corner etc. in e.g. #mod-discussion.
 // This grants the staff roles Use Application Commands on every channel where they can view but can't
@@ -30,8 +30,8 @@ c.once('clientReady', async () => {
       }
       if (need.length) { plan.push({ ch, need }); fixCount += need.length; }
     }
-    if (!plan.length) { console.log('Nothing to fix — staff can already use commands everywhere they can view.'); c.destroy(); return process.exit(0); }
-    console.log(`${APPLY ? '*** APPLYING ***' : 'PREVIEW'} — grant Use Application Commands to staff on ${plan.length} channel(s):\n`);
+    if (!plan.length) { console.log('Nothing to fix - staff can already use commands everywhere they can view.'); c.destroy(); return process.exit(0); }
+    console.log(`${APPLY ? '*** APPLYING ***' : 'PREVIEW'} - grant Use Application Commands to staff on ${plan.length} channel(s):\n`);
     for (const { ch, need } of plan) {
       console.log(`  ${APPLY ? '✓' : '•'} #${ch.name}  →  ${need.map(r => r.name).join(', ')}`);
       if (APPLY) for (const role of need) await ch.permissionOverwrites.edit(role, { UseApplicationCommands: true }, { reason: 'staff can use mod commands where they moderate' });

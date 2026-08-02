@@ -1,12 +1,12 @@
-// smartwatch.js — LLM contextual judge for the watch pipeline.
+// smartwatch.js - LLM contextual judge for the watch pipeline.
 //
-// Problem: the watchlist/watch-log is pure keyword matching, so it can't read MEANING — reclaimed
+// Problem: the watchlist/watch-log is pure keyword matching, so it can't read MEANING - reclaimed
 // in-community language, hyperbole, quotes, and dialect all trip the same wires as a real problem,
 // burying mods in false positives.
 //
 // This adds a contextual judge BEHIND the keyword matcher: when a term matches, the flagged message
 // (plus a little context + who the author is) is read in context by a small, cheap model (Haiku), which
-// decides whether the flag is genuine or a false positive — encoding FUBU's actual rules + norms. The
+// decides whether the flag is genuine or a false positive - encoding FUBU's actual rules + norms. The
 // human gate stays; mods just see the ~real flags instead of 100% of keyword noise.
 //
 // Design invariants:
@@ -30,7 +30,7 @@ const API_KEY = (process.env.ANTHROPIC_API_KEY || process.env.SMARTWATCH_API_KEY
 const PROFILE_FILE = process.env.FUBU_COMMUNITY_PROFILE_FILE || '/home/ubuntu/.fubu_community_profile.txt';
 const SHADOW_LOG = process.env.SMARTWATCH_SHADOW_LOG || '/home/ubuntu/.fubu_smartwatch_shadow.jsonl';
 const CTX_MESSAGES = Number(process.env.SMARTWATCH_CONTEXT_MSGS || 10) || 10;
-// Categories the judge is NEVER allowed to auto-suppress, even at high confidence — belt-and-suspenders
+// Categories the judge is NEVER allowed to auto-suppress, even at high confidence - belt-and-suspenders
 // beyond the system-prompt instruction.
 const NEVER_SUPPRESS = new Set(['child-safety', 'threat', 'doxxing']);
 
@@ -70,11 +70,11 @@ function systemPrompt(scope) {
     '  MDNI space; debates/arguments belong only in discussion channels (Rule 9). You are told the channel.',
     '- Judge direction: aimed AT someone as an attack/threat, vs. reclaimed use, a joke, a quote, someone',
     '  REPORTING another\'s message, or hyperbole. Weigh who is speaking and at whom.',
-    '- Account tenure is NOT a signal: a recent join or "new" member is NOT evidence of bad intent — this',
+    '- Account tenure is NOT a signal: a recent join or "new" member is NOT evidence of bad intent - this',
     '  community grows in waves, so most members may be new. Judge the message and its intent, never how',
     '  new or old the account is.',
     '- Typos & misspellings: a flagged word is often a MISTYPING of an innocent one (e.g. "hoe" for "how",',
-    '  a letter swap, a missing space, autocorrect). Read the INTENDED word from context first — "hoe is',
+    '  a letter swap, a missing space, autocorrect). Read the INTENDED word from context first - "hoe is',
     '  the writing" is clearly "how is the writing". Do not treat an obvious typo as deliberate use of the',
     '  watched term, and do not invent a slang meaning to justify the match.',
     '- LANGUAGE: this is a multilingual space, but the watched terms are ENGLISH. If the flagged message is',
@@ -171,19 +171,19 @@ function logShadow(entry) {
 // When an admin grades a lab post (🔨 strike-worthy / ⛓️ corner-only / ⬜ fine), that message + verdict is
 // appended here. We DON'T fine-tune; instead the most recent labels are injected into the judge prompt as
 // few-shot exemplars, so the model learns THIS community's actual bar. Each grade also tells us whether the
-// AI's own would-surface call matched the admin — that's the accuracy tally the lab reports.
+// AI's own would-surface call matched the admin - that's the accuracy tally the lab reports.
 const EXAMPLES_FILE = process.env.SMARTWATCH_EXAMPLES_FILE || '/home/ubuntu/.fubu_smartwatch_examples.jsonl';
 const EXEMPLARS_IN_PROMPT = Number(process.env.SMARTWATCH_EXEMPLARS || 14) || 14;
 // verdict → (does the community surface it?) + task it belongs to + a short label the prompt shows.
 // task 'rule' = strict/loose harassment calls; task 'welfare' = distress calls (a different axis, so its
 // labels + exemplars are kept separate so distress calibration never bleeds into rule-violation judgments).
 const VERDICT_META = {
-  strike:    { surface: true,  task: 'rule',    label: 'STRIKE-WORTHY (a real violation — surface it)' },
-  corner:    { surface: true,  task: 'rule',    label: 'CORNER-ONLY (minor — surface, a cool-off not a strike)' },
+  strike:    { surface: true,  task: 'rule',    label: 'STRIKE-WORTHY (a real violation - surface it)' },
+  corner:    { surface: true,  task: 'rule',    label: 'CORNER-ONLY (minor - surface, a cool-off not a strike)' },
   glance:    { surface: true,  task: 'rule',    label: 'SURFACE, NO ACTION (worth a mod glance, but not a strike/corner)' },
-  fine:      { surface: false, task: 'rule',    label: 'FINE (benign — a false positive, hide it)' },
-  genuine:   { surface: true,  task: 'welfare', label: 'GENUINE DISTRESS (surface — someone should check in)' },
-  hyperbole: { surface: false, task: 'welfare', label: 'HYPERBOLE (not real distress — hide it)' },
+  fine:      { surface: false, task: 'rule',    label: 'FINE (benign - a false positive, hide it)' },
+  genuine:   { surface: true,  task: 'welfare', label: 'GENUINE DISTRESS (surface - someone should check in)' },
+  hyperbole: { surface: false, task: 'welfare', label: 'HYPERBOLE (not real distress - hide it)' },
 };
 function loadExamples() {
   try {
@@ -211,17 +211,17 @@ function registerCard(id, data) {
 function lookupCard(id) { return _loadCards()[String(id || '').trim().toUpperCase()] || null; }
 const taskOf = v => VERDICT_META[v]?.task || 'rule';
 // Few-shot block from the most recent labels for ONE task (rule vs welfare), for injection into the judge
-// prompt — a welfare call only ever sees welfare exemplars, and vice versa.
+// prompt - a welfare call only ever sees welfare exemplars, and vice versa.
 function exemplarBlock(task = 'rule') {
   const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && taskOf(e.verdict) === task).slice(-EXEMPLARS_IN_PROMPT);
   if (!ex.length) return '';
   const lines = ex.map(e => {
     const base = `- "${String(e.content || '').replace(/\s+/g, ' ').slice(0, 180)}" -> ${VERDICT_META[e.verdict].label}`;
-    return e.note ? `${base} — correct read: ${String(e.note).replace(/\s+/g, ' ').slice(0, 200)}` : base;
+    return e.note ? `${base} - correct read: ${String(e.note).replace(/\s+/g, ' ').slice(0, 200)}` : base;
   });
   const header = task === 'welfare'
-    ? 'ADMIN-LABELED WELFARE EXAMPLES from THIS community (real distress-vs-hyperbole calls the admins made — match this bar):'
-    : 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made — match this bar; these override your priors when a new message is similar):';
+    ? 'ADMIN-LABELED WELFARE EXAMPLES from THIS community (real distress-vs-hyperbole calls the admins made - match this bar):'
+    : 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made - match this bar; these override your priors when a new message is similar):';
   return ['', header, ...lines].join('\n');
 }
 // Accuracy of the AI's own surface/hide call vs. the admin's verdict. Pass a task to scope it (rule/welfare).
@@ -299,7 +299,7 @@ async function evaluate(scope, msg, matchedTerms) {
     const conf = verdict.confidence.toFixed(2);
     const rule = verdict.likelyRule ? `, Rule ${verdict.likelyRule}` : '';
     const wouldTag = (!live && wouldSuppress) ? ' · would auto-suppress when live' : '';
-    const note = `🤖 ${verdict.surface ? 'looks real' : 'likely false positive'} — ${verdict.reason} _(conf ${conf}${rule}${wouldTag})_`;
+    const note = `🤖 ${verdict.surface ? 'looks real' : 'likely false positive'} - ${verdict.reason} _(conf ${conf}${rule}${wouldTag})_`;
     return { ran: true, verdict, suppress, note, wouldSuppress };
   } catch (e) {
     console.error('[smartwatch] evaluate:', e.message);
@@ -341,8 +341,8 @@ async function callLabJudge(scope, payload) {
     payload.content || '(no text - attachment/embed only)',
     '',
     'FIRST: judge the FLAGGED MESSAGE as usual (the top-level fields).',
-    'THEN: scan the RECENT CONTEXT. If any OTHER message (from a non-staff member, named by username) is ITSELF a clear, standalone violation BY ITS OWN AUTHOR, add it to "actions". Be conservative: only clear violations — never ordinary talk, venting, jokes, quotes, or reclaimed language.',
-    'CRITICAL — judge DIRECTION and AUTHORSHIP before proposing: only ever propose an action against the author of the offending content ITSELF. NEVER propose an action against someone who is asking about, accusing, calling out, quoting, reporting, or reacting to another person\'s alleged behavior. Example: "didn\'t you send a death threat?" is a QUESTION/accusation by its speaker — the concern (if any) is about the person being asked, so do NOT action the asker. When you\'re unsure who the real author of the wrongdoing is, propose nothing.',
+    'THEN: scan the RECENT CONTEXT. If any OTHER message (from a non-staff member, named by username) is ITSELF a clear, standalone violation BY ITS OWN AUTHOR, add it to "actions". Be conservative: only clear violations - never ordinary talk, venting, jokes, quotes, or reclaimed language.',
+    'CRITICAL - judge DIRECTION and AUTHORSHIP before proposing: only ever propose an action against the author of the offending content ITSELF. NEVER propose an action against someone who is asking about, accusing, calling out, quoting, reporting, or reacting to another person\'s alleged behavior. Example: "didn\'t you send a death threat?" is a QUESTION/accusation by its speaker - the concern (if any) is about the person being asked, so do NOT action the asker. When you\'re unsure who the real author of the wrongdoing is, propose nothing.',
     'Empty array if nothing else qualifies. "strike" = a real ladder violation; "corner" = a minor cool-off.',
     '',
     'Respond with ONLY this JSON (no fences):',

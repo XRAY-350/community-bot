@@ -1,11 +1,11 @@
-// perms.js — bot-owner permission inspector & auditor (the /perms command). Three modes:
-//   • tier    — what a whole tier (member/trial/mod/admin/owner) can see, vs a plain member.
-//   • channel — who can see/use one channel, per tier.
-//   • audit   — a full tiered sweep for permission problems (view leaks, dangerous perms, thread-add exposure).
+// perms.js - bot-owner permission inspector & auditor (the /perms command). Three modes:
+//   • tier    - what a whole tier (member/trial/mod/admin/owner) can see, vs a plain member.
+//   • channel - who can see/use one channel, per tier.
+//   • audit   - a full tiered sweep for permission problems (view leaks, dangerous perms, thread-add exposure).
 //
 // KEY: effective permissions are computed for a HYPOTHETICAL member holding a tier's ROLE SET (always incl.
-// VERIFIED, which carries base ViewChannel) — NOT the bare @everyone role. @everyone here has ViewChannel
-// removed at the guild level, so testing it reads "hidden" even when real members can see a channel — the
+// VERIFIED, which carries base ViewChannel) - NOT the bare @everyone role. @everyone here has ViewChannel
+// removed at the guild level, so testing it reads "hidden" even when real members can see a channel - the
 // exact blind spot that hid the mod-call leak. We also use only each channel's OWN overwrites, matching
 // Discord (category overwrites aren't walked at compute time; synced channels already carry copies). See
 // memory: category-perms-dont-propagate.
@@ -51,7 +51,7 @@ const realChannels = guild => [...guild.channels.cache.values()].filter(ch =>
 
 const staffRoleIds = () => new Set([opspanel.MOD_ROLE_ID, opspanel.ADMIN_ROLE_ID, opspanel.OWNER_DISPLAY_ROLE_ID, ...opspanel.OWNER_ROLE_IDS].filter(Boolean));
 // Is a channel EXPLICITLY meant for members? True if @everyone or VERIFIED is allowed ViewChannel at the
-// channel OR its category level — i.e. a public/member channel (even if staff also have an overwrite there).
+// channel OR its category level - i.e. a public/member channel (even if staff also have an overwrite there).
 function memberIntended(ch, guild) {
   const ids = [guild.id, config.verifiedRoleId].filter(Boolean);
   const cat = ch.parentId ? guild.channels.cache.get(ch.parentId) : null;
@@ -82,10 +82,10 @@ function tierReport(guild, tier) {
   const chLine = ch => `• <#${ch.id}>${ch.type === ChannelType.GuildVoice ? ' 🔊' : ch.type === ChannelType.GuildForum ? ' 🧵' : ''}`;
   const lines = [`## 👁️ What **${TIER_LABEL[tier]}** can see`, `-# sees ${visible} of ${chans.length} channels`];
   if (tier === 'member') {
-    lines.push(`\nThis is the baseline everyone is measured against — all the non-staff chat, hobby, country and event channels.`);
+    lines.push(`\nThis is the baseline everyone is measured against - all the non-staff chat, hobby, country and event channels.`);
   } else {
     lines.push(`\nSees everything a regular member sees, **plus these ${elevated.length} restricted channel(s):**`);
-    lines.push(elevated.length ? elevated.map(chLine).join('\n') : '_(none — no elevated access)_');
+    lines.push(elevated.length ? elevated.map(chLine).join('\n') : '_(none - no elevated access)_');
     if (missing.length) lines.push(`\n⚠️ **${missing.length}** channel(s) a regular member sees but ${TIER_LABEL[tier]} does NOT:\n${missing.map(chLine).join('\n')}`);
   }
   return lines.join('\n');
@@ -99,11 +99,11 @@ function channelReport(guild, channel) {
     const p = effPerms(channel, tierRoleIds(tier), guild);
     const v = p.has(P.ViewChannel), s = p.has(P.SendMessages) || p.has(P.SendMessagesInThreads), cn = p.has(P.Connect);
     const extra = v ? [s ? 'send' : null, isVoice && cn ? 'connect' : null].filter(Boolean).join(' + ') : '';
-    lines.push(`${v ? '✅' : '🚫'} **${TIER_LABEL[tier]}** — ${v ? 'can see' : 'hidden'}${extra ? ` (${extra})` : ''}`);
+    lines.push(`${v ? '✅' : '🚫'} **${TIER_LABEL[tier]}** - ${v ? 'can see' : 'hidden'}${extra ? ` (${extra})` : ''}`);
   }
   const grant = [...(channel.permissionOverwrites?.cache.values() || [])].filter(o => o.type === 0 && o.allow.has(P.ViewChannel)).map(o => guild.roles.cache.get(o.id)?.name || o.id);
   const denyEv = channel.permissionOverwrites?.cache.get(guild.id)?.deny.has(P.ViewChannel);
-  lines.push(`\n-# view granted to: ${grant.join(', ') || '—'}\n-# own @everyone View-deny: ${denyEv ? '✅ present' : '❌ MISSING (relies on category)'}`);
+  lines.push(`\n-# view granted to: ${grant.join(', ') || '-'}\n-# own @everyone View-deny: ${denyEv ? '✅ present' : '❌ MISSING (relies on category)'}`);
   return lines.join('\n');
 }
 
@@ -123,28 +123,28 @@ function grandAudit(guild) {
     const staff = isStaffIntended(ch, guild);
     const memberP = effPerms(ch, memberIds, guild), everyoneP = effPerms(ch, [], guild), modP = effPerms(ch, modIds, guild);
     const memberSees = memberP.has(P.ViewChannel);
-    if (staff && memberSees) U.push(`<#${ch.id}> — **regular members can VIEW this staff channel**`);
+    if (staff && memberSees) U.push(`<#${ch.id}> - **regular members can VIEW this staff channel**`);
     if (staff && !memberSees) lockedStaff++;
     for (const [who, p] of [['@everyone', everyoneP], ['members', memberP]]) {
       if (!p.has(P.ViewChannel)) continue;
       const d = Object.entries(DANGER).filter(([, f]) => p.has(f)).map(([k]) => k);
-      if (d.length) U.push(`<#${ch.id}> — ${who} hold **${d.join(', ')}**`);
+      if (d.length) U.push(`<#${ch.id}> - ${who} hold **${d.join(', ')}**`);
     }
     if (BROADCAST.test(ch.name) && memberSees && (memberP.has(P.SendMessages) || memberP.has(P.SendMessagesInThreads)))
-      U.push(`<#${ch.id}> — members can **send** in a broadcast/read-only channel`);
+      U.push(`<#${ch.id}> - members can **send** in a broadcast/read-only channel`);
     if (staff && hostsThreads(ch) && modP.has(P.ViewChannel) && modP.has(P.ManageThreads))
-      A.push(`<#${ch.id}> — mods can **ManageThreads** (add non-staff into threads here)`);
+      A.push(`<#${ch.id}> - mods can **ManageThreads** (add non-staff into threads here)`);
     if (LOGCH.test(ch.name) && !BROADCAST.test(ch.name) && staff && modP.has(P.ViewChannel) && modP.has(P.SendMessages))
-      A.push(`<#${ch.id}> — mods can **send** in a log channel (intended read-only?)`);
+      A.push(`<#${ch.id}> - mods can **send** in a log channel (intended read-only?)`);
     if (staff && !ch.permissionOverwrites?.cache.get(guild.id)?.deny.has(P.ViewChannel))
-      N.push(`<#${ch.id}> — no own @everyone View-deny (relies on category — add an explicit deny)`);
+      N.push(`<#${ch.id}> - no own @everyone View-deny (relies on category - add an explicit deny)`);
   }
   const out = [`## 🔎 Permission audit`, `-# ${chans.length} channels scanned · computed against real tier role-sets`];
-  const sec = (emoji, title, arr, tip) => { out.push(`\n### ${emoji} ${title} — ${arr.length}`); if (arr.length && tip) out.push(`-# ${tip}`); out.push(arr.length ? [...new Set(arr)].map(x => '• ' + x).join('\n') : '_none_ ✓'); };
+  const sec = (emoji, title, arr, tip) => { out.push(`\n### ${emoji} ${title} - ${arr.length}`); if (arr.length && tip) out.push(`-# ${tip}`); out.push(arr.length ? [...new Set(arr)].map(x => '• ' + x).join('\n') : '_none_ ✓'); };
   sec('🔴', 'URGENT', U, 'members can reach staff space or hold moderator powers');
   sec('🟠', 'ADVISORY', A, 'staff over-permissioned in a way that can leak');
-  sec('🟡', 'NITPICK', N, 'hardening — an explicit channel override beats relying on the category');
-  out.push(`\n### 🟢 APPROVED — ${lockedStaff}`, `-# staff channel(s) correctly locked to staff only`);
+  sec('🟡', 'NITPICK', N, 'hardening - an explicit channel override beats relying on the category');
+  out.push(`\n### 🟢 APPROVED - ${lockedStaff}`, `-# staff channel(s) correctly locked to staff only`);
   return out.join('\n');
 }
 

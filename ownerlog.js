@@ -1,10 +1,10 @@
-// ownerlog.js — one owner-only channel combining two feeds owners otherwise can't easily see:
-//   1) BOT ACTIONS — a curated, plain-language record of what the bot did (strikes, corners, verifies,
+// ownerlog.js - one owner-only channel combining two feeds owners otherwise can't easily see:
+//   1) BOT ACTIONS - a curated, plain-language record of what the bot did (strikes, corners, verifies,
 //      bans, mod-app decisions, promotions, appeals...), NOT raw server/process logs (those can leak
-//      secrets and are mostly noise — an owner wants "what happened", not stack traces).
-//   2) SERVER AUDIT LOG — Discord's own audit log (who banned/kicked/edited roles/channels/etc.),
+//      secrets and are mostly noise - an owner wants "what happened", not stack traces).
+//   2) SERVER AUDIT LOG - Discord's own audit log (who banned/kicked/edited roles/channels/etc.),
 //      mirrored here because Discord's own audit log has limited retention and needs the Server
-//      Settings UI + permission to view — this makes it a permanent, readable record in one place.
+//      Settings UI + permission to view - this makes it a permanent, readable record in one place.
 // Both are POLL/EVENT-DRIVEN pushes into the SAME channel so an owner has one running timeline instead
 // of two places to check.
 const { EmbedBuilder, ChannelType, PermissionsBitField, AuditLogEvent } = require('discord.js');
@@ -21,7 +21,7 @@ const saveConfig = c => _save(CONFIG_FILE, c);
 const loadState = () => _load(STATE_FILE, { lastAuditLogId: null });
 const saveState = s => _save(STATE_FILE, s);
 
-// Owner-only, same shape as modapps.js's ensureArchiveChannel — @everyone/MODS/ADMINS explicitly denied
+// Owner-only, same shape as modapps.js's ensureArchiveChannel - @everyone/MODS/ADMINS explicitly denied
 // (they'd otherwise inherit view from whatever category this sits in), only OWNER roles allowed.
 async function ensureChannel(guild) {
   let c = loadConfig();
@@ -34,7 +34,7 @@ async function ensureChannel(guild) {
   ];
   const channel = await guild.channels.create({
     name: '📜┆owner-log', type: ChannelType.GuildText,
-    topic: 'Owner-only. Bot actions + a mirror of the server audit log — one running record.',
+    topic: 'Owner-only. Bot actions + a mirror of the server audit log - one running record.',
     permissionOverwrites: overwrites, reason: 'Owner log (owner request)',
   });
   c.channelId = channel.id; saveConfig(c);
@@ -50,14 +50,14 @@ async function log(guild, { emoji = '🤖', title, detail, color = 0x5865F2 }) {
     // Mentions go in the message CONTENT, not an embed: a `<@id>` in content is resolved by Discord for
     // every viewer (a clickable @name → opens the profile), while embed mentions only resolve from the
     // viewer's local cache and render "@unknown-user" in a locked/restricted channel. parse:[] keeps them
-    // from pinging anyone. Content-only (no embed) — the emoji + bold title carry the type; a color-only
+    // from pinging anyone. Content-only (no embed) - the emoji + bold title carry the type; a color-only
     // embed would just render as an empty box.
     await ch.send({ content: `${emoji} **${title}**\n${detail}`, allowedMentions: { parse: [] } });
   } catch (e) { console.error('[ownerlog] log:', e.message); }
 }
 
 // ---- 2) server audit log mirror -----------------------------------------------------------------
-// Curated allowlist — Discord's audit log has ~40 action types; most (emoji/sticker/webhook/stage
+// Curated allowlist - Discord's audit log has ~40 action types; most (emoji/sticker/webhook/stage
 // events) are noise for a small community. These are the ones an owner actually wants visibility into.
 const WATCHED_EVENTS = new Set([
   AuditLogEvent.MemberKick, AuditLogEvent.MemberBanAdd, AuditLogEvent.MemberBanRemove,
@@ -77,8 +77,8 @@ const EVENT_LABEL = {
   [AuditLogEvent.GuildUpdate]: '⚙️ Server settings changed',
 };
 
-// Compact INLINE summary of an audit entry's field diffs — role add/remove shows the actual role name(s),
-// edits show key: old→new — joined with " · " so the whole entry fits on one blockquote line in the
+// Compact INLINE summary of an audit entry's field diffs - role add/remove shows the actual role name(s),
+// edits show key: old→new - joined with " · " so the whole entry fits on one blockquote line in the
 // grouped view. Without this the entry says nothing an owner can act on.
 function changesInline(e) {
   if (!e.changes || !e.changes.length) return '';
@@ -99,7 +99,7 @@ function changesInline(e) {
 }
 
 // Poll Discord's audit log for entries newer than the last one we've posted. First run only seeds the
-// watermark (doesn't dump the entire history) — after that, every new watched entry gets mirrored.
+// watermark (doesn't dump the entire history) - after that, every new watched entry gets mirrored.
 async function pollAuditLog(guild) {
   try {
     const st = loadState();
@@ -113,17 +113,17 @@ async function pollAuditLog(guild) {
       return 0;
     }
     // Skip entries the BOT ITSELF caused (strikes/corners/verifies/etc. already get their own, more
-    // detailed manual log line above) — this feed is for genuine out-of-band human actions taken
+    // detailed manual log line above) - this feed is for genuine out-of-band human actions taken
     // directly through Discord, bypassing the bot (manual bans, manual role edits, channel changes...).
     const fresh = entries.filter(e => BigInt(e.id) > BigInt(st.lastAuditLogId) && WATCHED_EVENTS.has(e.action) && e.executorId !== guild.client.user.id);
     if (!fresh.length) return 0;
     const ch = await ensureChannel(guild);
     // Group the batch BY EXECUTOR and post it as ONE markdown-grouped message. Consecutive '>' blockquote
-    // lines merge into one continuous left bar — visually "carding" each person's actions like the old
-    // embed's colored bar did — while a plain '**actor**' header between groups splits the bars into
+    // lines merge into one continuous left bar - visually "carding" each person's actions like the old
+    // embed's colored bar did - while a plain '**actor**' header between groups splits the bars into
     // separate cards. '###' titles the feed, '-#' footers the time. It's all message CONTENT, so <@id>
     // mentions stay clickable (embeds render "@unknown-user" for uncached viewers in this locked channel);
-    // mentions render normally inside blockquotes/headers — only code blocks would suppress them.
+    // mentions render normally inside blockquotes/headers - only code blocks would suppress them.
     const byExec = new Map();
     for (const e of fresh) {
       const key = e.executorId || 'unknown';
@@ -131,12 +131,12 @@ async function pollAuditLog(guild) {
       const label = EVENT_LABEL[e.action] || `Action ${e.action}`;
       const targetIsUser = e.target && (e.target.tag !== undefined || e.target.username !== undefined);
       const target = e.target ? (targetIsUser ? `<@${e.target.id}>` : `**${e.target.name || e.targetId || 'unknown'}**`) : null;
-      const reason = e.reason ? ` — _${e.reason}_` : '';
+      const reason = e.reason ? ` - _${e.reason}_` : '';
       byExec.get(key).lines.push(`> ${label}${target ? ` ${target}` : ''}${changesInline(e)}${reason}`);
     }
     const blocks = ['### 🗒️ Server audit log'];
     for (const { actor, lines } of byExec.values()) {
-      blocks.push(`${actor} — ${lines.length} action${lines.length === 1 ? '' : 's'}`);
+      blocks.push(`${actor} - ${lines.length} action${lines.length === 1 ? '' : 's'}`);
       blocks.push(lines.join('\n'));
     }
     blocks.push(`-# <t:${Math.floor(Date.now() / 1000)}:f>`);

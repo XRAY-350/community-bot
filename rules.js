@@ -1,25 +1,25 @@
-// rules.js — single source of truth for FUBU's rule text + per-rule strike weight.
+// rules.js - single source of truth for FUBU's rule text + per-rule strike weight.
 // Feeds: /corner + /strike add's rule dropdown (via TITLES, a drop-in replacement for the old
 // hardcoded SERVER_RULES array), the mod-announce sign-off posts, and the public rules post.
-// weight is null until that rule's mod weight-poll concludes — nothing here is guessed.
+// weight is null until that rule's mod weight-poll concludes - nothing here is guessed.
 const fs = require('fs');
 const WEIGHTS_FILE = process.env.FUBU_RULE_WEIGHTS_FILE || '/home/ubuntu/.fubu_rule_weights.json';
 
 const PREAMBLE = {
   title: 'How Enforcement Works',
-  text: `**Corner** — A casual, temporary timeout for minor or heat-of-the-moment stuff. No permanent record, and it can happen more than once. If the same behavior keeps happening while you're in the Corner, or keeps happening enough times overall, it becomes a Strike.
+  text: `**Corner** - A casual, temporary timeout for minor or heat-of-the-moment stuff. No permanent record, and it can happen more than once. If the same behavior keeps happening while you're in the Corner, or keeps happening enough times overall, it becomes a Strike.
 
-**Strike** — The real disciplinary mark. Each Strike is posted publicly in the channel where it happened, no DMs. Strikes don't expire on their own, but can be appealed and removed by staff. Enough strikes, and you're banned.
+**Strike** - The real disciplinary mark. Each Strike is posted publicly in the channel where it happened, no DMs. Strikes don't expire on their own, but can be appealed and removed by staff. Enough strikes, and you're banned.
 
-**Timeout** — Discord's actual mute feature, blocks you from talking anywhere. Not its own step, it can get attached to certain Strikes as an extra consequence.
+**Timeout** - Discord's actual mute feature, blocks you from talking anywhere. Not its own step, it can get attached to certain Strikes as an extra consequence.
 
-**Watchlist** — Probation. Mainly used for people let back in after a ban, or anyone staff wants to keep a close eye on.
+**Watchlist** - Probation. Mainly used for people let back in after a ban, or anyone staff wants to keep a close eye on.
 
-**Ban** — Permanent removal. Either from racking up enough Strikes, or instantly for the offenses serious enough to skip everything else (false verification, ban evasion, actual grooming, and similar).`,
+**Ban** - Permanent removal. Either from racking up enough Strikes, or instantly for the offenses serious enough to skip everything else (false verification, ban evasion, actual grooming, and similar).`,
 };
 
 // weighable: false for rules that never result in a weighed Strike (always instant-ban, or non-punitive,
-// or a pure grant of authority) — these don't get a weight poll in Step 0.
+// or a pure grant of authority) - these don't get a weight poll in Step 0.
 const RULES = [
   { key: 'black-space', title: 'This Is a Black Space', weighable: false,
     text: `FUBU is a Black-only community. Non-Black people may not join or participate, period. If you falsely verify or don't actually meet membership requirements, that's a permanent ban, no warning. If you try to bypass verification, misrepresent who you are, or come back on an alt after getting banned, that's also an instant permanent ban. This isn't up for debate.` },
@@ -47,13 +47,13 @@ If you want that kind of conversation, the MDNI (Minors Do Not Interact) role an
     text: `Staff decisions are final. Mods and admins can remove messages, send you to the Corner, issue a Strike, or ban whenever it's necessary to protect the community, even for stuff not spelled out in these rules.` },
 ];
 
-// Drop-in replacement for the old hardcoded SERVER_RULES array — same shape (array of title strings),
+// Drop-in replacement for the old hardcoded SERVER_RULES array - same shape (array of title strings),
 // so /corner + /strike add's rule dropdowns and any `${i+1}. ${title}` formatting need no other changes.
 const TITLES = RULES.map(r => r.title);
 
 function loadWeights() { try { return JSON.parse(fs.readFileSync(WEIGHTS_FILE, 'utf8')); } catch { return {}; } }
 function saveWeights(w) { try { fs.writeFileSync(WEIGHTS_FILE, JSON.stringify(w, null, 2)); } catch (e) { console.error('[rules] save:', e.message); } }
-// null = not decided yet (staff still voting) — never guessed.
+// null = not decided yet (staff still voting) - never guessed.
 function weightOf(key) { const w = loadWeights()[key]; return (w === 1 || w === 2 || w === 3) ? w : null; }
 function setWeight(key, w) { const all = loadWeights(); all[key] = w; saveWeights(all); }
 function byIndex(i) { return RULES[i - 1]; } // 1-indexed, matching the existing "Rule N" convention
@@ -63,15 +63,15 @@ function byIndex(i) { return RULES[i - 1]; } // 1-indexed, matching the existing
 const ENFORCE = {
   'black-space': 'Instant permanent ban',
   'child-safety': 'Grooming → instant ban · "jokes" → Strike',
-  'verify-or-move-on': 'Auto-removal at day 7 — not a strike',
-  'respectful-language': 'Strike — sexual talk in general channels',
+  'verify-or-move-on': 'Auto-removal at day 7 - not a strike',
+  'respectful-language': 'Strike - sexual talk in general channels',
   'respect-everyone': 'Minor → Corner · real/repeat → Strike (hate = extra)',
-  'privacy-sacred': 'Strike — or instant ban if severe (staff judge)',
+  'privacy-sacred': 'Strike - or instant ban if severe (staff judge)',
   'respect-space': 'First → Corner · repeat → Strike',
   'no-spam': 'First → Corner · repeat → Strike',
   'right-channel': 'Usually Corner · repeat → Strike',
   'no-weaponize': 'Starts as a Strike',
-  'staff-authority': 'Staff authority — not an infraction',
+  'staff-authority': 'Staff authority - not an infraction',
 };
 
 // One row per rule for the staff weight list: { n, title, weighable, weight, weightStr, enforce }.
@@ -79,7 +79,7 @@ const ENFORCE = {
 function infractionLines() {
   return RULES.map((r, i) => {
     const weight = r.weighable ? weightOf(r.key) : null;
-    const weightStr = !r.weighable ? '—' : (weight ? `${weight}u` : 'TBD');
+    const weightStr = !r.weighable ? '-' : (weight ? `${weight}u` : 'TBD');
     return { n: i + 1, title: r.title, weighable: r.weighable, weight, weightStr, enforce: ENFORCE[r.key] || '' };
   });
 }

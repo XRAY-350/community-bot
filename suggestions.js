@@ -1,4 +1,4 @@
-// suggestions.js — bot-gated suggestions forum. Members can't open posts directly (the forum denies
+// suggestions.js - bot-gated suggestions forum. Members can't open posts directly (the forum denies
 // Create Posts to @everyone); they run /suggest and the BOT opens the post on their behalf, which lets
 // us enforce real growth caps that Discord's native slowmode can't:
 //   • max 1 OPEN suggestion per member (frees when staff approve/deny)   • per-member cooldown
@@ -46,7 +46,7 @@ async function setup(guild, config) {
     { id: everyone, deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads],
       allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions, P.SendMessagesInThreads] },
   ];
-  // verified role (if configured) mirrors @everyone — comment+react+vote but not create posts
+  // verified role (if configured) mirrors @everyone - comment+react+vote but not create posts
   const forum = await guild.channels.create({
     name: '💡┆suggestions', type: ChannelType.GuildForum,
     topic: 'Use /suggest to post an idea. The bot opens it here with ⬆/⬇ voting. One open suggestion per person; staff approve or deny.',
@@ -65,7 +65,7 @@ async function setup(guild, config) {
 }
 
 // ---- vote button rows -------------------------------------------------------------------------------
-// customIds are STATIC (no thread id baked in) — a button lives on the post's starter message, so at
+// customIds are STATIC (no thread id baked in) - a button lives on the post's starter message, so at
 // click time interaction.channelId IS the thread id. That avoids the create-then-edit race.
 function voteRow(up, down, resolved) {
   return new ActionRowBuilder().addComponents(
@@ -97,7 +97,7 @@ async function submit(guild, member, text) {
   text = String(text || '').trim().replace(/\s+/g, ' ');
   if (text.length < MIN_LEN) return { ok: false, msg: copy.suggestions.tooShort(MIN_LEN) };
   if (text.length > MAX_LEN) return { ok: false, msg: copy.suggestions.tooLong(MAX_LEN) };
-  // content filter — reuse the watchlist matcher across all three lists
+  // content filter - reuse the watchlist matcher across all three lists
   const bad = watchlist.matchTerms(text, [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose(), ...watchlist.loadWelfare()])]);
   if (bad.length) return { ok: false, msg: copy.suggestions.filtered };
 

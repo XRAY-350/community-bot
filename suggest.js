@@ -1,8 +1,8 @@
-// suggest.js — watchlist TERM RECOMMENDER. Scans the last N hours of public messages and proposes
+// suggest.js - watchlist TERM RECOMMENDER. Scans the last N hours of public messages and proposes
 // English terms to add to the strict / loose / welfare lists, grounded in what members actually said.
 // Two sources, both filtered against what's already covered (so we never re-suggest a near-duplicate):
 //   1. a curated high-precision safety LEXICON (each term pre-tagged with the list it belongs in), and
-//   2. DISCOVERY — frequent English bigrams drawn only from messages that sit in a "concern context",
+//   2. DISCOVERY - frequent English bigrams drawn only from messages that sit in a "concern context",
 //      so novel phrasings the lexicon doesn't know still surface (suggested as loose for a human to place).
 // Mods run /watchlist-suggest; an ADMINS-★ picks the good ones from a multi-select → they're added.
 // Nothing is auto-added. Ignored suggestions are remembered so they don't nag next scan.
@@ -19,30 +19,30 @@ const US = '␟'; // unit separator for customId/select-value encoding (never ap
 // loose   = everyone → quiet #watch-log (must stay low-false-positive: predatory / scam / solicitation)
 // welfare = everyone → soft support check-in (self-directed distress)
 const LEXICON = [
-  // strict — kys/threat evasion variants the list tends to miss
+  // strict - kys/threat evasion variants the list tends to miss
   ['off yourself', 'strict'], ['go off yourself', 'strict'], ['unalive yourself', 'strict'],
   ['rope yourself', 'strict'], ['go rope', 'strict'], ['hang urself', 'strict'],
   ['you should die', 'strict'], ['hope you die', 'strict'], ['i hope you die', 'strict'],
   ['kill u', 'strict'], ['ill kill you', 'strict'], ['catch you outside', 'strict'],
   ['jump you', 'strict'], ['jump him', 'strict'], ['curb stomp', 'strict'], ['snap your neck', 'strict'],
   ['hunt you down', 'strict'], ['find where you live', 'strict'], ['come to your house', 'strict'],
-  // strict — dox / IP tooling
+  // strict - dox / IP tooling
   ['ip grabber', 'strict'], ['ip logger', 'strict'], ['ip puller', 'strict'], ['grab your ip', 'strict'],
   ['pull your ip', 'strict'], ['your real name', 'strict'], ['your home address', 'strict'],
   ['leak your address', 'strict'], ['post your info', 'strict'],
-  // strict — raid / server-attack tooling
+  // strict - raid / server-attack tooling
   ['token grabber', 'strict'], ['token logger', 'strict'], ['self bot', 'strict'], ['selfbot', 'strict'],
   ['mass report', 'strict'], ['crash the server', 'strict'], ['get you banned', 'strict'],
   ['nuke this server', 'strict'],
-  // loose — predatory / minor-safety (a live theme in FUBU; kept in loose = quiet log, not blunt bans)
+  // loose - predatory / minor-safety (a live theme in FUBU; kept in loose = quiet log, not blunt bans)
   ['are you underage', 'loose'], ['you look underage', 'loose'], ['send me nudes', 'loose'],
   ['send nudes', 'loose'], ['send me pics', 'loose'], ['show me your body', 'loose'],
   ['dm me your', 'loose'], ['add me on snap', 'loose'], ['whats your snap', 'loose'],
   ['child porn', 'loose'], ['cp link', 'loose'],
-  // loose — scam / solicitation gaps
+  // loose - scam / solicitation gaps
   ['venmo me', 'loose'], ['paypal me', 'loose'], ['my onlyfans', 'loose'], ['dm to buy', 'loose'],
   ['discord nitro free', 'loose'], ['gift card', 'loose'], ['promo my', 'loose'],
-  // welfare — self-directed distress the welfare list is missing
+  // welfare - self-directed distress the welfare list is missing
   ['kill myself', 'welfare'], ['i want to kill myself', 'welfare'], ['end my life', 'welfare'],
   ['end it all', 'welfare'], ['no reason to live', 'welfare'], ['dont want to be here', 'welfare'],
   ['wish i was dead', 'welfare'], ['hurting myself', 'welfare'], ['want to disappear', 'welfare'],
@@ -87,7 +87,7 @@ async function scan(guild, config, hours) {
     if (staffChannels.has(ch.id)) continue;
     await drain(ch, cutoff, rows);
   }
-  // skip staff authors (their casual language shouldn't seed the watchlist) — memberTier is truthy for
+  // skip staff authors (their casual language shouldn't seed the watchlist) - memberTier is truthy for
   // mod/admin/owner. m.member is populated for cached members; uncached falls through as non-staff.
   const isStaff = (m) => !!(m.member && opspanel.memberTier(m.member));
   const msgs = rows.filter(m => m.content && !isStaff(m));
@@ -109,7 +109,7 @@ async function scan(guild, config, hours) {
     if (covered(term, existing) || isIgnored(term)) continue;
     for (const m of msgs) if (watchlist.matchTerms(m.content, [term]).length) bump(term, scope, 'lexicon', m);
   }
-  // 2) discovery — English bigrams from concern-context messages only
+  // 2) discovery - English bigrams from concern-context messages only
   const bigramCount = new Map(); const bigramEx = new Map();
   for (const m of msgs) {
     if (!CONCERN_CTX.test(m.content)) continue;
@@ -138,8 +138,8 @@ function render(result) {
     .setColor(0x9B59B6)
     .setDescription(ranked.length
       ? `From **${scanned}** messages over the last **${hours}h**. English only; already-covered terms filtered out.\n` +
-        `Pick the good ones below — an **ADMINS-★** click adds each to its suggested list. The rest are ignored so they won't nag again.`
-      : `Scanned **${scanned}** messages over the last **${hours}h** — nothing new worth flagging. The lists already cover what came up. 👌`);
+        `Pick the good ones below - an **ADMINS-★** click adds each to its suggested list. The rest are ignored so they won't nag again.`
+      : `Scanned **${scanned}** messages over the last **${hours}h** - nothing new worth flagging. The lists already cover what came up. 👌`);
   const SCOPE_EMO = { strict: '🛑', loose: '🔎', welfare: '🫂' };
   for (const s of ranked.slice(0, 12)) {
     emb.addFields({ name: `${SCOPE_EMO[s.scope]} \`${s.term}\`  ·  ${s.count}×  ·  ${s.scope}${s.source === 'discovered' ? '  ·  discovered' : ''}`,

@@ -1,5 +1,5 @@
-// sweep.js — periodic housekeeping. One bulk member fetch per sweep powers three passes:
-//   1) REAP members: any member still unverified — WHETHER OR NOT they have a thread — is warned
+// sweep.js - periodic housekeeping. One bulk member fetch per sweep powers three passes:
+//   1) REAP members: any member still unverified - WHETHER OR NOT they have a thread - is warned
 //      with an @mention WARN_DAYS after joining, then KICKED and any thread(s) they own deleted
 //      KICK_DAYS after joining. Members with a thread are warned inside it; thread-less members
 //      are warned in the unverified-chat channel.
@@ -7,8 +7,8 @@
 //      already verified (leftover verification thread). Pending owners are left to pass 1.
 //   3) NUDGE: ping mods about still-pending OPEN threads (owner unverified, not past the deadline).
 //   4) PURGE unverified-chat: delete EVERY thread (any status/owner) in the unverified-chat channel
-//      — no threads are allowed there. Gated by PURGE_WARN_CHANNEL_THREADS.
-//   5) ROLE CONFLICTS: members holding BOTH the verified and unverified role are ambiguous — the bot
+//      - no threads are allowed there. Gated by PURGE_WARN_CHANNEL_THREADS.
+//   5) ROLE CONFLICTS: members holding BOTH the verified and unverified role are ambiguous - the bot
 //      takes no destructive action on them and instead flags them to mods to resolve (CONFLICT_PING).
 // All actions are gated by DRY_RUN (log only) and the feature toggles. Kick needs STALE_KICK.
 // All thread reads are channel-scoped (parentId-filtered) so the bot only ever touches its channels.
@@ -22,11 +22,11 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 const MAX_LOG = 40; // cap per-item dry-run lines so the journal stays readable
-// Gap between a member's warning and their kick — the same 1 day as WARN_DAYS→KICK_DAYS by default.
+// Gap between a member's warning and their kick - the same 1 day as WARN_DAYS→KICK_DAYS by default.
 // Enforced from the warning timestamp so even already-overdue backlog members get a full grace.
 const GRACE_MS = Math.max(0, config.kickDays - config.warnDays) * DAY;
 
-// Nudge-worthy only if the applicant has actually submitted a PHOTO in her thread — then she's done her
+// Nudge-worthy only if the applicant has actually submitted a PHOTO in her thread - then she's done her
 // part and it's on the mods to review. If the owner never posted an image, the ball is in the USER's court
 // (not the mods'), so we don't ping the mods. Returns false on any read error (errs toward not-nudging).
 async function ownerSentImage(thread, ownerId) {
@@ -61,7 +61,7 @@ async function sweep(client, state, ctx) {
   const alertChannel = ctx.getAlertChannel();   // where nudges live; passed to deleteThread so it can
                                                 // remove the pending-reminder when its thread is deleted.
 
-  // One bulk fetch — far cheaper on rate limits than per-thread member lookups, and it drives
+  // One bulk fetch - far cheaper on rate limits than per-thread member lookups, and it drives
   // every pass below. Needs the (privileged) GuildMembers intent.
   let members;
   try {
@@ -71,7 +71,7 @@ async function sweep(client, state, ctx) {
     return;
   }
 
-  // Fetch BOTH open and archived threads — archived (closed-but-not-deleted) threads must be
+  // Fetch BOTH open and archived threads - archived (closed-but-not-deleted) threads must be
   // cleaned up too. `active` is used for nudges (only open threads make sense to nudge); `all`
   // (active + archived) drives owner-indexing and thread cleanup.
   // Defensive .parentId filter guarantees we only ever act on THIS channel's threads, even though
@@ -90,7 +90,7 @@ async function sweep(client, state, ctx) {
   const isUnverified = m => config.unverifiedRoleId
     ? m.roles.cache.has(config.unverifiedRoleId)
     : !isVerified(m);
-  // Conflict = holds BOTH roles. Ambiguous state — the bot takes NO destructive action on these
+  // Conflict = holds BOTH roles. Ambiguous state - the bot takes NO destructive action on these
   // members (no kick, no thread delete); it flags them to mods (Pass 5) to resolve.
   const isConflict = m => config.unverifiedRoleId
     && m.roles.cache.has(config.verifiedRoleId)
@@ -176,13 +176,13 @@ async function sweep(client, state, ctx) {
     }
     if (config.dryRun && wouldAssign > MAX_LOG) console.log(`[dry-run] ASSIGN: …and ${wouldAssign - MAX_LOG} more with neither role`);
     if (config.dryRun && wouldKick > MAX_LOG) console.log(`[dry-run] REAP: …and ${wouldKick - MAX_LOG} more past ${config.kickDays}d`);
-    if (config.dryRun && wouldWarn > MAX_LOG) console.log(`[dry-run] WARN: …and ${wouldWarn - MAX_LOG} more in the ${config.warnDays}–${config.kickDays}d window`);
+    if (config.dryRun && wouldWarn > MAX_LOG) console.log(`[dry-run] WARN: …and ${wouldWarn - MAX_LOG} more in the ${config.warnDays}-${config.kickDays}d window`);
   }
 
   // ---- PASS 2: thread cleanup over ALL threads (active + archived) ----
-  // Delete any thread — open OR archived — whose owner has LEFT (orphan) or is already VERIFIED
+  // Delete any thread - open OR archived - whose owner has LEFT (orphan) or is already VERIFIED
   // (leftover verification thread the trigger didn't catch, e.g. verified before the bot existed).
-  // Threads owned by still-pending members are left alone here — Pass 1 handles those members.
+  // Threads owned by still-pending members are left alone here - Pass 1 handles those members.
   let orphans = 0;
   let verifiedCleaned = 0;
   let realDelLeft = 0;      // actual (non-ghost) deletions, for the daily digest
@@ -223,7 +223,7 @@ async function sweep(client, state, ctx) {
       if (now - (t.createdTimestamp || now) < config.nudgeAfterHours * HOUR) continue;
       const st = state.thread(t.id);
       if (st.nudgeMessageId) continue;   // already have a live reminder for this thread - no duplicates
-      // Only nudge the mods once she's actually submitted a photo — otherwise it's on the user, not the mods.
+      // Only nudge the mods once she's actually submitted a photo - otherwise it's on the user, not the mods.
       if (config.nudgeRequireImage && !(await ownerSentImage(t, t.ownerId))) continue;
       pending.push(t);
     }
@@ -283,7 +283,7 @@ async function sweep(client, state, ctx) {
             new ButtonBuilder().setCustomId(`conflict_rm:${m.id}:unver`).setLabel('Remove Unverified').setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId(`conflict_rm:${m.id}:ver`).setLabel('Remove Verified').setStyle(ButtonStyle.Secondary),
           )],
-          // Mod-only channel the flagged member can't see — the mention is for staff to identify/click
+          // Mod-only channel the flagged member can't see - the mention is for staff to identify/click
           // through, never an actual ping (they'd never see the notification's source anyway).
           allowedMentions: { parse: [] },
         });
@@ -307,7 +307,7 @@ async function sweep(client, state, ctx) {
     await digest.maybePost(state, conflictCh);
   }
 
-  console.log(`[sweep] done — ${config.dryRun ? `would-assign:${wouldAssign}, would-kick:${wouldKick}, would-warn:${wouldWarn}` : `assigned:${assigned}, kicked:${kicked}, warned:${warned}, conflicts-resolved:${conflictsResolved}`}, orphans:${orphans}, verified-cleanup:${verifiedCleaned}, unverified-chat-purge:${warnPurged}, conflicts-remaining:${conflictsRemaining} (verify: ${active.length} open + ${archived.length} archived)${config.dryRun ? ' [DRY_RUN]' : ''}`);
+  console.log(`[sweep] done - ${config.dryRun ? `would-assign:${wouldAssign}, would-kick:${wouldKick}, would-warn:${wouldWarn}` : `assigned:${assigned}, kicked:${kicked}, warned:${warned}, conflicts-resolved:${conflictsResolved}`}, orphans:${orphans}, verified-cleanup:${verifiedCleaned}, unverified-chat-purge:${warnPurged}, conflicts-remaining:${conflictsRemaining} (verify: ${active.length} open + ${archived.length} archived)${config.dryRun ? ' [DRY_RUN]' : ''}`);
 }
 
 // Pre-kick warning that @mentions the member. In their thread if they have one, else the
@@ -321,7 +321,7 @@ async function warnMember(member, ownThreads, ctx) {
   // mods reading the channel) even if a client can't resolve the mention. The user IS in
   // allowedMentions so the mention resolves and they're notified of the pending kick.
   const text = `## ⏳ Verification Reminder\n`
-    + `<@${member.id}> (**${member.user.tag}** · \`${member.id}\`) — you still aren't verified. `
+    + `<@${member.id}> (**${member.user.tag}** · \`${member.id}\`) - you still aren't verified. `
     + `If you're not verified within **${graceDays} day${graceDays === 1 ? '' : 's'}**, ${consequence}. `
     + `Please complete verification, or ping a moderator if you need help.`;
   const target = ownThreads.length ? ownThreads[0] : ctx.getWarnChannel();
@@ -334,7 +334,7 @@ async function warnMember(member, ownThreads, ctx) {
 }
 
 // Live-only: warning grace elapsed and still unverified → kick (if enabled), then delete their
-// thread(s). If a required kick fails (e.g. missing permission), we DON'T delete — leaving state
+// thread(s). If a required kick fails (e.g. missing permission), we DON'T delete - leaving state
 // so it retries and the permission problem stays visible. Returns true if the member was kicked.
 async function reapMember(guild, member, ownThreads, state) {
   const reason = `Unverified ${config.kickDays}d after joining`;
@@ -355,7 +355,7 @@ async function reapMember(guild, member, ownThreads, state) {
 
 // Post ONE reminder per pending thread and remember its message id on the thread's state, so the
 // reminder can be deleted (by deleteThread) the moment the thread is resolved + deleted. One live
-// reminder per thread (no duplicate spam) — a thread only gets here if it has no nudgeMessageId yet.
+// reminder per thread (no duplicate spam) - a thread only gets here if it has no nudgeMessageId yet.
 async function postNudge(alertChannel, threads, now, members, state) {
   if (!alertChannel) {
     console.error('[nudge] alert channel unavailable');
@@ -365,9 +365,9 @@ async function postNudge(alertChannel, threads, now, members, state) {
   for (const t of threads.slice(0, 25)) {
     const ageH = Math.floor((now - (t.createdTimestamp || now)) / HOUR);
     const owner = members && members.get(t.ownerId);
-    // Username as text — a bare <@id> renders as "unknown-user" for mods (not in allowedMentions).
+    // Username as text - a bare <@id> renders as "unknown-user" for mods (not in allowedMentions).
     const who = owner ? `**${owner.user.tag}**` : `id \`${t.ownerId}\``;
-    const body = `${ping}🧵 **Pending verification** — ${t} (owner: ${who}) has submitted a photo and is waiting ~${ageH}h for a mod to review.`;
+    const body = `${ping}🧵 **Pending verification** - ${t} (owner: ${who}) has submitted a photo and is waiting ~${ageH}h for a mod to review.`;
     const msg = await alertChannel.send({
       content: body,
       allowedMentions: { roles: config.modRoleId ? [config.modRoleId] : [] },

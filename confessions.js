@@ -1,8 +1,8 @@
-// confessions.js — Phase 1 of the anonymous pipe. Members run /confess; the bot posts it ANONYMOUSLY
+// confessions.js - Phase 1 of the anonymous pipe. Members run /confess; the bot posts it ANONYMOUSLY
 // to #confessions (bot is the author, so no member ever sees who wrote it). Per the locked visibility
 // model, a confession's author is visible to staff (owner + you + all mods) via a separate MOD-ONLY
 // #confession-log that carries the same text tagged with the real author + a delete button.
-//   • members can't post in #confessions directly (Create/Send denied) — only the bot does
+//   • members can't post in #confessions directly (Create/Send denied) - only the bot does
 //   • content filtered through the watchlist matcher · per-member cooldown · verified-only (gated in index)
 //   • numbered #1, #2… · staff can delete a bad one, which removes the public post too
 // Self-contained: owns its config (channel ids) + state (counter/cooldown/author map) files.
@@ -33,23 +33,23 @@ async function setup(guild, config) {
     const existing = await guild.channels.fetch(c.channelId).catch(() => null);
     if (existing) return { channel: existing, created: false };
   }
-  // Public confessions channel — everyone can read + react, only the bot can post.
+  // Public confessions channel - everyone can read + react, only the bot can post.
   const channel = await guild.channels.create({
     name: '💭┆confessions', type: ChannelType.GuildText,
-    topic: 'Anonymous confessions. Use /confess to send one — the bot posts it, your name is hidden from other members. Staff can see who wrote a confession.',
+    topic: 'Anonymous confessions. Use /confess to send one - the bot posts it, your name is hidden from other members. Staff can see who wrote a confession.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions],
       deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads, P.SendMessagesInThreads] }],
     reason: 'Anonymous confessions channel (owner request)',
   });
-  // Mod-only author log — clone the watch-log's overwrites so it's staff-visible exactly like that channel.
+  // Mod-only author log - clone the watch-log's overwrites so it's staff-visible exactly like that channel.
   const wl = config?.watchLogChannelId ? await guild.channels.fetch(config.watchLogChannelId).catch(() => null) : null;
   const logOverwrites = (wl && wl.permissionOverwrites.cache.size)
     ? [...wl.permissionOverwrites.cache.values()].map(o => ({ id: o.id, allow: o.allow, deny: o.deny, type: o.type }))
     : [{ id: guild.id, deny: [P.ViewChannel] }];
   const logChannel = await guild.channels.create({
     name: '💭┆confession-log', type: ChannelType.GuildText,
-    topic: 'Who wrote each confession — staff only. Members never see this.',
+    topic: 'Who wrote each confession - staff only. Members never see this.',
     permissionOverwrites: logOverwrites,
     reason: 'Confession author log (staff-only)',
   });

@@ -1,4 +1,4 @@
-// reports.js — anon pipe: /report. A member reports another member's behaviour without exposing
+// reports.js - anon pipe: /report. A member reports another member's behaviour without exposing
 // themselves to the person they're reporting. The report lands in a mod-only channel (staff act on it),
 // but WHO reported is sealed and revealable only to admins+ (per the locked visibility model:
 // report → author visible to admins), via a button. Mirrors the confessions pattern.
@@ -40,7 +40,7 @@ async function setup(guild, config) {
 function reportEmbed(num, text, reportedId, revealedBy, reporterId) {
   const e = new EmbedBuilder().setColor(0xE74C3C).setTitle(`🚩 Report #${num}`).setDescription(text)
     .addFields({ name: 'About', value: reportedId ? `<@${reportedId}>` : '_unspecified_', inline: true });
-  if (revealedBy) e.addFields({ name: 'Reporter (revealed)', value: `<@${reporterId}> — by <@${revealedBy}>`, inline: true });
+  if (revealedBy) e.addFields({ name: 'Reporter (revealed)', value: `<@${reporterId}> - by <@${revealedBy}>`, inline: true });
   else e.setFooter({ text: 'Reporter hidden. Admins can reveal on cause.' });
   return e;
 }

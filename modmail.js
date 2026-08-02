@@ -1,4 +1,4 @@
-// modmail.js — anon pipe: /modmail. An anonymous line to the mod team. The message lands in a mod-only
+// modmail.js - anon pipe: /modmail. An anonymous line to the mod team. The message lands in a mod-only
 // inbox (staff read + act); WHO sent it is sealed and revealable only to owners (per the locked model:
 // modmail → author visible to owners), via a button. Intake v1 (member → staff); a staff
 // reply-relay can be layered on later. Mirrors the confessions/reports pattern.
@@ -39,7 +39,7 @@ async function setup(guild, config) {
 
 function mailEmbed(num, text, revealedBy, senderId) {
   const e = new EmbedBuilder().setColor(0x1ABC9C).setTitle(`📨 Modmail #${num}`).setDescription(text);
-  if (revealedBy) e.addFields({ name: 'Sender (revealed)', value: `<@${senderId}> — by <@${revealedBy}>`, inline: true });
+  if (revealedBy) e.addFields({ name: 'Sender (revealed)', value: `<@${senderId}> - by <@${revealedBy}>`, inline: true });
   else e.setFooter({ text: 'Sender hidden. Only owners can reveal.' });
   return e;
 }
