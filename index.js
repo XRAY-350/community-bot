@@ -857,14 +857,14 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('appeal-reset').setDescription('Clear a decided ban-appeal so the person can be appealed again (admin)')
         .addStringOption(o => o.setName('user').setDescription('The banned person’s @username or user ID').setRequired(true))
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // admin ROLE, not the Administrator perm
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('help').setDescription('What can this bot do? The member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('dashboard').setDescription('Your member hub: status, server info, and every member feature')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('dashboard-setup').setDescription('Post + pin the public member hub panel in this channel (admin)')
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // admin ROLE, not the Administrator perm
       new SlashCommandBuilder().setName('tribe').setDescription('Your tribe: info, roster, standings, and (leaders) set the motto')
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
@@ -910,7 +910,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('points').setDescription('Set what a tribe calls its activity points, e.g. Tides')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('name').setDescription('The name for its points, e.g. Tides').setRequired(true).setMaxLength(20)))
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // visible to the ADMINS-★ role; handler gates on canWLAdmin
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes: weighted units, bans at 10')
         .addSubcommand(s => s.setName('view').setDescription('See a member’s current units + strike history')
@@ -3353,9 +3353,9 @@ client.on('interactionCreate', async (interaction) => {
       const c2raw = interaction.options.getString('color2'); const color2 = c2raw ? parseHex(c2raw) : null;
       if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
       const leaderMember = interaction.options.getMember('leader');
-      // A tribe head must be an admin (owner ruling): only admins found tribes and only admins lead them.
-      const leaderIsAdmin = leaderMember && (['admin', 'owner'].includes(opspanel.memberTier(leaderMember)) || leaderMember.permissions.has(PermissionsBitField.Flags.Administrator));
-      if (!leaderIsAdmin) return interaction.reply({ content: 'A tribe head has to be an **admin**. Pick an admin as the leader, or promote them to admin first.', flags: MessageFlags.Ephemeral });
+      // A tribe head must be an admin (owner ruling): the ADMINS-★ ROLE, not the Administrator permission.
+      const leaderIsAdmin = leaderMember && ['admin', 'owner'].includes(opspanel.memberTier(leaderMember));
+      if (!leaderIsAdmin) return interaction.reply({ content: 'A tribe head has to hold the **admin role**. Pick an admin as the leader, or give them the admin role first.', flags: MessageFlags.Ephemeral });
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       try {
         const b = await buildTribe(interaction.guild, {
