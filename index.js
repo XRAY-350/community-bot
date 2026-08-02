@@ -2962,35 +2962,32 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'list') {
       const board = tribes.standings(interaction.guild);
       if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
-      const lines = board.map((t, i) => `**${i + 1}.** ${t.emoji || '🏳️'} ${t.shortName || t.name} — ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · **${t.points || 0}** pts`);
-      const embed = new EmbedBuilder().setColor(0x2A426A).setTitle('⚔️ Tribe Standings').setDescription(lines.join('\n'))
-        .setFooter({ text: 'Points come from the territory/rivalry system (coming soon).' });
-      return interaction.reply({ embeds: [embed] });
+      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}** — ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.points || 0} pts\``).join('\n');
+      const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Points arrive with the territory system.' });
+      return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the land`, embeds: [embed] });
     }
     const argTribe = interaction.options.getString('tribe');
     const tribe = argTribe ? tribes.resolve(argTribe) : tribes.memberTribe(interaction.member);
     if (!tribe) return interaction.reply({ content: argTribe ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.', flags: MessageFlags.Ephemeral });
     if (sub === 'info') {
       const memberCount = interaction.guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
-      const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`].filter(Boolean).join(' · ') || '_none_';
-      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A)
-        .setTitle(`${tribe.emoji || '🏳️'} ${tribe.name}`)
-        .setDescription(tribe.motto ? `_“${tribe.motto}”_` : '_No motto set yet — a leader can set one with `/tribe motto`._')
-        .addFields(
-          { name: 'Leader', value: tribe.leaderRoleId ? `<@&${tribe.leaderRoleId}>` : '—', inline: true },
-          { name: 'Members', value: String(memberCount), inline: true },
-          { name: 'Standing', value: `**${tribe.points || 0}** pts`, inline: true },
-          { name: 'Land', value: land, inline: false },
-        );
-      return interaction.reply({ embeds: [embed], allowedMentions: { parse: [] } });
+      const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`].filter(Boolean).join(' · ') || '_none yet_';
+      const leader = tribe.leaderRoleId ? `<@&${tribe.leaderRoleId}>` : '_no leader set_';
+      const content = `## ${tribe.emoji || '🏴'} ${tribe.name}\n-# 🏴 Tribe · led by ${leader}`
+        + (tribe.motto ? `\n> *${tribe.motto}*` : '');
+      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).addFields(
+        { name: '🌊 Members', value: String(memberCount), inline: true },
+        { name: '⚔️ Standing', value: `**${tribe.points || 0}** pts`, inline: true },
+        { name: '⚓ Land', value: land, inline: false },
+      );
+      if (!tribe.motto) embed.setFooter({ text: 'A leader can set the motto with /tribe motto.' });
+      return interaction.reply({ content, embeds: [embed], allowedMentions: { parse: [] } });
     }
     if (sub === 'roster') {
       const members = tribes.roster(interaction.guild, tribe);
-      const names = members.map(m => `• ${m.displayName}`).join('\n') || '_No members yet._';
-      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A)
-        .setTitle(`${tribe.emoji || '🏳️'} ${tribe.shortName || tribe.name} — roster (${members.length})`)
-        .setDescription(names.slice(0, 4000));
-      return interaction.reply({ embeds: [embed] });
+      const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
+      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body);
+      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} — Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed] });
     }
     if (sub === 'motto') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
