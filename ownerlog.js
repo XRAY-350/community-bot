@@ -77,9 +77,10 @@ const EVENT_LABEL = {
   [AuditLogEvent.GuildUpdate]: '⚙️ Server settings changed',
 };
 
-// Turn an audit-log entry's raw field diffs into a readable line or two — e.g. role add/remove shows the
-// actual role name(s), not just "roles changed". Without this the entry says nothing an owner can act on.
-function describeChanges(e) {
+// Compact INLINE summary of an audit entry's field diffs — role add/remove shows the actual role name(s),
+// edits show key: old→new — joined with " · " so the whole entry fits on one blockquote line in the
+// grouped view. Without this the entry says nothing an owner can act on.
+function changesInline(e) {
   if (!e.changes || !e.changes.length) return '';
   const parts = [];
   for (const c of e.changes) {
@@ -90,11 +91,11 @@ function describeChanges(e) {
       continue;
     }
     if (['permissions', 'permission_overwrites', 'icon_hash', 'avatar_hash'].includes(c.key)) continue; // noisy, not human-readable
-    const fmt = v => (v === undefined || v === null) ? '_none_' : (typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : String(v).slice(0, 60));
-    if (oldVal !== undefined && newVal !== undefined) parts.push(`${c.key}: ${fmt(oldVal)} → ${fmt(newVal)}`);
-    else if (newVal !== undefined) parts.push(`${c.key} → ${fmt(newVal)}`);
+    const fmt = v => (v === undefined || v === null) ? '_none_' : (typeof v === 'object' ? JSON.stringify(v).slice(0, 40) : String(v).slice(0, 40));
+    if (oldVal !== undefined && newVal !== undefined) parts.push(`${c.key}: ${fmt(oldVal)}→${fmt(newVal)}`);
+    else if (newVal !== undefined) parts.push(`${c.key}→${fmt(newVal)}`);
   }
-  return parts.length ? `\n${parts.join('\n')}` : '';
+  return parts.length ? ` (${parts.join(' · ')})` : '';
 }
 
 // Poll Discord's audit log for entries newer than the last one we've posted. First run only seeds the
@@ -117,22 +118,36 @@ async function pollAuditLog(guild) {
     const fresh = entries.filter(e => BigInt(e.id) > BigInt(st.lastAuditLogId) && WATCHED_EVENTS.has(e.action) && e.executorId !== guild.client.user.id);
     if (!fresh.length) return 0;
     const ch = await ensureChannel(guild);
+    // Group the batch BY EXECUTOR and post it as ONE markdown-grouped message. Consecutive '>' blockquote
+    // lines merge into one continuous left bar — visually "carding" each person's actions like the old
+    // embed's colored bar did — while a plain '**actor**' header between groups splits the bars into
+    // separate cards. '###' titles the feed, '-#' footers the time. It's all message CONTENT, so <@id>
+    // mentions stay clickable (embeds render "@unknown-user" for uncached viewers in this locked channel);
+    // mentions render normally inside blockquotes/headers — only code blocks would suppress them.
+    const byExec = new Map();
     for (const e of fresh) {
+      const key = e.executorId || 'unknown';
+      if (!byExec.has(key)) byExec.set(key, { actor: e.executor ? `<@${e.executor.id}>` : '**Unknown**', lines: [] });
       const label = EVENT_LABEL[e.action] || `Action ${e.action}`;
-      // Real <@id> mentions — clickable, opens their profile card — but allowedMentions:{parse:[]} below
-      // means it never actually pings/notifies them. "Visible, not tagging" for a passive log feed.
-      const actor = e.executor ? `<@${e.executor.id}>` : 'Unknown';
-      // Users (the common case: kicked/banned/role-changed/updated member) get a clickable mention too;
-      // Roles/Channels/the Guild itself aren't people, so those stay plain bold text.
       const targetIsUser = e.target && (e.target.tag !== undefined || e.target.username !== undefined);
       const target = e.target ? (targetIsUser ? `<@${e.target.id}>` : `**${e.target.name || e.targetId || 'unknown'}**`) : null;
       const reason = e.reason ? ` — _${e.reason}_` : '';
-      // CONTENT, not an embed — so @mentions resolve to clickable names for every viewer (embed mentions
-      // show "@unknown-user" when the viewer's client hasn't cached that member). parse:[] = no pings.
-      // '-#' renders the label as small subtext, marking this as the passive audit feed vs the manual logs.
-      const line = `${actor}${target ? ` → ${target}` : ''}${describeChanges(e)}${reason}`;
-      await ch.send({ content: `-# 🗒️ Server audit log · ${label}\n${line}`, allowedMentions: { parse: [] } }).catch(() => {});
+      byExec.get(key).lines.push(`> ${label}${target ? ` ${target}` : ''}${changesInline(e)}${reason}`);
     }
+    const blocks = ['### 🗒️ Server audit log'];
+    for (const { actor, lines } of byExec.values()) {
+      blocks.push(`${actor} — ${lines.length} action${lines.length === 1 ? '' : 's'}`);
+      blocks.push(lines.join('\n'));
+    }
+    blocks.push(`-# <t:${Math.floor(Date.now() / 1000)}:f>`);
+    // Post, chunking if the batch would exceed Discord's 2000-char content cap (rare for a 2-min window).
+    let buf = '';
+    const flush = async () => { if (buf) { await ch.send({ content: buf, allowedMentions: { parse: [] } }).catch(() => {}); buf = ''; } };
+    for (const b of blocks) {
+      if (buf.length + b.length + 1 > 1900) await flush();
+      buf += (buf ? '\n' : '') + b;
+    }
+    await flush();
     saveState({ lastAuditLogId: entries[entries.length - 1].id });
     return fresh.length;
   } catch (e) { console.error('[ownerlog] pollAuditLog:', e.message); return 0; }
