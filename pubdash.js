@@ -93,7 +93,9 @@ function tribeView(member) {
     .addFields(
       { name: 'Your rank', value: rankName, inline: true },
       { name: `Your ${pts}`, value: String(mine), inline: true },
-      { name: 'Members', value: String(memberCount), inline: true });
+      { name: 'Members', value: String(memberCount), inline: true },
+      { name: '👑 Glory (this week)', value: String(tribe.glory || 0), inline: true },
+      { name: '🪙 Treasury', value: String(tribe.treasury || 0), inline: true });
   return { embeds: [embed] };
 }
 

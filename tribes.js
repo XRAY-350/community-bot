@@ -131,9 +131,11 @@ function roster(guild, tribe) {
 }
 
 // Standings for the rivalry board: tribes sorted by points (desc), with live member counts.
+// Live standings for the crown race — same ranking the weekly reset itself uses (Glory, then treasury, then
+// member count), so /tribe list always shows "who's currently leading" honestly, not a dead placeholder field.
 function standings(guild) {
   return all().map(t => ({ ...t, memberCount: guild.roles.cache.get(t.roleId)?.members.size ?? 0 }))
-    .sort((a, b) => (b.points || 0) - (a.points || 0) || b.memberCount - a.memberCount);
+    .sort((a, b) => (b.glory || 0) - (a.glory || 0) || (b.treasury || 0) - (a.treasury || 0) || b.memberCount - a.memberCount);
 }
 
 // The label a tribe uses for its head. Personalized per tribe (tribe.leaderTitle); falls back to the default.
@@ -163,8 +165,47 @@ function updateNomination(targetId, patch) {
 }
 function clearNomination(targetId) { const s = load(); if (s.nominations) delete s.nominations[targetId]; save(s); }
 
+// ---- Treasury (a bank, never resets, spent by the head in the shop) + Glory (weekly flow, decides the crown
+// only, never spent) — see TRIBE_PHASE5_SPEC.md section 1 for why these are kept separate. ----
+function addTreasury(key, n) { const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0; t.treasury = (t.treasury || 0) + n; save(s); return t.treasury; }
+function getTreasury(key) { return (get(key) || {}).treasury || 0; }
+function spendTreasury(key, n) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || (t.treasury || 0) < n) return false;
+  t.treasury -= n; save(s); return true;
+}
+function addGlory(key, n) { const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0; t.glory = (t.glory || 0) + n; save(s); return t.glory; }
+function getGlory(key) { return (get(key) || {}).glory || 0; }
+// Weekly crown reset: pick the highest-Glory tribe (tie-break: treasury, then live member count via `guild`),
+// award it +500 treasury and a crownsWon tick, then zero every tribe's Glory for the new week. Returns the
+// winning tribe's { key, glory }, or null if NO tribe earned any Glory this week — the reset still happens,
+// but no crown is awarded for a week nobody actually contested (own call, not explicit in the spec: awarding
+// a crown off a bare tie-break with zero real activity felt hollow, especially before any Glory faucets exist).
+function resetWeeklyGlory(guild) {
+  const s = load(); if (!s.tribes || !Object.keys(s.tribes).length) return null;
+  const list = Object.values(s.tribes).map(t => ({
+    key: t.key, glory: t.glory || 0, treasury: t.treasury || 0,
+    memberCount: guild.roles.cache.get(t.roleId)?.members.size ?? 0,
+  })).sort((a, b) => b.glory - a.glory || b.treasury - a.treasury || b.memberCount - a.memberCount);
+  for (const t of Object.values(s.tribes)) t.glory = 0;
+  const winner = list[0];
+  if (winner && winner.glory > 0) {
+    s.tribes[winner.key].treasury = (s.tribes[winner.key].treasury || 0) + 500;
+    s.tribes[winner.key].crownsWon = (s.tribes[winner.key].crownsWon || 0) + 1;
+  }
+  save(s);
+  return (winner && winner.glory > 0) ? { key: winner.key, glory: winner.glory } : null;
+}
+// Has the weekly crown reset already run for the CURRENT week (Sunday 00:00 UTC boundary)? A setInterval tick
+// doesn't need to land exactly on the boundary, just run at least once after it passes — tracked so it only
+// actually fires once per week no matter how often the caller checks.
+function weekStartMs(nowMs) { const d = new Date(nowMs); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - d.getUTCDay(), 0, 0, 0, 0); }
+function dueForWeeklyCrown(nowMs) { const s = load(); return !s.lastGloryResetWeek || s.lastGloryResetWeek < weekStartMs(nowMs); }
+function markWeeklyCrownDone(nowMs) { const s = load(); s.lastGloryResetWeek = weekStartMs(nowMs); save(s); }
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
-  createNomination, getNomination, updateNomination, clearNomination };
+  createNomination, getNomination, updateNomination, clearNomination,
+  addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
+  dueForWeeklyCrown, markWeeklyCrownDone };

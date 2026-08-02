@@ -238,18 +238,53 @@ tribe creation). **Needs a manual re-post later**: this guide references `/tribe
 `postThroneGuide` for all 3 tribes (or write a `/tribe-admin` refresh command) so the pinned guide stays current
 instead of drifting stale.
 
+## 13. Treasury / Glory meters + weekly crown cron + Offerings — DONE 2026-08-02, build order item #8
+Implements §1/§2/§4/§6 as locked. In `tribes.js`: `addTreasury/getTreasury/spendTreasury/addGlory/getGlory`
+(plain state math), `resetWeeklyGlory(guild)` (picks the winner by Glory → treasury → live member count, zeroes
+every tribe's Glory, banks the winner +500 treasury + a `crownsWon` tick, returns the winner or `null`),
+`dueForWeeklyCrown`/`markWeeklyCrownDone` (idempotency tracking via a `lastGloryResetWeek` timestamp so a
+setInterval tick doesn't need to land exactly on the Sunday 00:00 UTC boundary, just run at least once after it
+passes). In `index.js`: `ensureCrownRole(guild)` lazily creates a single server-wide **👑 Tribe Champions**
+role (hoisted, gold) the first time it's needed and caches its id in tribe state — self-healing if manually
+deleted. `processWeeklyCrownIfDue(guild)` does the actual work: strips the crown role from everyone currently
+holding it, grants it to every CURRENT member of the winning tribe's role, posts a throne announcement. Wired
+into the boot-catch-up + hourly-check pattern already used for MDNI/dashboard sweeps elsewhere in `index.js`.
+**Own interpretation, not explicit in the original spec text**: if EVERY tribe has 0 Glory for the week (no
+faucets have paid in — true right now, since contests/rituals aren't wired), `resetWeeklyGlory` still resets
+but awards NO crown, rather than crowning an arbitrary tribe off a bare treasury/member-count tie-break with
+zero real activity. Confirmed via first live boot: "[tribe crown] weekly reset ran; no tribe earned Glory this
+week, no crown awarded" — correct, expected behavior until contests/rituals actually feed Glory.
+**Offerings**: `/tribe offer <amount>` — any tribe member converts their OWN Tides into their tribe's Treasury
+at 1:1, feeds Treasury only (never Glory, so an old stockpile can't be laundered into a crown). Safe by
+construction since ranks are promotion-only.
+**`/tribe-admin grant <tribe> <treasury|glory> <amount>`** — added, NOT explicitly in the original spec text,
+but necessary: monthly-contest and ritual payouts (§2) can't be auto-wired yet (contests have no code hook for
+"pay the winner's tribe" and rituals aren't designed, §8), so this is the stopgap lever admins use to award
+those manually until they're automated. Supports negative amounts to correct a mistake.
+**`/tribe list` and `/tribe info` now show real data** — found and fixed a related dead-field bug while doing
+this: both were already wired to show a `tribe.points` field with a footer literally saying "Points arrive
+with the territory system," but `.points` was NEVER incremented anywhere, so every tribe always showed 0 and
+`/tribe list`'s sort order was arbitrary. That field WAS the intended hook for exactly this build — replaced
+with real Glory (this week) + Treasury (the bank), and `tribes.standings()` now sorts by the same Glory → 
+treasury → member-count order the crown itself uses, so the list is an honest "who's currently leading."
+Pubdash's My Tribe view also got Glory + Treasury fields for consistency.
+**Throne guide refreshed** — added the new `/tribe offer` line to `tribeThroneGuide()` and re-ran the pin
+refresh on all 3 existing tribes (edited the existing pinned message in place rather than re-posting, found via
+`fetchPinned()` + matching the bot's own message content).
+
 ## Build order (REORDERED 2026-08-02, owner: "we should do it first" re: Valith — do NOT skip ahead without checking in)
 1. ~~Valith revamp (§9)~~ — DONE 2026-08-02.
 2. ~~Staff oversight of all tribe land (§9a)~~ — DONE 2026-08-02.
 3. ~~Category + role hierarchy grouping (§9b)~~ — DONE 2026-08-02.
 4. ~~Guided non-inline tribe builder (§10)~~ — DONE 2026-08-02 (owner should click-through test it live).
 5. ~~Nominate → approve → accept flow (§7)~~ — DONE 2026-08-02.
-6. ~~Rank-role creation bug fix + backfill (§11)~~ — DONE 2026-08-02 (found while building #7 below).
-7. ~~Pin the member action guide in each tribe's throne (§12)~~ — DONE 2026-08-02, needs a refresh once
-   Offerings ships (see §12).
-8. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4) — CURRENT NEXT STEP
-9. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
-10. Rituals (§8) — design pass, then build
+6. ~~Rank-role creation bug fix + backfill (§11)~~ — DONE 2026-08-02.
+7. ~~Pin the member action guide in each tribe's throne (§12)~~ — DONE 2026-08-02, refreshed again in §13.
+8. ~~Treasury / Glory meters + weekly crown cron + Offerings (§13)~~ — DONE 2026-08-02. First live crown check
+   ran clean (no crown awarded yet, correctly, since nothing feeds Glory until contests/rituals are wired).
+9. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a) — CURRENT NEXT STEP
+10. Rituals (§8) — design pass, then build. Once built, wire ritual payouts + monthly contest payouts to
+    replace the `/tribe-admin grant` stopgap.
 
 ## Outstanding: launch announcement, revisited
 Still not written. Worth asking the owner if they want an announcement now — Valith has real land, tribes are

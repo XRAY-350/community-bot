@@ -151,7 +151,7 @@ function tribeThroneGuide(tribe) {
     content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
       + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
       + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks as you go: ${ranks}. Ranks only ever go up.\n`
-      + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n`
+      + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n> \`/tribe offer <amount>\`: give up your OWN ${pts} to fill the tribe's treasury (1:1). Never demotes you, just slows your climb to your next rank.\n`
       + `\n**${title} (or staff) only:**\n> \`/tribe invite\` \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n`
       + `\n-# Once you join, you can't leave or switch on your own, a ${title} must \`/tribe banish\` you first. Your first tribe is a free pick, after that you need to be accepted.`,
     allowedMentions: { parse: [] },
@@ -166,6 +166,37 @@ async function postThroneGuide(guild, tribe) {
   const msg = await throne.send(tribeThroneGuide(tribe)).catch(() => null);
   if (msg) await msg.pin().catch(() => {});
   return msg;
+}
+// ---- Weekly crown cycle (see TRIBE_PHASE5_SPEC.md section 6) ----
+// A single server-wide role, granted to every CURRENT member of the highest-Glory tribe each week, stripped
+// from whoever held it before. Bragging rights only (owner: "the reward should just be a role/bragging
+// rights") — no channel/territory control. Lazily created once and cached in tribe state (self-healing if the
+// role is ever deleted by hand — just recreates it).
+async function ensureCrownRole(guild) {
+  const s = tribes.load();
+  if (s.crownRoleId) { const r = guild.roles.cache.get(s.crownRoleId) || await guild.roles.fetch(s.crownRoleId).catch(() => null); if (r) return r; }
+  const role = await guild.roles.create({ name: '👑 Tribe Champions', colors: { primaryColor: 0xF1C40F }, hoist: true, mentionable: false, reason: 'Weekly tribe crown' }).catch(() => null);
+  if (role) { s.crownRoleId = role.id; tribes.save(s); }
+  return role;
+}
+// Boot catch-up + hourly check (same pattern as the MDNI/dashboard sweeps above) — idempotent via
+// tribes.dueForWeeklyCrown, so checking more often than the weekly boundary is harmless.
+async function processWeeklyCrownIfDue(guild) {
+  if (!guild || !tribes.dueForWeeklyCrown(Date.now())) return;
+  tribes.markWeeklyCrownDone(Date.now());   // mark BEFORE doing the work so an overlapping tick can't double-fire
+  await guild.members.fetch().catch(() => {});
+  const result = tribes.resetWeeklyGlory(guild);
+  const crownRole = await ensureCrownRole(guild);
+  if (crownRole) for (const m of [...crownRole.members.values()]) await m.roles.remove(crownRole.id, 'Weekly crown reset').catch(() => {});
+  if (!result) { console.log('[tribe crown] weekly reset ran; no tribe earned Glory this week, no crown awarded.'); return; }
+  const tribe = tribes.get(result.key);
+  if (!tribe) return;
+  const tribeRole = guild.roles.cache.get(tribe.roleId);
+  if (crownRole && tribeRole) for (const m of [...tribeRole.members.values()]) await m.roles.add(crownRole.id, `Weekly crown: ${tribe.key}`).catch(() => {});
+  if (tribe.throneId) {
+    const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
+    if (throne) await throne.send({ content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
+  }
 }
 // ---- Guided (non-inline) tribe builder wizard ----
 // /tribe-admin create takes ONLY the leader inline (an 8+ option command is unusable); everything else is
@@ -1027,6 +1058,8 @@ client.once('ready', async () => {
           .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('nominate').setDescription('Propose a member to join YOUR tribe (any member can; head/staff approve, they accept)')
           .addUserOption(o => o.setName('user').setDescription('Who to nominate').setRequired(true)))
+        .addSubcommand(s => s.setName('offer').setDescription('Convert your OWN activity points into your tribe’s treasury (1:1, never demotes you)')
+          .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
@@ -1062,6 +1095,11 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('rank2').setDescription('Second rank name').setRequired(true).setMaxLength(40))
           .addStringOption(o => o.setName('rank3').setDescription('Third rank name').setRequired(true).setMaxLength(40))
           .addStringOption(o => o.setName('rank4').setDescription('Highest rank name').setRequired(true).setMaxLength(40)))
+        .addSubcommand(s => s.setName('grant').setDescription('Manually award treasury or glory (stopgap until contests/rituals auto-wire)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
+          .addStringOption(o => o.setName('meter').setDescription('Which meter').setRequired(true)
+            .addChoices({ name: 'Treasury (permanent bank)', value: 'treasury' }, { name: 'Glory (this week, decides the crown)', value: 'glory' }))
+          .addIntegerOption(o => o.setName('amount').setDescription('How much (negative to correct a mistake)').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // visible to the ADMINS-★ role; handler gates on canWLAdmin
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes: weighted units, bans at 10')
@@ -1245,6 +1283,10 @@ client.once('ready', async () => {
   // maintain member-level denies for them. Boot + hourly, same cadence.
   if (dguild) await sweepMdniStaffLock(dguild).catch(e => console.error(`[mdni-lock] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g)).catch(() => {}), 3600000);
+
+  // Weekly tribe crown: boot catch-up + hourly check (idempotent — see tribes.dueForWeeklyCrown).
+  if (dguild) await processWeeklyCrownIfDue(dguild).catch(e => console.error(`[tribe crown] boot check: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => processWeeklyCrownIfDue(g)).catch(() => {}), 3600000);
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {
@@ -3547,9 +3589,9 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'list') {
       const board = tribes.standings(interaction.guild);
       if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
-      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}** · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.points || 0} pts\``).join('\n');
-      const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Points arrive with the territory system.' });
-      return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the land`, embeds: [embed] });
+      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}** · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury`).join('\n');
+      const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown, and resets each week. Treasury is the tribe’s permanent bank.' });
+      return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed] });
     }
     const argTribe = interaction.options.getString('tribe');
     // Warden tools always act on the tribe you LEAD/belong to; info/roster accept an explicit tribe arg.
@@ -3564,10 +3606,12 @@ client.on('interactionCreate', async (interaction) => {
         + (tribe.motto ? `\n> *${tribe.motto}*` : '');
       const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).addFields(
         { name: '🌊 Members', value: String(memberCount), inline: true },
-        { name: '⚔️ Standing', value: `**${tribe.points || 0}** pts`, inline: true },
+        { name: '👑 Glory (this week)', value: String(tribe.glory || 0), inline: true },
+        { name: '🪙 Treasury', value: String(tribe.treasury || 0), inline: true },
         { name: '⚓ Land', value: land, inline: false },
       );
-      if (!tribe.motto) embed.setFooter({ text: 'A leader can set the motto with /tribe motto.' });
+      const footerBits = [tribe.crownsWon ? `👑 ${tribe.crownsWon} crown${tribe.crownsWon === 1 ? '' : 's'} won lifetime` : null, !tribe.motto ? 'A leader can set the motto with /tribe motto.' : null].filter(Boolean);
+      if (footerBits.length) embed.setFooter({ text: footerBits.join(' · ') });
       return interaction.reply({ content, embeds: [embed], allowedMentions: { parse: [] } });
     }
     if (sub === 'roster') {
@@ -3610,6 +3654,15 @@ client.on('interactionCreate', async (interaction) => {
         new ButtonBuilder().setCustomId(`tribenom_deny:${target.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
       await throne.send({ content: `## 🪶 Nomination\n-# proposed by <@${interaction.user.id}>\n> <@${interaction.user.id}> nominates <@${target.id}> to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to send them an invite to accept.`, components: [row], allowedMentions: { users: [target.id] } }).catch(() => {});
       return interaction.reply({ content: `🪶 Sent to <#${tribe.throneId}> for approval. If ${tribes.leaderTitle(tribe)} or staff approve, ${target.displayName} will get an invite to accept.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'offer') {   // voluntary tithe: your OWN points -> tribe treasury, 1:1. Ranks never demote, so
+      const pts = tribe.pointsName || 'points';                                                   // this only slows your NEXT promotion, it can't cost you your current rank.
+      const amount = interaction.options.getInteger('amount');
+      const mine = tribes.getTides(tribe.key, interaction.user.id);
+      if (mine < amount) return interaction.reply({ content: `You only have **${mine} ${pts}**.`, flags: MessageFlags.Ephemeral });
+      tribes.addTides(tribe.key, interaction.user.id, -amount);
+      tribes.addTreasury(tribe.key, amount);
+      return interaction.reply({ content: `🪙 Offered **${amount} ${pts}** to **${tribe.shortName || tribe.name}**'s treasury, now **${tribes.getTreasury(tribe.key)}**. Your rank doesn't drop, this only slows your climb to the next one.`, allowedMentions: { parse: [] } });
     }
     // ---- Warden's tools: leaders of THIS tribe (or staff) ----
     if (wardenSub) {
@@ -3717,6 +3770,14 @@ client.on('interactionCreate', async (interaction) => {
         if (role && role.name !== want) await role.setName(want, 'tribe rank rename').catch(() => {});
       }
       return interaction.editReply(`✅ Renamed **${fresh.shortName || fresh.name}** ranks: ${fresh.ranks.map(r => r.name).join(' → ')}.`);
+    }
+    if (sub === 'grant') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      const meter = interaction.options.getString('meter');
+      const amount = interaction.options.getInteger('amount');
+      const newVal = meter === 'treasury' ? tribes.addTreasury(t.key, amount) : tribes.addGlory(t.key, amount);
+      return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** ${meter} ${amount >= 0 ? '+' : ''}${amount} → now **${newVal}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
   }
   if (name === 'roleselect-role') {
