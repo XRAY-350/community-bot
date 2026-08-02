@@ -19,6 +19,7 @@ const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
 const wordfilter = require('./wordfilter');
 const tribes = require('./tribes');
+const pubdash = require('./pubdash');
 const suggest = require('./suggest');
 const suggestions = require('./suggestions');
 const confessions = require('./confessions');
@@ -860,6 +861,10 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('help').setDescription('What can this bot do? The member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('dashboard').setDescription('Your member hub: status, server info, and every member feature')
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('dashboard-setup').setDescription('Post + pin the public member hub panel in this channel (admin)')
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('tribe').setDescription('Your tribe: info, roster, standings, and (leaders) set the motto')
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
@@ -2376,6 +2381,10 @@ client.on('interactionCreate', async (interaction) => {
     const r = await strikeAppeals.submit(interaction.guild, interaction.member, state, interaction.values[0], null);
     return interaction.editReply(r.ok ? `⚖️ Opened your strike appeal in <#${r.threadId}>. Head there to explain it to staff.` : `❌ ${r.msg}`);
   }
+  // Public member hub buttons (from /dashboard and the pinned panel) — all ephemeral, per clicker.
+  if (interaction.isButton?.() && interaction.customId === 'pubdash_status') return interaction.reply({ ...pubdash.statusView(interaction.member, state), flags: MessageFlags.Ephemeral });
+  if (interaction.isButton?.() && interaction.customId === 'pubdash_info') return interaction.reply({ ...pubdash.infoView(), flags: MessageFlags.Ephemeral });
+  if (interaction.isButton?.() && interaction.customId === 'pubdash_features') return interaction.reply({ ...pubdash.featuresView(), flags: MessageFlags.Ephemeral });
   if (interaction.isButton?.()) {
     const id = interaction.customId || '';
     try {
@@ -3185,6 +3194,17 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'help') {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
+  }
+  if (name === 'dashboard') {
+    return interaction.reply({ ...pubdash.hubPanel(), flags: MessageFlags.Ephemeral });
+  }
+  if (name === 'dashboard-setup') {
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can post the hub panel.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const sent = await interaction.channel.send(pubdash.hubPanel()).catch(() => null);
+    if (!sent) return interaction.editReply('Could not post here. Check my permissions in this channel.');
+    await sent.pin().catch(() => {});
+    return interaction.editReply('Posted and pinned the member hub in this channel.');
   }
   if (name === 'tribe') {
     const sub = interaction.options.getSubcommand();

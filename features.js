@@ -21,6 +21,8 @@ const REGISTRY = [
   { key: 'panel',       audience: 'staff',  built: true,  commands: ['panel', 'staff'] },
   { key: 'features',    audience: 'core',   built: true,  commands: ['features'] }, // owner-only feature toggle command
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
+  { key: 'dashboard',   audience: 'member', built: true,  commands: ['dashboard', 'dashboard-setup'], // public member hub: status, server info, feature guide
+    help: { name: '🤖 Member hub', value: 'Open `/dashboard` for your status, the rules, and every member feature in one place.' } },
   { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
