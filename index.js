@@ -88,6 +88,7 @@ async function buildTribe(guild, opts, config) {
     ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []), ...deny] });
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
   const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color,
+    pointsName: (opts.pointsName || 'points').slice(0, 20),
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
   return { tribe, role, leaderRole, cat, throne, hall, vc };
 }
@@ -887,10 +888,11 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('create').setDescription('Build a brand-new tribe: role + leader role + private land + register')
           .addStringOption(o => o.setName('name').setDescription('Full tribe name, e.g. "The Tribe of X"').setRequired(true))
           .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
-          .addUserOption(o => o.setName('leader').setDescription('The tribe leader').setRequired(true))
+          .addUserOption(o => o.setName('leader').setDescription('The tribe leader (must be an admin)').setRequired(true))
           .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient role (optional)').setRequired(false))
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false))
           .addStringOption(o => o.setName('short_name').setDescription('Short name for cards (optional)').setRequired(false))
+          .addStringOption(o => o.setName('points_name').setDescription('What this tribe calls its activity points, e.g. Tides (default: points)').setRequired(false).setMaxLength(20))
           .addStringOption(o => o.setName('style').setDescription('Channel text style (default: small-caps)').setRequired(false)
             .addChoices({ name: 'small-caps (server style)', value: 'small' }, { name: 'plain', value: 'plain' })))
         .addSubcommand(s => s.setName('register').setDescription('Adopt an EXISTING role + channels as a tribe')
@@ -900,6 +902,9 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('leader_role').setDescription('The leader role (optional)').setRequired(false))
           .addChannelOption(o => o.setName('hall').setDescription('Main tribe channel (optional)').setRequired(false))
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
+        .addSubcommand(s => s.setName('points').setDescription('Set what a tribe calls its activity points, e.g. Tides')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
+          .addStringOption(o => o.setName('name').setDescription('The name for its points, e.g. Tides').setRequired(true).setMaxLength(20)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes: weighted units, bans at 10')
@@ -2035,7 +2040,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.respond(strikes.autocompleteChoices(state, interaction.user.id, { query: focused, excludeCrossedBan: true }));
       } catch (e) { console.error('[appeal-strike] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
-    if (interaction.commandName === 'tribe') {
+    if (interaction.commandName === 'tribe' || interaction.commandName === 'tribe-admin') {
       try {
         const focused = (interaction.options.getFocused() || '').toLowerCase();
         const choices = tribes.all()
@@ -2355,6 +2360,21 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike, now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [] });
     } catch (e) { console.error(`[strike-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not strike.') : interaction.reply({ content: 'Could not strike.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
+  }
+  // Corner "Appeal a strike" button: cornered members can't run /appeal (the corner removes slash access),
+  // but a button is not gated by that. Click opens an ephemeral picker of their appealable strikes.
+  if (interaction.isButton?.() && interaction.customId === 'strikeappeal_start') {
+    if (!features.enabled('strikeAppeals')) return interaction.reply({ content: 'Strike appeals are not available right now.', flags: MessageFlags.Ephemeral });
+    const choices = strikes.autocompleteChoices(state, interaction.user.id, { excludeCrossedBan: true });
+    if (!choices.length) return interaction.reply({ content: 'You have no active strikes that can be appealed.', flags: MessageFlags.Ephemeral });
+    const menu = new StringSelectMenuBuilder().setCustomId('strikeappeal_pick').setPlaceholder('Which strike do you want to appeal?')
+      .addOptions(choices.slice(0, 25).map(c => ({ label: c.name.slice(0, 100), value: c.value })));
+    return interaction.reply({ content: '⚖️ Pick the strike you want to appeal. I will open a private thread with staff, and you can reach it even while cornered.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'strikeappeal_pick') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const r = await strikeAppeals.submit(interaction.guild, interaction.member, state, interaction.values[0], null);
+    return interaction.editReply(r.ok ? `⚖️ Opened your strike appeal in <#${r.threadId}>. Head there to explain it to staff.` : `❌ ${r.msg}`);
   }
   if (interaction.isButton?.()) {
     const id = interaction.customId || '';
@@ -3201,11 +3221,12 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed] });
     }
     if (sub === 'leaderboard') {
+      const pts = tribe.pointsName || 'points';
       const top = tribes.topTides(tribe.key, 15);
-      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name}: Tides\n> No Tides earned yet. Chat in the hall to start climbing.`, allowedMentions: { parse: [] } });
-      const lines = top.map((e, i) => `> ${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> · \`${e.points} 🌊\``);
+      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts}\n> No ${pts} earned yet. Chat in the hall to start climbing.`, allowedMentions: { parse: [] } });
+      const lines = top.map((e, i) => `> ${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> · \`${e.points} ${pts}\``);
       const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(lines.join('\n'));
-      return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name}: Tides Leaderboard\n-# top ${top.length} by activity`, embeds: [embed], allowedMentions: { parse: [] } });
+      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts} Leaderboard\n-# top ${top.length} by activity`, embeds: [embed], allowedMentions: { parse: [] } });
     }
     if (sub === 'motto') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
@@ -3282,11 +3303,15 @@ client.on('interactionCreate', async (interaction) => {
       const c2raw = interaction.options.getString('color2'); const color2 = c2raw ? parseHex(c2raw) : null;
       if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
       const leaderMember = interaction.options.getMember('leader');
+      // A tribe head must be an admin (owner ruling): only admins found tribes and only admins lead them.
+      const leaderIsAdmin = leaderMember && (['admin', 'owner'].includes(opspanel.memberTier(leaderMember)) || leaderMember.permissions.has(PermissionsBitField.Flags.Administrator));
+      if (!leaderIsAdmin) return interaction.reply({ content: 'A tribe head has to be an **admin**. Pick an admin as the leader, or promote them to admin first.', flags: MessageFlags.Ephemeral });
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       try {
         const b = await buildTribe(interaction.guild, {
           name: interaction.options.getString('name'), shortName: interaction.options.getString('short_name'),
           emoji: interaction.options.getString('emoji'), color, color2, style: interaction.options.getString('style'), leaderMember,
+          pointsName: interaction.options.getString('points_name'),
         }, config);
         for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
         return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → ${leaderMember ? `<@${leaderMember.id}>` : '_unassigned_'}\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard · drag the role up in Server Settings if you want it higher in the hoist.`, allowedMentions: { parse: [] } });
@@ -3302,6 +3327,13 @@ client.on('interactionCreate', async (interaction) => {
         emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
       return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in \`/tribe list\` and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'points') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      const nm = interaction.options.getString('name').slice(0, 20);
+      tribes.update(t.key, { pointsName: nm });
+      return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now calls its activity points **${nm}**. Shows on \`/tribe leaderboard\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
   }
   if (name === 'roleselect-role') {
