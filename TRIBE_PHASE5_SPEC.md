@@ -83,13 +83,19 @@ always shows at the bottom once reachable, with its live scaling price.
 - Needs a scheduled job (node-cron or equivalent) in the bot process — check for an existing cron pattern
   before adding a new dependency (e.g. does levelcheck or wordfilter already run on a timer?).
 
-## 7. Nominate-a-member flow (LOCKED — replaces plain head-invite for member-initiated adds)
-Three steps, nobody dragged in against their will:
-1. A **member** (not necessarily the head) proposes someone via a command/button — "I'd like to add X."
-2. **Head or admin approves** the proposal (approve/deny buttons).
-3. On approval, the **nominee gets their own accept prompt** — they only join if THEY accept.
-This is in addition to (not a replacement for) the existing head-run `/tribe invite`, which stays a direct add
-for when the head already has the person's buy-in.
+## 7. Nominate-a-member flow — DONE 2026-08-02, build order item #5
+Three steps, nobody dragged in against their will: `/tribe nominate <user>` (any tribe member, not just the
+head) → posts to the tribe's **throne** with Approve/Deny buttons (gated to `tribes.isLeader` or staff) → on
+Approve, posts to the PUBLIC **#bot-commands** channel (`BOT_COMMANDS_CH`) pinging the nominee with their own
+Accept/Decline buttons (gated to `interaction.user.id === targetId`).
+**No DMs anywhere** — checked first (`grep` for `.user.send(`/`createDM` across `index.js` came back empty),
+this bot has never DMed a user; the established pattern is public-channel-ping + gated buttons (see the corner
+appeal flow) or ephemeral self-serve. Followed that instead of introducing DMs as a first for this codebase.
+State is **persisted** (not in-memory like the tribe-builder wizard) since approval/accept can land hours or
+days later — added `tribes.createNomination/getNomination/updateNomination/clearNomination`, keyed by targetId
+(one active nomination per person), status `pending_approval` → `pending_accept` → cleared on accept/decline.
+Re-validates eligibility (not already in a tribe) at both approve-time and accept-time in case things changed
+while it was pending. This is IN ADDITION to the existing head-run `/tribe invite`, which stays a direct add.
 
 ## 8. Rituals — still open, needs its own design pass
 "Muster roll-call" and "weekly challenge" are named as concepts (§2 faucets reference them) but not designed.
@@ -208,26 +214,48 @@ but I can't click Discord buttons/submit modals from this environment. The owner
 create` once live and click through Identity → Colours → (optionally Land) → Build before trusting this for a
 real tribe.
 
+## 11. Rank-role creation was silently MISSING from buildTribe() — found + fixed 2026-08-02
+While writing the throne guide (§12), found that `buildTribe()` never actually created the 4 rank roles or
+populated `tribe.ranks` — Kayena's Cute Crabs (the first tribe actually built end-to-end through the WORKING
+`/tribe-admin create`, post the 9a staff-oversight fix) had `ranks: undefined`. Cobalt Vigil and Valith only
+had ranks because they were built/backfilled by hand outside this code path, which is why the gap went
+unnoticed. `/tribe rank`, auto-promotion, and rank display in `/tribe info`/pubdash were all silently no-op-ing
+for any tribe actually built the "real" way. **Fixed**: `buildTribe()` now creates the 4 `tribes.RANK_LADDER`
+roles (colorless, non-hoisted, pushed to position 1 — matching how Cobalt Vigil's/Valith's rank roles already
+look) and stores them in `tribe.ranks` at registration. **Backfilled** Kayena's Cute Crabs with its own 4 rank
+roles (Initiate/Member/Veteran/Elder, its own emoji) via a one-off script — this is a genuine "fix the class"
+case, not just a Kayena patch.
+
+## 12. Throne pinned guide — DONE 2026-08-02, build order item #8 (pulled forward, owner: "we also need a
+pinned artifact in the throne")
+`tribeThroneGuide(tribe)` builds a hybrid embed+markdown reference (how to earn the tribe's points, the rank
+ladder, every member command, every head/staff-only command, the loyalty/no-self-leave rule) and
+`postThroneGuide(guild, tribe)` posts + pins it — both in `index.js`, called automatically at the end of
+`buildTribe()` for every future tribe. Backfilled onto all 3 existing tribes' thrones via a one-off script.
+Best-effort (missing throne / send failure / pin failure — e.g. 50-pin cap — all fail silently, never blocks
+tribe creation). **Needs a manual re-post later**: this guide references `/tribe nominate` (done) but NOT
+`/tribe offer` (Offerings, not built yet) — once Treasury/Glory/Offerings ship (build order #7), re-run
+`postThroneGuide` for all 3 tribes (or write a `/tribe-admin` refresh command) so the pinned guide stays current
+instead of drifting stale.
+
 ## Build order (REORDERED 2026-08-02, owner: "we should do it first" re: Valith — do NOT skip ahead without checking in)
 1. ~~Valith revamp (§9)~~ — DONE 2026-08-02.
-2. ~~Staff oversight of all tribe land (§9a)~~ — DONE 2026-08-02 (came in as an owner request mid-Valith-build,
-   folded into the same session since it touched the same `buildTribe()` code path).
+2. ~~Staff oversight of all tribe land (§9a)~~ — DONE 2026-08-02.
 3. ~~Category + role hierarchy grouping (§9b)~~ — DONE 2026-08-02.
-4. ~~Guided non-inline tribe builder (§10)~~ — DONE 2026-08-02 (code shipped + bot restarted; owner should
-   click-through test it live before trusting it for a real tribe).
-5. Nominate → approve → accept flow (§7) — CURRENT NEXT STEP
-6. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4)
-7. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
-8. Pin the member action guide in each tribe's throne channel (owner: "we also need this pinned in the throne
-   so all members know what they can do" — separate from the shop UI, a static reference post)
-9. Rituals (§8) — design pass, then build
+4. ~~Guided non-inline tribe builder (§10)~~ — DONE 2026-08-02 (owner should click-through test it live).
+5. ~~Nominate → approve → accept flow (§7)~~ — DONE 2026-08-02.
+6. ~~Rank-role creation bug fix + backfill (§11)~~ — DONE 2026-08-02 (found while building #7 below).
+7. ~~Pin the member action guide in each tribe's throne (§12)~~ — DONE 2026-08-02, needs a refresh once
+   Offerings ships (see §12).
+8. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4) — CURRENT NEXT STEP
+9. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
+10. Rituals (§8) — design pass, then build
 
 ## Outstanding: launch announcement, revisited
-Still not written (see the dedicated section above) — nothing has shipped to MEMBERS yet (the guided builder is
-an admin-only tool). Worth asking the owner if they want an announcement now that Valith is properly built out
-and the tribe roster/hierarchy is cleaned up, even before the economy/rituals land, since that's a visible,
-member-facing improvement (Valith finally has real land, tribes are visually grouped). Otherwise keep holding
-until more of the roadmap is live.
+Still not written. Worth asking the owner if they want an announcement now — Valith has real land, tribes are
+visually grouped, ranks actually work on every tribe now, nominate is live, and every throne has a reference
+guide. That's a lot of visible, member-facing improvement even before the economy/rituals land. Otherwise keep
+holding until more of the roadmap is live.
 
 ## Decisions still genuinely open (ask, don't guess)
 - Stronghold Tier's exact cosmetic payoff per tier (flourish text/visual) — default to a simple numeric badge.

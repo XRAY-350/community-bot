@@ -122,12 +122,50 @@ async function buildTribe(guild, opts, config) {
     { id: role.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.Stream, P.UseVAD, P.MentionEveryone] },
     ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []),
     ...staffAllow([P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers]), ...deny] });
+  // Rank roles (the Initiate -> ... ladder from tribes.RANK_LADDER). Colorless, non-hoisted tags kept at the
+  // very bottom of the hierarchy (informational only, no display prominence) — matches how Cobalt Vigil's and
+  // Valith's rank roles already look. NOTE: this was previously MISSING entirely — buildTribe() registered a
+  // tribe with no `ranks` array, so /tribe rank + auto-promotion silently did nothing for any tribe built
+  // through this path (found via Kayena's Cute Crabs, the first tribe actually built end to end this way).
+  const rankRoles = [];
+  for (const r of tribes.RANK_LADDER) {
+    const rr = await guild.roles.create({ name: `${emoji} ${r.name}`, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` }).catch(() => null);
+    if (rr) await rr.setPosition(1).catch(() => {});
+    rankRoles.push({ ...r, roleId: rr ? rr.id : null });
+  }
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
   const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color,
     pointsName: (opts.pointsName || 'points').slice(0, 20),
-    leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40),
+    leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40), ranks: rankRoles,
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
+  await postThroneGuide(guild, tribe);
   return { tribe, role, leaderRole, cat, throne, hall, vc };
+}
+// The pinned reference every tribe's throne gets, so members know what they can do without digging through
+// /help (owner: "we also need this pinned in the throne so all members know what they can do").
+function tribeThroneGuide(tribe) {
+  const pts = tribe.pointsName || 'points';
+  const title = tribes.leaderTitle(tribe);
+  const ranks = (tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet';
+  return {
+    content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
+      + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
+      + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks as you go: ${ranks}. Ranks only ever go up.\n`
+      + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n`
+      + `\n**${title} (or staff) only:**\n> \`/tribe invite\` \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n`
+      + `\n-# Once you join, you can't leave or switch on your own, a ${title} must \`/tribe banish\` you first. Your first tribe is a free pick, after that you need to be accepted.`,
+    allowedMentions: { parse: [] },
+  };
+}
+// Post + pin the guide in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
+// e.g. the channel already has 50 pins — all fail silently rather than blocking tribe creation on it).
+async function postThroneGuide(guild, tribe) {
+  if (!tribe.throneId) return null;
+  const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
+  if (!throne) return null;
+  const msg = await throne.send(tribeThroneGuide(tribe)).catch(() => null);
+  if (msg) await msg.pin().catch(() => {});
+  return msg;
 }
 // ---- Guided (non-inline) tribe builder wizard ----
 // /tribe-admin create takes ONLY the leader inline (an 8+ option command is unusable); everything else is
@@ -987,6 +1025,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
         .addSubcommand(s => s.setName('invite').setDescription('Add a member to your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
+        .addSubcommand(s => s.setName('nominate').setDescription('Propose a member to join YOUR tribe (any member can; head/staff approve, they accept)')
+          .addUserOption(o => o.setName('user').setDescription('Who to nominate').setRequired(true)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
@@ -2591,6 +2631,63 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply(`❌ Build failed: ${e.message}`);
     }
   }
+  // ---- Tribe nominations: propose (throne, head/staff approve) -> accept (#bot-commands, nominee only) ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribenom_approve:')) {
+    const targetId = interaction.customId.split(':')[1];
+    const nom = tribes.getNomination(targetId);
+    if (!nom || nom.status !== 'pending_approval') return interaction.reply({ content: 'This nomination is no longer pending.', flags: MessageFlags.Ephemeral });
+    const tribe = tribes.get(nom.tribeKey);
+    if (!tribe) { tribes.clearNomination(targetId); return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral }); }
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can approve this.`, flags: MessageFlags.Ephemeral });
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target || target.roles.cache.has(tribe.roleId) || tribes.memberTribe(target)) {
+      tribes.clearNomination(targetId);
+      return interaction.update({ content: `${interaction.message.content}\n\n_No longer valid — the member left, or already joined a tribe._`, components: [] });
+    }
+    tribes.updateNomination(targetId, { status: 'pending_accept', approvedBy: interaction.user.id });
+    await interaction.update({ content: `${interaction.message.content}\n\n✅ **Approved** by <@${interaction.user.id}>. Waiting on <@${targetId}> to accept.`, components: [], allowedMentions: { parse: [] } });
+    const ch = await interaction.guild.channels.fetch(BOT_COMMANDS_CH).catch(() => null);
+    if (ch) {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tribenom_accept:${targetId}`).setLabel('✅ Accept').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`tribenom_decline:${targetId}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
+      await ch.send({ content: `## 🪶 Tribe invitation\n<@${targetId}>, **${tribe.shortName || tribe.name}** approved your nomination. Join?`, components: [row], allowedMentions: { users: [targetId] } }).catch(() => {});
+    }
+    return;
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribenom_deny:')) {
+    const targetId = interaction.customId.split(':')[1];
+    const nom = tribes.getNomination(targetId);
+    if (!nom || nom.status !== 'pending_approval') return interaction.reply({ content: 'This nomination is no longer pending.', flags: MessageFlags.Ephemeral });
+    const tribe = tribes.get(nom.tribeKey);
+    if (tribe && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can deny this.`, flags: MessageFlags.Ephemeral });
+    tribes.clearNomination(targetId);
+    return interaction.update({ content: `${interaction.message.content}\n\n❌ **Denied** by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } });
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribenom_accept:')) {
+    const targetId = interaction.customId.split(':')[1];
+    if (interaction.user.id !== targetId) return interaction.reply({ content: 'This invitation isn’t yours.', flags: MessageFlags.Ephemeral });
+    const nom = tribes.getNomination(targetId);
+    if (!nom || nom.status !== 'pending_accept') return interaction.update({ content: 'This invitation is no longer active.', components: [] }).catch(() => {});
+    const tribe = tribes.get(nom.tribeKey);
+    if (!tribe) { tribes.clearNomination(targetId); return interaction.update({ content: 'That tribe no longer exists.', components: [] }); }
+    if (tribes.memberTribe(interaction.member)) { tribes.clearNomination(targetId); return interaction.update({ content: 'You’re already in a tribe.', components: [] }); }
+    await interaction.deferUpdate();
+    tribes.setMembership(tribe.key, targetId, true);   // authorize BEFORE adding so the guard honors it
+    const ok = await interaction.member.roles.add(tribe.roleId, `Tribe nomination accepted, approved by ${nom.approvedBy}`).then(() => true).catch(() => false);
+    if (!ok) { tribes.setMembership(tribe.key, targetId, false); return interaction.editReply({ content: 'Couldn’t add the tribe role. Tell an admin.', components: [] }); }
+    tribes.clearNomination(targetId);
+    if (tribe.hallId) { const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new member joins ${tribe.shortName || tribe.name}\n> <@${targetId}> accepted their invitation. Welcome!`, allowedMentions: { users: [targetId] } }).catch(() => {}); }
+    return interaction.editReply({ content: `✅ Welcome to **${tribe.shortName || tribe.name}**, <@${targetId}>!`, components: [], allowedMentions: { users: [targetId] } });
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribenom_decline:')) {
+    const targetId = interaction.customId.split(':')[1];
+    if (interaction.user.id !== targetId) return interaction.reply({ content: 'This invitation isn’t yours.', flags: MessageFlags.Ephemeral });
+    tribes.clearNomination(targetId);
+    return interaction.update({ content: 'Declined.', components: [] });
+  }
   // Public member hub (from /dashboard and the pinned panel). Action buttons DO the thing: open a modal
   // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.
   if (interaction.isButton?.() && interaction.customId.startsWith('pub')) {
@@ -3493,6 +3590,26 @@ client.on('interactionCreate', async (interaction) => {
       const text = interaction.options.getString('text');
       tribes.setMotto(tribe.key, text);
       return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'nominate') {   // ANY member can propose; goes to the throne for approval, then the nominee accepts
+      const target = interaction.options.getMember('user');
+      if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+      if (target.id === interaction.user.id) return interaction.reply({ content: 'You can’t nominate yourself.', flags: MessageFlags.Ephemeral });
+      if (target.user.bot) return interaction.reply({ content: 'Bots can’t join tribes.', flags: MessageFlags.Ephemeral });
+      if (target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> is already in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      const other = tribes.memberTribe(target);
+      if (other) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}**. A member can only be in one tribe.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      const existing = tribes.getNomination(target.id);
+      if (existing && ['pending_approval', 'pending_accept'].includes(existing.status)) return interaction.reply({ content: `<@${target.id}> already has a pending nomination.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to route the approval through.', flags: MessageFlags.Ephemeral });
+      const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
+      if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
+      tribes.createNomination(tribe.key, interaction.user.id, target.id);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tribenom_approve:${target.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`tribenom_deny:${target.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
+      await throne.send({ content: `## 🪶 Nomination\n-# proposed by <@${interaction.user.id}>\n> <@${interaction.user.id}> nominates <@${target.id}> to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to send them an invite to accept.`, components: [row], allowedMentions: { users: [target.id] } }).catch(() => {});
+      return interaction.reply({ content: `🪶 Sent to <#${tribe.throneId}> for approval. If ${tribes.leaderTitle(tribe)} or staff approve, ${target.displayName} will get an invite to accept.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     // ---- Warden's tools: leaders of THIS tribe (or staff) ----
     if (wardenSub) {

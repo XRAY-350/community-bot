@@ -146,7 +146,25 @@ function setRankNames(key, names) {
   save(s); return t.ranks;
 }
 
+// Nominations: a THIRD route into a tribe alongside self-join and a leader's direct /tribe invite. Any
+// member proposes -> the tribe's head or staff approves -> the NOMINEE gets their own accept prompt and only
+// joins if they accept. Persisted (not in-memory) since approval/accept can land hours or days later. Keyed
+// by targetId — one active nomination per person at a time.
+function createNomination(tribeKey, nominatorId, targetId) {
+  const s = load(); if (!s.nominations) s.nominations = {};
+  s.nominations[targetId] = { tribeKey, nominatorId, targetId, status: 'pending_approval', createdAt: Date.now() };
+  save(s); return s.nominations[targetId];
+}
+function getNomination(targetId) { return (load().nominations || {})[targetId] || null; }
+function updateNomination(targetId, patch) {
+  const s = load(); if (!s.nominations || !s.nominations[targetId]) return null;
+  s.nominations[targetId] = { ...s.nominations[targetId], ...patch };
+  save(s); return s.nominations[targetId];
+}
+function clearNomination(targetId) { const s = load(); if (s.nominations) delete s.nominations[targetId]; save(s); }
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
-  markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE };
+  markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
+  createNomination, getNomination, updateNomination, clearNomination };
