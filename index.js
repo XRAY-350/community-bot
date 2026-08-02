@@ -618,7 +618,7 @@ async function dashCleanTick(guild) {
 // --- Member-facing bot guide: one embed, shown by /help AND kept as a single continuously-edited
 // message in the server-guide channel (re-rendered on every startup so it never goes stale).
 const GUIDE_FILE = process.env.FUBU_GUIDE_FILE || '/home/ubuntu/.fubu_guide.json';
-const SERVER_GUIDE_CH = process.env.FUBU_SERVER_GUIDE_CHANNEL_ID || '1516378825712472104';
+const SERVER_GUIDE_CH = process.env.FUBU_SERVER_GUIDE_CHANNEL_ID || '1533511860459016314';   // #bot-guide (moved from #server-guide 2026-08-02)
 function helpEmbed(guild) {
   const e = new EmbedBuilder().setColor(0x5865F2).setTitle('🤖 What you can use the bot for')
     .setDescription('Most of these are **anonymous**. Use any of them in any channel:')
