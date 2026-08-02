@@ -207,11 +207,21 @@ calls the existing `buildTribe()`. Member-nominate (§7) gets a similar small mo
 8. Rituals (§8) — design pass, then build
 
 ## Decisions still genuinely open (ask, don't guess)
-- Rally-ping-as-perk: owner said "nsh" which was read as a soft no and NOT included in the shop. If that
-  was meant as a yes, it needs to be added back with a gate + price.
 - Stronghold Tier's exact cosmetic payoff per tier (flourish text/visual) — default to a simple numeric badge.
-- ~5 orphaned duplicate role-pairs from failed Kayena tribe-creation attempts, sitting inert at role position 1
-  (see §9b) — flagged, not deleted. Ask before cleaning these up.
 - Whether Valith's actual Discord LEADER ROLE object should be renamed from "Valith!" to something reflecting
-  its new leaderTitle "Warlord" (only the bot-text label was changed in §9, not the literal Discord role name) —
-  noticed, not changed, not asked yet.
+  its new leaderTitle "Warlord" — owner said "wait" (2026-08-02), hold off, don't touch it.
+
+## Resolved this round (2026-08-02)
+- Rally-ping-as-perk: owner confirmed "it was a nah" — correctly excluded from the shop, no change needed.
+- The ~5 orphaned duplicate role-pairs from failed Kayena tribe-creation attempts: owner said "cleanup" — all
+  10 orphan roles deleted via the API (204 on each, some hit rate-limits and were retried with a delay). Only
+  the active `Kayena's Cute Crabs` / `Kayena's Cute Crabs Leader` pair remains, verified after.
+
+## Outstanding: launch announcement (owner, 2026-08-02: "We also need to create the announcement for when
+we're done")
+Owner wants an announcement drafted for when the tribe Phase 5 work ships (or a relevant milestone within it —
+clarify scope when we get there: the whole Phase 5 rollout, or just the next feature going live). Do NOT write
+this now — nothing in the build order (guided builder, nominate flow, economy, shop, rituals) is live yet. Draft
+it when we're actually close to shipping, pull from the FEATURES_RUNBOOK.md / COPY-REGISTRY.md conventions this
+repo already uses for member-facing copy (no em dashes, hybrid embed+markdown per [[hybrid-embeds-and-markdown]]
+memory). Revisit this line each time a build-order item ships to decide if "done" has arrived yet.
