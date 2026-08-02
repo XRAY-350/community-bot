@@ -1279,6 +1279,23 @@ client.on('threadMembersUpdate', async (addedMembers, removedMembers, thread) =>
   } catch (e) { console.error('[modapps] threadMembersUpdate enforcement:', e.message); }
 });
 
+// A mod deleted a denied ban-appeal thread once (2026-08-01), erasing the record. Mods can no longer delete
+// threads in the appeal channels (ManageThreads denied there), but log ANY appeal-thread deletion to owner-log
+// regardless of who did it — a permanent, visible trail. (The transcript itself is snapshotted into the appeal
+// record at decision time, so even a deletion can't lose the contents.)
+client.on('threadDelete', async (thread) => {
+  try {
+    const appealChans = [appeals.loadConfig().channelId, strikeAppeals.loadConfig().channelId].filter(Boolean);
+    if (!thread.parentId || !appealChans.includes(thread.parentId)) return;
+    let who = '**unknown**';   // threadDelete carries no executor — find it in the audit log
+    const logs = await thread.guild.fetchAuditLogs({ type: AuditLogEvent.ThreadDelete, limit: 5 }).catch(() => null);
+    const entry = logs && [...logs.entries.values()].find(e => e.targetId === thread.id || e.target?.name === thread.name);
+    if (entry?.executor) who = `<@${entry.executor.id}>`;
+    await ownerlog.log(thread.guild, { emoji: '🗑️', title: 'Appeal thread DELETED', color: 0xED4245,
+      detail: `**${thread.name}** (in <#${thread.parentId}>) was deleted by ${who}. Decided appeals are meant to stay archived, not deleted — the saved transcript is in the appeal record if you need it.` });
+  } catch (e) { console.error('[appeal-thread-delete]', e.message); }
+});
+
 // Verify panel: post Verify / Deny&kick buttons in every thread opened in the verify-here channel.
 client.on('threadCreate', async (thread, newlyCreated) => {
   try {

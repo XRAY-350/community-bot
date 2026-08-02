@@ -8,6 +8,7 @@ const config = require('./config');
 const strikes = require('./strikes');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
+const threads = require('./threads');
 
 const CONFIG_FILE = process.env.FUBU_STRIKE_APPEALS_FILE || '/home/ubuntu/.fubu_strike_appeals.json';
 const STATE_FILE = process.env.FUBU_STRIKE_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_strike_appeals_state.json';
@@ -31,7 +32,10 @@ async function setup(guild) {
     topic: 'Appeal one of your own strikes: /appeal strike <strike>. Opens a private thread only you + staff can see.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
-      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] }],
+      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] },
+      // Mods review + decide via buttons but CANNOT delete/manage appeal threads — the decided-appeal record
+      // must survive (admins+ keep ManageThreads).
+      ...(config.modRoleId ? [{ id: config.modRoleId, deny: [P.ManageThreads] }] : [])],
     reason: 'Strike appeals (owner request)',
   });
   c = { ...c, channelId: channel.id }; saveConfig(c);
@@ -148,6 +152,8 @@ async function handleButton(interaction, state) {
         ? `⚖️ <@${rec.memberId}> — your appeal was **partially approved** by <@${interaction.user.id}>. The strike was reduced to **${reduceTo} unit${reduceTo > 1 ? 's' : ''}**.`
         : `✅ <@${rec.memberId}> — your appeal was **approved** by <@${interaction.user.id}>. The strike has been removed.`;
     await thread.send({ content: msg, allowedMentions: { users: [rec.memberId] } }).catch(() => {});
+    // Preserve the discussion in the bot before archiving — survives a later thread deletion.
+    rec.transcript = await threads.snapshotTranscript(thread); rec.transcriptAt = Date.now(); saveState(st);
     await thread.setLocked(true).catch(() => {});
     await thread.setArchived(true).catch(() => {});
   }

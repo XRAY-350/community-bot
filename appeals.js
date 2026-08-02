@@ -8,6 +8,7 @@ const { CATEGORY_LABEL } = require('./opspanel');
 const config = require('./config');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
+const threads = require('./threads');
 
 const CONFIG_FILE = process.env.FUBU_APPEALS_FILE || '/home/ubuntu/.fubu_appeals.json';
 const STATE_FILE = process.env.FUBU_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_appeals_state.json';
@@ -44,7 +45,10 @@ async function setup(guild, config) {
     topic: 'Appeal a ban on a friend’s behalf: /appeal <their @username>. Opens a private thread only you + staff can see.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
-      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] }],
+      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] },
+      // Mods can review + Approve/Deny via buttons but CANNOT delete/manage appeal threads — the record of a
+      // decided appeal must survive (a mod deleted a denied appeal thread once, 2026-08-01). Admins+ keep it.
+      ...(config.modRoleId ? [{ id: config.modRoleId, deny: [P.ManageThreads] }] : [])],
     reason: 'Ban appeals (owner request)',
   });
   c = { ...c, channelId: channel.id }; saveConfig(c);
@@ -161,6 +165,9 @@ async function handleButton(interaction) {
       ? `✅ ${friendPings} — the appeal for **${rec.bannedTag}** was **approved** by <@${interaction.user.id}>. They’ve been unbanned and can rejoin. 💛`
       : `⛔ ${friendPings} — the appeal for **${rec.bannedTag}** was **denied** by <@${interaction.user.id}>. The ban stands.`,
       allowedMentions: { users: rec.friends } }).catch(() => {});
+    // Preserve the whole discussion in the bot BEFORE archiving, so the record survives even if the thread
+    // is later deleted (the reason a decided appeal's contents were lost once).
+    rec.transcript = await threads.snapshotTranscript(thread); rec.transcriptAt = Date.now(); saveState(state);
     await thread.setLocked(true).catch(() => {});
     await thread.setArchived(true).catch(() => {});
   }

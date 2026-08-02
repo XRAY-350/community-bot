@@ -120,4 +120,26 @@ async function kickMember(guild, userId, reason, { dryRun }) {
   }
 }
 
-module.exports = { memberThreads, activeThreads, archivedThreads, allThreads, lastActivity, deleteThread, kickMember };
+// Snapshot a thread's messages (oldest→newest) into a compact array — used to preserve an appeal's whole
+// discussion in the bot's OWN state at decision time, so the record survives even if the thread is later
+// deleted (a mod deleted a decided appeal thread once, 2026-08-01). Captures text + a flattened form of any
+// embeds. Capped so a runaway thread can't bloat the state file.
+async function snapshotTranscript(thread, cap = 200) {
+  if (!thread || !thread.messages) return [];
+  const out = [];
+  let before;
+  for (let p = 0; p < 3 && out.length < cap; p++) {
+    const batch = await thread.messages.fetch({ limit: 100, before }).catch(() => null);
+    if (!batch || !batch.size) break;
+    for (const m of batch.values()) out.push({
+      ts: m.createdTimestamp, authorId: m.author?.id, authorTag: m.author?.tag,
+      content: (m.content || '').slice(0, 2000),
+      embeds: (m.embeds || []).map(e => `${e.title || ''}${e.description ? ' — ' + e.description.slice(0, 500) : ''}${(e.fields || []).map(f => `\n${f.name}: ${f.value}`).join('')}`.trim()).filter(Boolean),
+    });
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+  return out.sort((a, b) => a.ts - b.ts);
+}
+
+module.exports = { memberThreads, activeThreads, archivedThreads, allThreads, lastActivity, deleteThread, kickMember, snapshotTranscript };
