@@ -18,6 +18,7 @@ const { activeThreads } = require('./threads');
 const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
 const wordfilter = require('./wordfilter');
+const tribes = require('./tribes');
 const suggest = require('./suggest');
 const suggestions = require('./suggestions');
 const confessions = require('./confessions');
@@ -815,6 +816,15 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('help').setDescription('What can this bot do? — the member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('tribe').setDescription('Your tribe — info, roster, standings, and (leaders) set the motto')
+        .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('roster').setDescription('List a tribe’s members')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('list').setDescription('All tribes and their standings'))
+        .addSubcommand(s => s.setName('motto').setDescription('Set your tribe’s motto (leaders only)')
+          .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes — weighted units, bans at 10')
         .addSubcommand(s => s.setName('view').setDescription('See a member’s current units + strike history')
@@ -1894,6 +1904,16 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.respond(strikes.autocompleteChoices(state, interaction.user.id, { query: focused, excludeCrossedBan: true }));
       } catch (e) { console.error('[appeal-strike] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
+    if (interaction.commandName === 'tribe') {
+      try {
+        const focused = (interaction.options.getFocused() || '').toLowerCase();
+        const choices = tribes.all()
+          .filter(t => !focused || (t.name || '').toLowerCase().includes(focused) || t.key.includes(focused))
+          .slice(0, 25)
+          .map(t => ({ name: `${t.emoji || ''} ${t.shortName || t.name}`.trim().slice(0, 100), value: t.key }));
+        return interaction.respond(choices);
+      } catch (e) { console.error('[tribe] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
+    }
     if (interaction.commandName === 'features') {
       try {
         const focused = (interaction.options.getFocused() || '').toLowerCase();
@@ -2936,6 +2956,49 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'help') {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
+  }
+  if (name === 'tribe') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'list') {
+      const board = tribes.standings(interaction.guild);
+      if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
+      const lines = board.map((t, i) => `**${i + 1}.** ${t.emoji || '🏳️'} ${t.shortName || t.name} — ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · **${t.points || 0}** pts`);
+      const embed = new EmbedBuilder().setColor(0x2A426A).setTitle('⚔️ Tribe Standings').setDescription(lines.join('\n'))
+        .setFooter({ text: 'Points come from the territory/rivalry system (coming soon).' });
+      return interaction.reply({ embeds: [embed] });
+    }
+    const argTribe = interaction.options.getString('tribe');
+    const tribe = argTribe ? tribes.resolve(argTribe) : tribes.memberTribe(interaction.member);
+    if (!tribe) return interaction.reply({ content: argTribe ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.', flags: MessageFlags.Ephemeral });
+    if (sub === 'info') {
+      const memberCount = interaction.guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
+      const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`].filter(Boolean).join(' · ') || '_none_';
+      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A)
+        .setTitle(`${tribe.emoji || '🏳️'} ${tribe.name}`)
+        .setDescription(tribe.motto ? `_“${tribe.motto}”_` : '_No motto set yet — a leader can set one with `/tribe motto`._')
+        .addFields(
+          { name: 'Leader', value: tribe.leaderRoleId ? `<@&${tribe.leaderRoleId}>` : '—', inline: true },
+          { name: 'Members', value: String(memberCount), inline: true },
+          { name: 'Standing', value: `**${tribe.points || 0}** pts`, inline: true },
+          { name: 'Land', value: land, inline: false },
+        );
+      return interaction.reply({ embeds: [embed], allowedMentions: { parse: [] } });
+    }
+    if (sub === 'roster') {
+      const members = tribes.roster(interaction.guild, tribe);
+      const names = members.map(m => `• ${m.displayName}`).join('\n') || '_No members yet._';
+      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A)
+        .setTitle(`${tribe.emoji || '🏳️'} ${tribe.shortName || tribe.name} — roster (${members.length})`)
+        .setDescription(names.slice(0, 4000));
+      return interaction.reply({ embeds: [embed] });
+    }
+    if (sub === 'motto') {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its motto.`, flags: MessageFlags.Ephemeral });
+      const text = interaction.options.getString('text');
+      tribes.setMotto(tribe.key, text);
+      return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n_“${text.slice(0, 300)}”_`, allowedMentions: { parse: [] } });
+    }
   }
   if (name === 'roleselect-role') {
     if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can manage #roles.', flags: MessageFlags.Ephemeral });

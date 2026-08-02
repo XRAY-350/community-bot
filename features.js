@@ -24,6 +24,8 @@ const REGISTRY = [
   { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
+  { key: 'tribes',      audience: 'member', built: true,  commands: ['tribe'], // member-run factions: hub/roster/standings/motto (framework; Warden tools + ranks + rivalry to come)
+    help: { name: '🏴 Tribes', value: 'Join a tribe with `/request-role`, then `/tribe info`, `/tribe roster`, and `/tribe list` for standings. Leaders set the vibe with `/tribe motto`.' } },
   { key: 'watchlist',   audience: 'staff',  built: true,  commands: ['watchlist', 'watchlist-terms', 'watchlist-suggest', 'unban'], contexts: ['Report to watchlist'] },
   { key: 'suggestions', audience: 'member', built: true,  commands: ['suggest', 'suggest-setup'],
     help: { name: '💡 `/suggest` — pitch an idea', value: 'Have an idea to make the server better? `/suggest` posts it for the community to vote 👍/👎, and staff review the ones people like. One clear idea per suggestion works best.' } },
