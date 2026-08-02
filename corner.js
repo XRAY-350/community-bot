@@ -1,4 +1,4 @@
-// corner.js - "the corner" jail. Cornering a member strips all of their non-identifying,
+// corner.js — "the corner" jail. Cornering a member strips all of their non-identifying,
 // non-managed roles (storing them), gives the corner role (which can only see the corner +
 // verify/rules channels), and optionally auto-releases after a duration. Releasing restores the
 // stored roles and removes the corner role.
@@ -8,7 +8,7 @@ const config = require('./config');
 
 // ---- precise per-corner release timers -----------------------------------------------------------
 // A timed corner arms a setTimeout that releases the member at EXACTLY their time (down to the second),
-// instead of relying on the periodic poller - which now only survives as a restart backstop. index.js
+// instead of relying on the periodic poller — which now only survives as a restart backstop. index.js
 // registers the real release+announce via setReleaseHandler; corner.js just fires it on schedule.
 const _timers = new Map();            // userId -> Timeout handle
 let _releaseHandler = null;           // async (guild, userId) => { uncorner + announce } (set by index.js)
@@ -48,7 +48,7 @@ function overwriteMatches(channel, id, desired) {
 
 // Self-heal the corner permissions on boot (and can be re-run anytime): the corner role sees ONLY
 // the corner channel + the verify/rules category (view-only); every other channel is hidden from
-// it. In the corner channel, non-cornered members (@everyone) can ONLY see + react - they can view,
+// it. In the corner channel, non-cornered members (@everyone) can ONLY see + react — they can view,
 // read history, and add reactions, but NOT send messages or use threads; the corner role + mods can
 // text. Drift-correcting: only edits overwrites that don't already match (fast when nothing changed).
 async function ensureCornerPerms(guild) {
@@ -58,7 +58,7 @@ async function ensureCornerPerms(guild) {
   for (const ch of chans) {
     try {
       if (ch.id === config.cornerChannelId) {
-        // Non-cornered members: see + react ONLY - view, read history, add reactions; no send, no threads.
+        // Non-cornered members: see + react ONLY — view, read history, add reactions; no send, no threads.
         const everyoneDesired = {
           ViewChannel: true, ReadMessageHistory: true, AddReactions: true,
           SendMessages: false, SendMessagesInThreads: false,
@@ -78,7 +78,7 @@ async function ensureCornerPerms(guild) {
         if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true })) {
           await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'corner self-heal' }); fixed++;
         }
-        // The corner is PUBLIC - everyone (including verified members) can see it. Clear any VERIFIED
+        // The corner is PUBLIC — everyone (including verified members) can see it. Clear any VERIFIED
         // view-deny that would otherwise hide the corner from the general verified population.
         if (config.verifiedRoleId) {
           const vOw = ch.permissionOverwrites.cache.get(config.verifiedRoleId);
@@ -91,7 +91,7 @@ async function ensureCornerPerms(guild) {
       if (ch.id === config.cornerVcId) {
         // Corner VC: @everyone can SEE but not join; cornered can join + talk (no screen-share/soundboard);
         // mods get full voice moderation. (This channel sits IN the view category, so it needs its own
-        // case - the generic view-only rule below would grant View but not Connect.)
+        // case — the generic view-only rule below would grant View but not Connect.)
         const eDesired = { ViewChannel: true, Connect: false };
         if (!overwriteMatches(ch, everyone, eDesired)) { await ch.permissionOverwrites.edit(everyone, eDesired, { reason: 'corner self-heal' }); fixed++; }
         const rDesired = { ViewChannel: true, Connect: true, Speak: true, SendMessages: true, ReadMessageHistory: true, AddReactions: true, EmbedLinks: true, Stream: false, UseSoundboard: false, UseExternalSounds: false };
@@ -128,7 +128,7 @@ async function ensureCornerPerms(guild) {
       // Everything else stays hidden from them.
       const viewOnly = ch.id === config.cornerViewCategoryId || ch.parentId === config.cornerViewCategoryId;
       // View-only channels (verify/rules + corner-log): let cornered SEE past messages (ReadMessageHistory
-      // - the fix for "can't see the log", since the category denies history by default) and react, but
+      // — the fix for "can't see the log", since the category denies history by default) and react, but
       // not send. Everything else stays hidden.
       const desired = viewOnly
         ? { ViewChannel: true, ReadMessageHistory: true, AddReactions: true, SendMessages: false }
@@ -156,7 +156,7 @@ function parseDuration(str) {
 
 // The roles that get stripped when cornering: everything the member has except @everyone,
 // bot-managed roles (can't remove those), the identifying roles, and the corner role itself.
-// The Unverified role is also kept - so cornering an unverified member preserves their verification
+// The Unverified role is also kept — so cornering an unverified member preserves their verification
 // state (they come out of the corner still unverified, not in limbo with neither role).
 function rolesToStrip(guild, member) {
   const keep = new Set(config.identifyingRoleIds);
@@ -167,10 +167,10 @@ function rolesToStrip(guild, member) {
     .map(r => r.id);
 }
 
-// Append a corner-history entry (survives release, unlike the ephemeral `cornered` active-status -
+// Append a corner-history entry (survives release, unlike the ephemeral `cornered` active-status —
 // that record is deleted on release, this one never is) and return how many times this member has now
 // been cornered for the SAME rule (or just 1 if no rule was given). Used to alert staff when a repeat
-// crosses a threshold - never auto-escalates to a Strike; a human always converts. Covers both halves
+// crosses a threshold — never auto-escalates to a Strike; a human always converts. Covers both halves
 // of the escalation rule: repeating while still cornered (the "already cornered" branch below) and
 // separate trips over time (a fresh corner after a prior release).
 function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Date.now()) {
@@ -190,33 +190,33 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   const now = Date.now();
-  // Nobody can corner themselves - every entry point (slash /corner, "Send to corner", the dashboard
+  // Nobody can corner themselves — every entry point (slash /corner, "Send to corner", the dashboard
   // picker, the re-corner button) funnels through here, so one central guard closes them all. The tier
-  // check upstream lets equal tiers act on each other (mod↔mod), which - with no self-check - also let a
+  // check upstream lets equal tiers act on each other (mod↔mod), which — with no self-check — also let a
   // mod corner their OWN account and self-strip their roles. Auto-corner (rule 9) passes the bot's id as
   // byId against a member target, so byId===member.id only ever means a genuine self-corner attempt.
   if (byId && byId === member.id) {
     return { ok: false, error: "you can't corner yourself." };
   }
   // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
-  // use PUT semantics computed off the LOCAL cache - a stale/partial member (e.g. from a message event,
+  // use PUT semantics computed off the LOCAL cache — a stale/partial member (e.g. from a message event,
   // or roles changed since it was last fetched) would (a) store an incomplete snapshot AND (b) silently
-  // WIPE any role that's on Discord but missing from the cache (it's not in the PUT, so it's removed) -
+  // WIPE any role that's on Discord but missing from the cache (it's not in the PUT, so it's removed) —
   // and since it was never snapshotted, it's lost forever on release. This is the root of "came back
   // from the corner missing some roles". Fetching fresh here closes that whole class.
   try { member = await member.fetch(true); } catch (e) { console.error('[corner] member refresh before strip:', e.message); }
   const existing = state.getCornered(member.id);
   if (existing) {
-    // Already cornered - just update the release time (don't re-strip).
+    // Already cornered — just update the release time (don't re-strip).
     state.setCornered(member.id, { ...existing, releaseAt: durationMs ? now + durationMs : null, by: byId });
     armTimer(guild, member.id, durationMs ? now + durationMs : null);   // re-arm on a re-corner / duration change
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
   }
-  // Guard: the bot can't touch roles positioned at/above its OWN highest role - trying would fail with a
-  // raw "Missing Permissions". Only roles we'd actually STRIP matter here - a KEPT role above the bot
+  // Guard: the bot can't touch roles positioned at/above its OWN highest role — trying would fail with a
+  // raw "Missing Permissions". Only roles we'd actually STRIP matter here — a KEPT role above the bot
   // (e.g. OWNER⚜️, an identifying role) is fine, because we never touch it. So an owner can still be
-  // cornered - their owner role stays (identifying) and everything else is stripped.
+  // cornered — their owner role stays (identifying) and everything else is stripped.
   const me = await guild.members.fetchMe();
   const stripIds = new Set(rolesToStrip(guild, member));
   const blockers = member.roles.cache.filter(r => stripIds.has(r.id) && r.position >= me.roles.highest.position);
@@ -247,7 +247,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   }
   await restoreTimeout(); // put the Discord timeout back - cornering doesn't cancel it
   // They just lost access to every normal channel, but Discord does NOT reliably eject someone from a voice
-  // channel they're already in on a permission change - so pull them out of voice explicitly.
+  // channel they're already in on a permission change — so pull them out of voice explicitly.
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
@@ -270,7 +270,7 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
   }
   const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null);
   if (!member) { clearTimer(userId); state.clearCornered(userId); return { ok: true, left: true, servedMs }; }
-  // Same as corner: role edits fail on a timed-out member - lift the timeout, restore roles, put it back.
+  // Same as corner: role edits fail on a timed-out member — lift the timeout, restore roles, put it back.
   let restoreTimeoutUntil = null;
   if (member.isCommunicationDisabled?.()) {
     restoreTimeoutUntil = member.communicationDisabledUntilTimestamp;
@@ -286,7 +286,7 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
     if (rec && Array.isArray(rec.roles) && rec.roles.length) {
       const me = await guild.members.fetchMe();
       const botTop = me.roles.highest.position;
-      // Only try roles that still exist, sit below the bot's top role, and aren't bot-managed - anything
+      // Only try roles that still exist, sit below the bot's top role, and aren't bot-managed — anything
       // else can't be added and would make Discord reject the WHOLE bulk add, costing them every role.
       const restorable = [], skip = [];
       for (const id of rec.roles) {
@@ -298,7 +298,7 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
         try {
           await member.roles.add(restorable, reason);
         } catch (bulkErr) {
-          // One unexpected bad role shouldn't cost them the rest - fall back to per-role adds.
+          // One unexpected bad role shouldn't cost them the rest — fall back to per-role adds.
           for (const id of restorable) { await member.roles.add(id, reason).catch(() => missed.push(id)); }
           console.error(`[uncorner] ${userId}: bulk restore failed (${bulkErr.message}); fell back to per-role.`);
         }

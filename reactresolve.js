@@ -1,18 +1,18 @@
-// reactresolve.js - a weekly "react to fix your role conflict" message in the unverified-chat
+// reactresolve.js — a weekly "react to fix your role conflict" message in the unverified-chat
 // channel. Members holding BOTH the verified and unverified role react; the bot removes their
 // Unverified role (→ clean verified). Resolution runs in real-time (on each reaction) AND on the
-// hourly sweep (safety net). The message reposts weekly - the old one is deleted so it re-surfaces.
+// hourly sweep (safety net). The message reposts weekly — the old one is deleted so it re-surfaces.
 
 const { EmbedBuilder } = require('discord.js');
 const config = require('./config');
 
 function buildPromptEmbed() {
   return new EmbedBuilder()
-    .setTitle('⚠️ Role Check - react to fix')
+    .setTitle('⚠️ Role Check: react to fix')
     .setColor(0xfee75c)
     .setDescription(
       `A glitch gave some members **both** the Verified and Unverified role. If you can see this and `
-      + `you're already verified, tap ${config.reactEmoji} below - the bot will fix it for you `
+      + `you're already verified, tap ${config.reactEmoji} below and the bot will fix it for you `
       + `automatically. (If you're not verified yet, this doesn't apply to you.)`
     );
 }
@@ -29,7 +29,7 @@ async function resolveMember(member) {
   if (!isConflict(member)) return false;
   try {
     await member.roles.remove(config.unverifiedRoleId, 'Role conflict resolved via unverified-chat reaction');
-    console.log(`[react] resolved ${member.user.tag} (${member.id}) - removed Unverified`);
+    console.log(`[react] resolved ${member.user.tag} (${member.id}) — removed Unverified`);
     return true;
   } catch (err) {
     console.error(`[react] failed to resolve ${member.id}: ${err.message}`);

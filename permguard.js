@@ -1,9 +1,9 @@
-// permguard.js - periodic reconciliation of channel ROLE permission overwrites against a golden
+// permguard.js — periodic reconciliation of channel ROLE permission overwrites against a golden
 // manifest snapshot. Built 2026-07-30 after a plain mod could post in #mod-announcements: the channel's
 // own overwrite for MODS-✰ only ALLOWed View+ReadHistory with no explicit DENY, so it silently stopped
 // inheriting the category's "deny everything by default" rule (Discord replaces, not merges, a
 // category's overwrite once a channel has its own) and the mod's base-role Send Messages leaked
-// through. That's a structural risk for ANY channel with a partial role overwrite, not just this one -
+// through. That's a structural risk for ANY channel with a partial role overwrite, not just this one —
 // this sweep catches drift of that shape automatically, on a schedule, instead of waiting for a report.
 const { Routes, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
 const fs = require('fs');
@@ -21,7 +21,7 @@ function loadManifest() {
 
 // The manifest is the "should be" snapshot, taken once (2026-07-30, right after the full permission
 // audit + the mod-announcements fix) and re-taken whenever the owner deliberately changes a channel's
-// permission structure - see resnapshot() below. It is NOT auto-regenerated from live state on every
+// permission structure — see resnapshot() below. It is NOT auto-regenerated from live state on every
 // sweep; that would just make every future drift "correct by definition" and defeat the point.
 async function resnapshot(guild, { exclude } = {}) {
   const channels = [...(await guild.channels.fetch()).values()].filter(Boolean);
@@ -43,7 +43,7 @@ async function resnapshot(guild, { exclude } = {}) {
 
 // Re-snapshot ONE channel's overwrites (role + member) into the golden manifest. For when another module
 // legitimately changes a channel's overwrites (e.g. the MDNI minor-staff lock adds member-level denies) and
-// wants permguard to treat the new state as correct - otherwise every sweep would re-flag it as drift.
+// wants permguard to treat the new state as correct — otherwise every sweep would re-flag it as drift.
 async function blessChannel(guild, channelId) {
   const man = loadManifest(); if (!man) return false;
   const ch = await guild.channels.fetch(channelId).catch(() => null); if (!ch) return false;
@@ -59,7 +59,7 @@ async function blessChannel(guild, channelId) {
 }
 
 // Compare + fix ROLE overwrites (type 0) only. Member-specific overwrites (bot integrations, one-off
-// grants) are far more likely to be a deliberate, still-valid special case added after the snapshot -
+// grants) are far more likely to be a deliberate, still-valid special case added after the snapshot —
 // auto-reverting those could undo something the owner meant to keep. Those are only ever REPORTED
 // (a brand-new one appearing), never auto-corrected.
 async function sweepPermissions(guild, { notify = true } = {}) {
@@ -83,14 +83,14 @@ async function sweepPermissions(guild, { notify = true } = {}) {
     const goldenRole = new Map(golden.overwrites.filter(o => o.type === 0).map(o => [o.id, o]));
     const goldenMember = new Map(golden.overwrites.filter(o => o.type === 1).map(o => [o.id, o]));
 
-    // Every role the manifest knows about for this channel - golden's value must match exactly.
+    // Every role the manifest knows about for this channel — golden's value must match exactly.
     const allRoleIds = new Set([...liveRole.keys(), ...goldenRole.keys()]);
     for (const roleId of allRoleIds) {
       const live = liveRole.get(roleId);
       const desired = goldenRole.get(roleId);
       // Managed roles = bot/integration roles Discord auto-creates (Carl-bot, boosters, other bots). A
       // channel overwrite for one is a deliberate integration grant, not drift, so NEVER auto-revert it
-      // (else we keep undoing the owner's bot setup - e.g. Carl-bot's welcome-message SendMessages getting
+      // (else we keep undoing the owner's bot setup — e.g. Carl-bot's welcome-message SendMessages getting
       // stripped every sweep). Left in place silently, exactly like member-specific overwrites below.
       if (roles.get(roleId)?.managed) continue;
       const liveAllow = live ? live.allow.bitfield.toString() : '0';
@@ -123,7 +123,7 @@ async function sweepPermissions(guild, { notify = true } = {}) {
   if (corrections.length) {
     console.log(`[permguard] corrected ${corrections.length} drifted overwrite(s)`);
     if (notify) {
-      const lines = corrections.slice(0, 10).map(c => `• **#${c.channel}** - ${c.role}: restored to allow=${c.after.allow}/deny=${c.after.deny}`).join('\n');
+      const lines = corrections.slice(0, 10).map(c => `• **#${c.channel}** — ${c.role}: restored to allow=${c.after.allow}/deny=${c.after.deny}`).join('\n');
       await ownerlog.log(guild, {
         emoji: '🛡️', title: `Permission drift auto-corrected (${corrections.length})`, color: 0xE67E22,
         detail: lines + (corrections.length > 10 ? `\n…and ${corrections.length - 10} more.` : ''),
@@ -131,7 +131,7 @@ async function sweepPermissions(guild, { notify = true } = {}) {
     }
   }
   if (newMemberOverwrites.length && notify) {
-    const lines = newMemberOverwrites.slice(0, 10).map(m => `• **#${m.channel}** - new member-specific override for <@${m.memberId}> (not auto-reviewed, check it's intentional)`).join('\n');
+    const lines = newMemberOverwrites.slice(0, 10).map(m => `• **#${m.channel}** — new member-specific override for <@${m.memberId}> (not auto-reviewed, check it's intentional)`).join('\n');
     await ownerlog.log(guild, { emoji: '🔍', title: `New per-member channel override(s) detected (${newMemberOverwrites.length})`, color: 0x99AAB5, detail: lines });
   }
   return { fixed: corrections.length, corrections, newMemberOverwrites, unmanagedChannels };
@@ -180,7 +180,7 @@ async function computeDiff(guild) {
     const golden = manifest[ch.id];
     if (!golden) {                                   // whole channel is new/unguarded
       items.push({ key: `ch|${ch.id}`, kind: 'newchannel', channelId: ch.id, channelName: ch.name,
-        summary: `**NEW channel** (not yet guarded) - adopting it will lock its current permissions in.` });
+        summary: `**NEW channel** (not yet guarded). Adopting it will lock its current permissions in.` });
       continue;
     }
     const live = { 0: new Map(), 1: new Map() };
@@ -197,9 +197,9 @@ async function computeDiff(guild) {
         const name = type === 0 ? (G?.name || roles.get(id)?.name || id) : `member ${id}`;
         const who = type === 0 ? `role **${name}**` : `<@${id}>`;
         let summary;
-        if (L && !G) summary = `#${ch.name} - NEW overwrite for ${who}: ${describeDelta(la, ld, ga, gd)}`;
-        else if (!L && G) summary = `#${ch.name} - overwrite for ${who} was REMOVED (baseline had allow [${permList(ga).join(', ') || '-'}])`;
-        else summary = `#${ch.name} - ${who}: ${describeDelta(la, ld, ga, gd)}`;
+        if (L && !G) summary = `#${ch.name}: NEW overwrite for ${who}: ${describeDelta(la, ld, ga, gd)}`;
+        else if (!L && G) summary = `#${ch.name}: overwrite for ${who} was REMOVED (baseline had allow [${permList(ga).join(', ') || '-'}])`;
+        else summary = `#${ch.name}: ${who}: ${describeDelta(la, ld, ga, gd)}`;
         items.push({ key: `${ch.id}|${type}|${id}`, kind: type === 0 ? 'role' : 'member',
           channelId: ch.id, channelName: ch.name, targetId: id, targetType: type,
           la, ld, ga, gd, presentLive: !!L, presentGolden: !!G, summary });
@@ -231,7 +231,7 @@ function renderReconcile(sid, s) {
   for (const it of slice) {
     const idx = items.indexOf(it);
     const d = decisions[it.key];
-    embed.addFields({ name: `${d === 'keep' ? '✅ KEEP' : d === 'undo' ? '↩️ UNDO' : '• undecided'} - ${it.channelName}`.slice(0, 256), value: it.summary.slice(0, 1000) });
+    embed.addFields({ name: `${d === 'keep' ? '✅ KEEP' : d === 'undo' ? '↩️ UNDO' : '• undecided'}: ${it.channelName}`.slice(0, 256), value: it.summary.slice(0, 1000) });
     const isNew = it.kind === 'newchannel';
     rows.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`pg_keep:${sid}:${idx}`).setEmoji('✅').setLabel(isNew ? 'Adopt' : 'Keep').setStyle(d === 'keep' ? ButtonStyle.Success : ButtonStyle.Secondary),
@@ -255,7 +255,7 @@ async function openReconcile(interaction) {
   const diff = await computeDiff(interaction.guild);
   if (diff.noManifest) return interaction.editReply('No baseline exists yet. Run `/permguard resnapshot force:true` once to create the first one.');
   if (!diff.items.length && !diff.removedChannels.length)
-    return interaction.editReply('✅ Nothing has changed since the last baseline - nothing to reconcile.');
+    return interaction.editReply('✅ Nothing has changed since the last baseline. Nothing to reconcile.');
   const sid = newSid();
   sessions.set(sid, { items: diff.items, removedChannels: diff.removedChannels, decisions: {}, page: 0, createdAt: Date.now(), userId: interaction.user.id });
   return interaction.editReply(renderReconcile(sid, sessions.get(sid)));
@@ -270,7 +270,7 @@ async function handleReconcile(interaction) {
     return interaction.reply({ content: '🔒 Owner only.', flags: EPH });
   const [action, sid, idxStr] = interaction.customId.split(':');
   const s = sessions.get(sid);
-  if (!s) return interaction.update({ content: 'This reconcile session expired - run `/permguard resnapshot` again.', embeds: [], components: [] }).catch(() => interaction.reply({ content: 'Session expired - run `/permguard resnapshot` again.', flags: EPH }));
+  if (!s) return interaction.update({ content: 'This reconcile session expired. Run `/permguard resnapshot` again.', embeds: [], components: [] }).catch(() => interaction.reply({ content: 'Session expired. Run `/permguard resnapshot` again.', flags: EPH }));
 
   if (action === 'pg_prev') { s.page = Math.max(0, s.page - 1); return interaction.update(renderReconcile(sid, s)); }
   if (action === 'pg_next') { s.page = s.page + 1; return interaction.update(renderReconcile(sid, s)); }
@@ -304,7 +304,7 @@ async function applyDecisions(guild, s, userId) {
   }
   const snap = await resnapshot(guild, { exclude });
   await ownerlog.log(guild, { emoji: '🛡️', title: 'Permission baseline reconciled', color: 0x57F287,
-    detail: `By <@${userId}> - reverted ${reverted}, kept ${kept}, new channels adopted ${adopted}${ignored ? `, ignored ${ignored}` : ''}${dropped ? `, dropped ${dropped} deleted channel(s)` : ''}. New baseline: ${snap.channels} channels.` });
+    detail: `By <@${userId}> — reverted ${reverted}, kept ${kept}, new channels adopted ${adopted}${ignored ? `, ignored ${ignored}` : ''}${dropped ? `, dropped ${dropped} deleted channel(s)` : ''}. New baseline: ${snap.channels} channels.` });
   return { summary: `Reverted **${reverted}** change(s) to the old baseline, kept **${kept}**, adopted **${adopted}** new channel(s)${ignored ? `, left **${ignored}** unguarded` : ''}${dropped ? `, dropped **${dropped}** deleted channel(s)` : ''}.\n\n📸 New baseline saved: **${snap.channels}** channels, **${snap.overwrites}** overwrite entries.` };
 }
 

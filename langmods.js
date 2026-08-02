@@ -1,4 +1,4 @@
-// langmods.js - per-language mini-mod roles. Each language (French/German/Dutch/Hispanic) has its OWN
+// langmods.js — per-language mini-mod roles. Each language (French/German/Dutch/Hispanic) has its OWN
 // role whose holder may use Send-to-corner + Report-to-watchlist, but ONLY in that language's channels
 // (text + VC). Replaces the old single langMiniModRoleId model. Config file:
 //   /home/ubuntu/.fubu_langmods.json = { "<Language>": { roleId, channelIds: [textId, vcId] }, ... }
@@ -11,7 +11,7 @@ function roleForLang(lang) { return load()[lang]?.roleId || null; }
 // { lang, roleId, channelIds } for a given role id, or null.
 function entryForRole(roleId) { const m = load(); for (const lang of Object.keys(m)) if (m[lang].roleId === roleId) return { lang, ...m[lang] }; return null; }
 // True iff the member holds a language-mini-mod role whose channels include channelId. (Feature-gating is
-// the caller's job - this only answers the role↔channel scoping question.)
+// the caller's job — this only answers the role↔channel scoping question.)
 function canActOn(member, channelId) {
   if (!member?.roles?.cache || !channelId) return false;
   const m = load();

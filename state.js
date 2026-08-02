@@ -1,4 +1,4 @@
-// state.js - tiny JSON persistence so the bot survives restarts without spamming or
+// state.js — tiny JSON persistence so the bot survives restarts without spamming or
 // re-processing. Holds: per-thread {lastNudge, warnedAt} and a set of member ids already
 // processed as verified (so a single role-add closes their threads exactly once).
 // Deliberately simple: read once at boot, write-through on each change. Volume is low.

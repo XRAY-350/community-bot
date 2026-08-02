@@ -1,4 +1,4 @@
-// verify.js - the core trigger. When a moderator assigns the Verified role to a member,
+// verify.js — the core trigger. When a moderator assigns the Verified role to a member,
 // archive+lock the verification thread(s) that member opened. The bot never grants the role
 // or judges verification; it only reacts to the role a human already assigned.
 
@@ -46,14 +46,14 @@ async function onVerified(member, state, getChannel) {
 
   const threads = await memberThreads(channel, member.id);
   if (threads.length === 0) {
-    console.log(`[verify] ${member.user.tag} (${member.id}) verified - no verification thread found to close`);
+    console.log(`[verify] ${member.user.tag} (${member.id}) verified — no verification thread found to close`);
     return;
   }
 
-  // The pending-verification reminder (nudge) for this thread lives in the alert channel - pass `state`
+  // The pending-verification reminder (nudge) for this thread lives in the alert channel — pass `state`
   // + `alertChannel` so deleteThread's cleanupNudge() actually removes it (and forgets the thread's
   // state itself). The old code passed NEITHER and then force-forgot the state here, which dropped the
-  // reminder's message id BEFORE it could be deleted - orphaning the ping on a now-gone thread.
+  // reminder's message id BEFORE it could be deleted — orphaning the ping on a now-gone thread.
   const alertChannel = config.alertChannelId
     ? await member.guild.channels.fetch(config.alertChannelId).catch(() => null)
     : null;
@@ -66,7 +66,7 @@ async function onVerified(member, state, getChannel) {
     });
     if (config.dryRun) state.forgetThread(thread.id); // live path: deleteThread already forgot it post-cleanup
   }
-  console.log(`[verify] ${member.user.tag} verified - ${config.dryRun ? 'would delete' : 'deleted'} ${threads.length} thread(s)`);
+  console.log(`[verify] ${member.user.tag} verified — ${config.dryRun ? 'would delete' : 'deleted'} ${threads.length} thread(s)`);
 }
 
 module.exports = { register };

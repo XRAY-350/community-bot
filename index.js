@@ -1,7 +1,7 @@
-// index.js - entry point. Boots the discord.js client, resolves the verify + alert channels
+// index.js — entry point. Boots the discord.js client, resolves the verify + alert channels
 // once at ready, and wires the verify trigger (role → close) and the periodic sweep (nudge + stale).
 //
-// Intents: Guilds (channels/threads) + GuildMembers (PRIVILEGED - required to receive
+// Intents: Guilds (channels/threads) + GuildMembers (PRIVILEGED — required to receive
 // guildMemberUpdate so we can see the Verified role being assigned). The GuildMembers intent
 // must also be enabled in the Discord Developer Portal for this application.
 
@@ -48,8 +48,8 @@ const fs = require('fs');
 const CORNER_RED = 0x992D22;    // sent to the corner
 const CORNER_GREEN = 0x2ECC71;  // released
 const CORNER_AMBER = 0xE67E22;  // sentence changed / release scheduled (a modification, not entry/exit)
-// The server's 11 rules (rules.js is the single source of truth - text + per-rule weight live there
-// now) - TITLES is a drop-in replacement for the old hardcoded array, used by the /corner + /strike
+// The server's 11 rules (rules.js is the single source of truth — text + per-rule weight live there
+// now) — TITLES is a drop-in replacement for the old hardcoded array, used by the /corner + /strike
 // add "why" pickers.
 const SERVER_RULES = rules.TITLES;
 // Small-caps unicode (the server's channel/role aesthetic). Used by /tribe-admin create's style option.
@@ -91,7 +91,7 @@ async function buildTribe(guild, opts, config) {
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
   return { tribe, role, leaderRole, cat, throne, hall, vc };
 }
-// Staff infraction/weight guide - the "how do I punish X" reference trial mods keep asking for. Built
+// Staff infraction/weight guide — the "how do I punish X" reference trial mods keep asking for. Built
 // live from rules.js (text + decided weight + handling summary) so it never drifts from the real config.
 function buildWeightsEmbed() {
   const rows = rules.infractionLines();
@@ -102,11 +102,11 @@ function buildWeightsEmbed() {
   });
   return new EmbedBuilder()
     .setColor(0x5865F2)
-    .setTitle('⚖️ FUBU - Infractions & Strike Weights (staff)')
+    .setTitle('⚖️ FUBU: Infractions & Strike Weights (staff)')
     .setDescription(
       '**How to apply punishments:**\n' +
-      '• **Corner** - cool-off for *minor / first-time* stuff. No strike, just a timed removal.\n' +
-      '• **Strike** - *real or repeated* behavior. Each carries a **weight of 1-3 units**.\n' +
+      '• **Corner**: cool-off for *minor / first-time* stuff. No strike, just a timed removal.\n' +
+      '• **Strike**: *real or repeated* behavior. Each carries a **weight of 1-3 units**.\n' +
       `• Units add up: **${cap} total → a ban is offered.** Some rules skip the ladder and are an **instant permanent ban**.\n` +
       '• **Repeat the same offense → escalate** (Corner → longer Corner → Strike → bigger Strike).\n\n' +
       '`Nu` = strike weight in units · `ban/na` = instant-ban or not an infraction\n\n' +
@@ -123,7 +123,7 @@ function humanDur(ms) {
   if (m) return `${m}m`;
   return `${s}s`;
 }
-// "Time served" suffix for release messages - only when the timeServed feature is on.
+// "Time served" suffix for release messages — only when the timeServed feature is on.
 function servedSuffix(servedMs) {
   return (features.enabled('timeServed') && servedMs) ? ` · in for **${humanDur(servedMs)}**` : '';
 }
@@ -132,14 +132,14 @@ function cornerSentMessage(userId, whenPhrase, reason, actorId) {
   return {
     // Hybrid: big rendered header in message CONTENT (headers don't render inside embeds), with the
     // colored embed below so the meaningful red/green signal is kept. The mention is in CONTENT (not
-    // just the embed) because embeds can never ping - this is a real notification, it should reach them.
+    // just the embed) because embeds can never ping — this is a real notification, it should reach them.
     content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>`,
     embeds: [new EmbedBuilder().setColor(CORNER_RED)
       .setDescription(`<@${userId}> has been stripped of their roles and confined here **${whenPhrase}**.`
         + (actorId ? `\n**Sent by:** <@${actorId}>` : '')
         + (reason ? `\n**Reason:** ${reason}` : '')
         + `\n\nThis is the only text channel you may speak in (you can also join the corner voice channel). Reflect on what brought you here.`)],
-    // Mod controls: release now, add time (+1h / +1d), or set indefinite (no auto-release) - one click.
+    // Mod controls: release now, add time (+1h / +1d), or set indefinite (no auto-release) — one click.
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:0`).setEmoji('🔓').setLabel('Release now').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:3600000`).setEmoji('⏰').setLabel('+1h').setStyle(ButtonStyle.Secondary),
@@ -151,7 +151,7 @@ function cornerSentMessage(userId, whenPhrase, reason, actorId) {
 }
 
 // Announce a corner that just happened: the themed message in the corner channel (duration + who + reason +
-// release buttons) AND the audit entry in the corner log. Centralises what every corner path needs - /corner,
+// release buttons) AND the audit entry in the corner log. Centralises what every corner path needs — /corner,
 // the context-menu, and the DASHBOARD (which previously announced/logged nothing) all call this so the
 // resultant message consistently shows the duration and who sent them.
 async function announceCorner(guild, memberId, durationMs, actorId, reasonText) {
@@ -164,8 +164,8 @@ async function announceCorner(guild, memberId, durationMs, actorId, reasonText) 
 }
 
 // Post a FULLY STYLIZED audit entry to the public corner-log channel for every corner event
-// (entry / exit / sentence change). Each entry mirrors the channel style - a `## HEADER` in content
-// plus a colored embed - but folds in the audit facts the user-facing message omits (who acted,
+// (entry / exit / sentence change). Each entry mirrors the channel style — a `## HEADER` in content
+// plus a colored embed — but folds in the audit facts the user-facing message omits (who acted,
 // target, release time). No mod buttons: the log is a read-only record, not an action surface.
 // allowedMentions parse:[] renders the @names without pinging anyone on every line.
 async function logCorner(guild, entry) {
@@ -176,13 +176,13 @@ async function logCorner(guild, entry) {
       if (typeof entry === 'string') await ch.send({ content: entry, allowedMentions: { parse: [] } });
       else {
         const { emoji, title, color, desc } = entry;
-        // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone -
+        // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone —
         // embed mentions only resolve from the viewer's cache and show "@unknown-user" in this restricted log.
         // Content-only: the ## header + emoji carry the signal; a color-only embed would render as an empty box.
         await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: { parse: [] } });
       }
     }
-    // Mirror to the owner-only log too - covers every corner/uncorner call site in one place.
+    // Mirror to the owner-only log too — covers every corner/uncorner call site in one place.
     if (typeof entry !== 'string') await ownerlog.log(guild, { emoji: entry.emoji, title: entry.title, detail: entry.desc, color: entry.color });
   } catch (e) { console.error(`[corner-log] ${e.message}`); }
 }
@@ -197,7 +197,7 @@ function modClicked(interaction) {
   return !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
 }
 
-// /pending - paginated, read-only list of open verify threads (verifying happens in-thread, not here).
+// /pending — paginated, read-only list of open verify threads (verifying happens in-thread, not here).
 async function renderPending(page) {
   const verifyCh = getVerifyChannel();
   let threads = verifyCh ? await activeThreads(verifyCh) : [];
@@ -208,7 +208,7 @@ async function renderPending(page) {
   page = Math.min(Math.max(0, page || 0), pages - 1);
   const slice = threads.slice(page * PER, page * PER + PER);
   const lines = slice.map((t, i) =>
-    `${page * PER + i + 1}. ${t} - <@${t.ownerId}> · opened <t:${Math.floor((t.createdTimestamp || Date.now()) / 1000)}:R>`);
+    `${page * PER + i + 1}. ${t} · <@${t.ownerId}> · opened <t:${Math.floor((t.createdTimestamp || Date.now()) / 1000)}:R>`);
   const content = `## 🧵 Pending Verify Threads (${threads.length})\n${lines.join('\n') || '_none open_'}\n-# Page ${page + 1}/${pages}`;
   const components = pages > 1 ? [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`pending_page:${page - 1}`).setEmoji('◀️').setLabel('Prev').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
@@ -224,13 +224,13 @@ async function handleDigestButton(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // digest_sweep
   try {
     await sweep.runOnce(client, state, { getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel });
-    return interaction.editReply('🧹 Sweep complete - threads, warnings and conflicts refreshed.');
+    return interaction.editReply('🧹 Sweep complete: threads, warnings and conflicts refreshed.');
   } catch (e) {
     return interaction.editReply(`Sweep failed: ${e.message}`);
   }
 }
 
-// /cornered - mod tool: list everyone in the corner, each with a one-click Release button.
+// /cornered — mod tool: list everyone in the corner, each with a one-click Release button.
 async function handleCorneredList(interaction) {
   if (!modClicked(interaction)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -247,7 +247,7 @@ async function handleCorneredList(interaction) {
     const inFor = rec.at ? `in since <t:${Math.floor(rec.at / 1000)}:R> · ` : '';
     const m = await interaction.guild.members.fetch(id).catch(() => null);
     const tag = m?.user?.tag || id;
-    lines.push(`• <@${id}> (\`${tag}\`) - ${inFor}release ${rel}`);
+    lines.push(`• <@${id}> (\`${tag}\`) · ${inFor}release ${rel}`);
     row.addComponents(new ButtonBuilder().setCustomId(`corner_rel:${id}:0`).setEmoji('🔓')
       .setLabel(`Release ${tag}`.slice(0, 80)).setStyle(ButtonStyle.Success));
     if (row.components.length === 5) { rows.push(row); row = new ActionRowBuilder(); }
@@ -258,9 +258,9 @@ async function handleCorneredList(interaction) {
 }
 
 // Corner announcement buttons: 🔓 Release now / ⏰ +1h / ⏰ +1d (add time, or from now if indefinite).
-// Shared "send this member to the corner for THIS message" - used by the immediate right-click path
+// Shared "send this member to the corner for THIS message" — used by the immediate right-click path
 // and (when the cornerReason feature is on) the reason-modal path. Optional reason is surfaced in the
-// corner channel + the audit log. Defaults to a TIMED corner (config.cornerDefaultDurationMs) - Corner
+// corner channel + the audit log. Defaults to a TIMED corner (config.cornerDefaultDurationMs) — Corner
 // is meant to be casual/temporary, not indefinite by default. Returns { ok, stripped, error }.
 async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = config.cornerDefaultDurationMs, ruleN = null) {
   const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
@@ -273,16 +273,16 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
       await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reason || null, actorId));
       const emb = new EmbedBuilder().setColor(CORNER_RED)
         .setAuthor({ name: target.author.tag, iconURL: target.author.displayAvatarURL() })
-        .setDescription(target.content?.slice(0, 4000) || '_[no text - see attachment/link]_')
+        .setDescription(target.content?.slice(0, 4000) || '_[no text, see attachment/link]_')
         .addFields({ name: 'Why they’re here', value: `Cornered for this message by <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}` })
         .setFooter({ text: `originally in #${target.channel?.name || '?'}` }).setTimestamp(target.createdTimestamp);
       const files = [...(target.attachments?.values() || [])].slice(0, 5).map(a => a.url);
       await cornerCh.send({ embeds: [emb], content: files.length ? files.join('\n') : undefined, allowedMentions: { parse: [] } });
     }
   } catch (e) { console.error(`[corner-msg] forward failed: ${e.message}`); }
-  // In-channel notice on the flagged message (no DM) - same pattern the Strike flows use. Shows the duration
-  // and who cornered them (actor mention resolves but doesn't ping - only the cornered member is pinged).
-  await target.reply({ content: `⛓️ This message got <@${member.id}> sent to the corner ${whenPhrase} by <@${actorId}>${reason ? ` - ${reason}` : ''}.`, allowedMentions: { users: [member.id] } }).catch(e => console.error('[corner-msg] reply on original failed:', e.message));
+  // In-channel notice on the flagged message (no DM) — same pattern the Strike flows use. Shows the duration
+  // and who cornered them (actor mention resolves but doesn't ping — only the cornered member is pinged).
+  await target.reply({ content: `⛓️ This message got <@${member.id}> sent to the corner ${whenPhrase} by <@${actorId}>${reason ? ` (${reason})` : ''}.`, allowedMentions: { users: [member.id] } }).catch(e => console.error('[corner-msg] reply on original failed:', e.message));
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (via message)', color: CORNER_RED,
     desc: `<@${member.id}> was cornered until ${relPhrase(relSec * 1000)} for a message.\n**By:** <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}\n**Message:** ${target.url}` });
   return { ok: true, stripped: r.stripped };
@@ -300,18 +300,18 @@ async function releaseCornerAndAnnounce(guild, uid) {
     if (cornerCh) await cornerCh.send(cornerTimeServedMessage(uid)).catch(e => console.error(`[corner] time-served announce: ${e.message}`));
   } catch { /* announce best-effort */ }
   await logCorner(guild, { emoji: '⛓️‍💥', title: 'TIME SERVED', color: CORNER_GREEN,
-    desc: `<@${uid}>'s sentence ended - auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(r.servedMs)}${missedRolesNote(r.missed)}` });
+    desc: `<@${uid}>'s sentence ended: auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(r.servedMs)}${missedRolesNote(r.missed)}` });
 }
 // A note for the corner-log when some stored roles couldn't be auto-restored (deleted, above the bot's
 // role, or bot-managed), so a mod can fix it by hand instead of the member silently missing roles.
 function missedRolesNote(missed) {
   if (!missed || !missed.length) return '';
-  return `\n⚠️ **${missed.length} role(s) couldn't be auto-restored** (deleted, above my role, or managed): ${missed.map(id => `<@&${id}>`).join(', ')} - add them back manually if still needed.`;
+  return `\n⚠️ **${missed.length} role(s) couldn't be auto-restored** (deleted, above my role, or managed): ${missed.map(id => `<@&${id}>`).join(', ')}. Add them back manually if still needed.`;
 }
 
-// Corner a LIST of members in one action - shared by /corner's `also`, the dashboard multi-pick, and the
+// Corner a LIST of members in one action — shared by /corner's `also`, the dashboard multi-pick, and the
 // Bulk corner (sweep / dashboard "Corner several" / /corner also). Per-target guards: skip self, bots, and
-// ALL STAFF - mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
+// ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
 async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null } = {}) {
@@ -333,7 +333,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     else skipped.push(`<@${member.id}> (${r.error})`);
   }
   if (done.length) await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
-    desc: `${done.map(id => `<@${id}>`).join(', ')} - cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+    desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
   return { done, skipped, whenPhrase };
 }
 
@@ -358,7 +358,7 @@ async function handleCornerButton(interaction) {
     } catch (e) { console.error(`[recorner] announce failed: ${e.message}`); }
     await logCorner(guild, { emoji: '⛓️', title: 'RE-CORNERED', color: CORNER_RED,
       desc: `<@${userId}> was sent straight back to the corner **indefinitely**.\n**By:** <@${interaction.user.id}>` });
-    return interaction.editReply(`⛓️ Re-cornered <@${userId}> - stripped **${r.stripped}** role(s).`);
+    return interaction.editReply(`⛓️ Re-cornered <@${userId}>, stripped **${r.stripped}** role(s).`);
   }
   if (msStr === 'indef') {
     const rec = state.getCornered(userId);
@@ -367,7 +367,7 @@ async function handleCornerButton(interaction) {
     corner.clearTimer(userId);                                // cancel the pending precise-release timer
     await logCorner(guild, { emoji: '♾️', title: 'SENTENCE CHANGED', color: CORNER_AMBER,
       desc: `<@${userId}>'s corner is now **indefinite** (no auto-release).\n**By:** <@${interaction.user.id}>` });
-    return interaction.editReply(`♾️ <@${userId}> is now cornered **indefinitely** - they stay until manually released.`);
+    return interaction.editReply(`♾️ <@${userId}> is now cornered **indefinitely**. They stay until manually released.`);
   }
   if (ms === 0) {
     const r = await corner.uncorner(guild, userId, state);
@@ -378,8 +378,8 @@ async function handleCornerButton(interaction) {
       if (ch) await ch.send(cornerReleasedMessage(userId));
     } catch (e) { console.error(`[corner-btn] announce failed: ${e.message}`); }
     await logCorner(guild, { emoji: '🔓', title: 'RELEASED', color: CORNER_GREEN,
-      desc: `<@${userId}> was released - roles restored.\n**By:** <@${interaction.user.id}>${served}${missedRolesNote(r.missed)}` });
-    return interaction.editReply(`✅ Released <@${userId}> - restored **${r.restored}** role(s)${r.missed && r.missed.length ? ` · ⚠️ ${r.missed.length} couldn't be restored (see log)` : ''}${served}.`);
+      desc: `<@${userId}> was released: roles restored.\n**By:** <@${interaction.user.id}>${served}${missedRolesNote(r.missed)}` });
+    return interaction.editReply(`✅ Released <@${userId}>, restored **${r.restored}** role(s)${r.missed && r.missed.length ? ` · ⚠️ ${r.missed.length} couldn't be restored (see log)` : ''}${served}.`);
   }
   const rec = state.getCornered(userId);
   if (!rec) return interaction.editReply(`<@${userId}> is not in the corner.`);
@@ -408,13 +408,13 @@ async function handleConflictButton(interaction) {
   }
   await interaction.editReply(`✅ Removed **${roleName}** from ${member.user.tag} (now **${kept}**).`);
   await interaction.message.edit({
-    content: `## ✅ Conflict Resolved\n<@${userId}> - **${roleName}** removed by <@${interaction.user.id}> (kept **${kept}**).`,
+    content: `## ✅ Conflict Resolved\n<@${userId}>: **${roleName}** removed by <@${interaction.user.id}> (kept **${kept}**).`,
     components: [],
     allowedMentions: { parse: [] }, // mod-only conflict channel - the flagged member can't see it, never actually ping them here
   }).catch(() => {});
 }
 // Released manually via /uncorner (no duration).
-// Re-corner button for the release announcements - one click puts them straight back if they act up.
+// Re-corner button for the release announcements — one click puts them straight back if they act up.
 function recornerRow(userId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`corner_recorner:${userId}`).setEmoji('⛓️').setLabel('Re-corner').setStyle(ButtonStyle.Danger),
@@ -434,7 +434,7 @@ function cornerTimeServedMessage(userId) {
   return {
     content: '## ⛓️‍💥 TIME SERVED',
     embeds: [new EmbedBuilder().setColor(CORNER_GREEN)
-      .setDescription(`<@${userId}>'s sentence has ended. The Corner releases you - roles restored, `
+      .setDescription(`<@${userId}>'s sentence has ended. The Corner releases you: roles restored, `
         + `access returned. Consider this your warning.`)],
     components: [recornerRow(userId)],
     allowedMentions: { users: [userId] },
@@ -471,38 +471,38 @@ opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch,
     total: member => strikes.totalUnits(state, member.id),
     up: async (guild, member, byTag) => {
       const res = await strikes.addStrike(guild, member, state, { weight: 1, reason: 'Quick 1-unit strike via dashboard picker', byTag });
-      await ownerlog.log(guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245, detail: `<@${member.id}> - 1 unit (quick dashboard strike) - by ${byTag}. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
+      await ownerlog.log(guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245, detail: `<@${member.id}> — 1 unit (quick dashboard strike) — by ${byTag}. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
       return res;
     },
     down: async (guild, member, byTag) => {
       const active = strikes.activeEntries(state, member.id);
       if (!active.length) return { ok: false };
       const r = await strikes.removeStrike(guild, member, state, active[active.length - 1].id, byTag);
-      if (r.ok) await ownerlog.log(guild, { emoji: '➖', title: 'Strike removed', color: 0x57F287, detail: `Most recent strike from <@${member.id}> - by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
+      if (r.ok) await ownerlog.log(guild, { emoji: '➖', title: 'Strike removed', color: 0x57F287, detail: `Most recent strike from <@${member.id}> — by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
       return r;
     },
     clear: async (guild, member, byTag) => {
       const r = await strikes.clearStrikes(guild, member, state, byTag);
-      if (r.cleared) await ownerlog.log(guild, { emoji: '🧹', title: 'Strikes cleared', color: 0x57F287, detail: `All strikes (${r.cleared}) on <@${member.id}> - by ${byTag}.` });
+      if (r.cleared) await ownerlog.log(guild, { emoji: '🧹', title: 'Strikes cleared', color: 0x57F287, detail: `All strikes (${r.cleared}) on <@${member.id}> — by ${byTag}.` });
       return r;
     },
     entries: member => strikes.activeEntries(state, member.id),
     label: entry => strikes.entryLabel(entry),
     removeById: async (guild, member, strikeId, byTag) => {
       const r = await strikes.removeStrike(guild, member, state, strikeId, byTag);
-      if (r.ok) await ownerlog.log(guild, { emoji: '➖', title: 'Strike removed', color: 0x57F287, detail: `\`${strikeId}\` from <@${member.id}> - by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
+      if (r.ok) await ownerlog.log(guild, { emoji: '➖', title: 'Strike removed', color: 0x57F287, detail: `\`${strikeId}\` from <@${member.id}> — by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
       return r;
     },
     setWeight: async (guild, member, strikeId, newWeight, byTag) => {
       const r = await strikes.setStrikeWeight(guild, member, state, strikeId, newWeight, byTag);
       if (r.ok) await ownerlog.log(guild, { emoji: r.removed ? '➖' : '⚖️', title: r.removed ? 'Strike removed' : 'Strike weight changed', color: 0x57F287,
-        detail: `\`${strikeId}\` on <@${member.id}> - ${r.removed ? 'removed' : `${strikes.formatUnits(r.oldWeight)} → ${strikes.formatUnits(r.newWeight)} units`} - by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
+        detail: `\`${strikeId}\` on <@${member.id}> — ${r.removed ? 'removed' : `${strikes.formatUnits(r.oldWeight)} → ${strikes.formatUnits(r.newWeight)} units`} — by ${byTag}. Now ${strikes.formatUnits(r.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
       return r;
     },
     activeMembers: () => strikes.activeMembers(state),
     format: strikes.formatUnits,
     // Reuses the SAME rule-picker → reason+weight-modal → addStrike flow already wired for the
-    // watch-log/right-click Strike buttons (strike_rule_pick:/strike_reason: handlers below) - the
+    // watch-log/right-click Strike buttons (strike_rule_pick:/strike_reason: handlers below) — the
     // dashboard just needs to kick it off with channelId/messageId=0 (no specific flagged message).
     ruleRow: uid => ruleRow(`strike_rule_pick:${uid}:0:0`),
   } });
@@ -545,7 +545,7 @@ async function checkPermissions() {
 
   console.log('[perms] capability check:\n  ' + rows.join('\n  '));
   const missing = rows.filter(r => r.startsWith('MISSING')).length;
-  if (missing) console.warn(`[perms] ${missing} permission(s) MISSING - those actions will fail until granted`);
+  if (missing) console.warn(`[perms] ${missing} permission(s) MISSING — those actions will fail until granted`);
   else console.log('[perms] all required permissions present ✓');
   return missing;
 }
@@ -565,7 +565,7 @@ async function healPermissions() {
     const need = !p.has(F.SendMessages) || (threads && !p.has(F.SendMessagesInThreads));
     if (!need) return;
     if (!hasManageRoles) {
-      console.warn(`[perms] can't self-heal posting in #${channel.name} (no Manage Roles) - grant it or the perms manually`);
+      console.warn(`[perms] can't self-heal posting in #${channel.name} (no Manage Roles) — grant it or the perms manually`);
       return;
     }
     try {
@@ -573,7 +573,7 @@ async function healPermissions() {
       if (threads) grant.SendMessagesInThreads = true;
       await channel.permissionOverwrites.edit(client.user.id, grant,
         { reason: 'fubu-verify-bot self-heal: grant own posting perms' });
-      console.log(`[perms] self-heal applied - granted the bot posting perms in #${channel.name}`);
+      console.log(`[perms] self-heal applied — granted the bot posting perms in #${channel.name}`);
     } catch (err) {
       console.error(`[perms] self-heal failed for #${channel.name}: ${err.message}`);
     }
@@ -619,7 +619,7 @@ const GUIDE_FILE = process.env.FUBU_GUIDE_FILE || '/home/ubuntu/.fubu_guide.json
 const SERVER_GUIDE_CH = process.env.FUBU_SERVER_GUIDE_CHANNEL_ID || '1516378825712472104';
 function helpEmbed(guild) {
   const e = new EmbedBuilder().setColor(0x5865F2).setTitle('🤖 What you can use the bot for')
-    .setDescription('Most of these are **anonymous** - use any of them in any channel:')
+    .setDescription('Most of these are **anonymous**. Use any of them in any channel:')
     .addFields(...features.memberHelp())
     .setFooter({ text: 'Be kind, keep it real. 💛' });
   const icon = guild.iconURL({ size: 128 });
@@ -662,7 +662,7 @@ client.once('ready', async () => {
     if (missing) { await healPermissions(); await checkPermissions(); } // fix + confirm
   } catch (err) { console.error(`[perms] check failed: ${err.message}`); }
   if (config.dryRun) {
-    console.log('DRY_RUN=true - actions will be LOGGED, not performed. Set DRY_RUN=false to go live.');
+    console.log('DRY_RUN=true — actions will be LOGGED, not performed. Set DRY_RUN=false to go live.');
   }
   verify.register(client, state, getVerifyChannel);
   sweep.register(client, state, { getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel });
@@ -670,11 +670,11 @@ client.once('ready', async () => {
   // Ops dashboard: create/refresh the pinned tier-gated panel in the mod-only dashboard channel
   // (channel id persisted in the panel ref file). Light 5-min refresh keeps counts current.
   opspanel.ensurePanel(client).catch(err => console.error('[fops] init:', err.message));
-  // Static staff command reference - its own pinned message at the top of #mod-dashboard (kept off the
+  // Static staff command reference — its own pinned message at the top of #mod-dashboard (kept off the
   // Overview page so the live panel stays lean as the toolkit grows).
   opspanel.ensureCommandRef(client).catch(err => console.error('[fops] cmdref init:', err.message));
   // Every 60s: refresh the shared panel's live counts AND run the idle auto-return (so an abandoned
-  // page snaps back to Overview within ~90-150s). The private /panel isn't affected.
+  // page snaps back to Overview within ~90–150s). The private /panel isn't affected.
   setInterval(() => opspanel.refreshPanel(client).catch(() => {}), 60 * 1000);
 
   // Fresh-account flag + influx detection: seed the self-calibration from current membership, then refresh
@@ -688,36 +688,36 @@ client.once('ready', async () => {
   try {
     features.ensureSeeded(); // must run before allCmds is built - feature-gated options below read it
     const allCmds = [
-      new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner - strips roles, pulls them from voice, jails them (optionally timed)')
+      new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner: strips roles, pulls them from voice, jails them (optionally timed)')
         .addUserOption(o => o.setName('user').setDescription('Member to corner').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(copy.corner.durationOpt).setRequired(false))
         .addStringOption(o => o.setName('rule').setDescription('Which rule did they break? (optional)').setRequired(false)
           .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
-        .addStringOption(o => o.setName('also').setDescription('Corner more members too - @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
+        .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods lack ManageRoles but HAVE ModerateMembers; handler enforces trial restrictions
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
-        .addStringOption(o => o.setName('duration').setDescription(`Optional - e.g.  - release automatically instead of now`).setRequired(false))
+        .addStringOption(o => o.setName('duration').setDescription(`Optional, e.g. release automatically instead of now`).setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
       new SlashCommandBuilder().setName('wordfilter').setDescription('Auto-delete messages containing a word/phrase for a period going forward')
         .addSubcommand(s => s.setName('add').setDescription('Start auto-deleting messages that contain a word/phrase')
           .addStringOption(o => o.setName('word').setDescription('The word or phrase to auto-delete').setRequired(true))
-          .addStringOption(o => o.setName('duration').setDescription('How long - e.g. 30m, 2h, 3d (blank = until you remove it)').setRequired(false)))
+          .addStringOption(o => o.setName('duration').setDescription('How long, e.g. 30m, 2h, 3d (blank = until you remove it)').setRequired(false)))
         .addSubcommand(s => s.setName('list').setDescription('Show the active word filters'))
         .addSubcommand(s => s.setName('remove').setDescription('Stop an active word filter early')
           .addStringOption(o => o.setName('word').setDescription('The filtered word/phrase to stop').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
-      new SlashCommandBuilder().setName('weights').setDescription('The staff infraction/weight guide - which rule = Corner / Strike (weight) / ban')
-        .addBooleanOption(o => o.setName('pin').setDescription('Post it publicly here + pin it (admin only) - for a channel trial mods can see').setRequired(false))
+      new SlashCommandBuilder().setName('weights').setDescription('The staff infraction/weight guide: which rule = Corner / Strike (weight) / ban')
+        .addBooleanOption(o => o.setName('pin').setDescription('Post it publicly here + pin it (admin only), for a channel trial mods can see').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods+ can pull the guide anywhere
-      new SlashCommandBuilder().setName('levelcheck').setDescription('Check Arcane level roles are landing - flag (or fix) members missing earned level roles')
+      new SlashCommandBuilder().setName('levelcheck').setDescription('Check Arcane level roles are landing: flag (or fix) members missing earned level roles')
         .addBooleanOption(o => o.setName('fix').setDescription('Actually grant the missing level roles (admin only)').setRequired(false))
         .addIntegerOption(o => o.setName('scan').setDescription('Arcane log messages to scan (default 1500, max 3000)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
-      new SlashCommandBuilder().setName('stats').setDescription('A member’s moderation record - corners & strikes over a period')
+      new SlashCommandBuilder().setName('stats').setDescription('A member’s moderation record: corners & strikes over a period')
         .addUserOption(o => o.setName('user').setDescription('Whose record to pull').setRequired(true))
         .addStringOption(o => o.setName('period').setDescription('How far back to count (default: 30 days)').setRequired(false)
           .addChoices({ name: 'Last 7 days', value: '7' }, { name: 'Last 30 days', value: '30' }, { name: 'Last 90 days', value: '90' }, { name: 'All time', value: 'all' }))
@@ -727,10 +727,10 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('pending').setDescription('Browse open verify threads (paginated)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods verify, so they need /pending too
       // No Discord-level perm gate: trial mods (who lack Manage Roles) need to reach it too. The handler
-      // gates - mod+ get the full panel, trial mods get the read-only view, everyone else is refused.
+      // gates — mod+ get the full panel, trial mods get the read-only view, everyone else is refused.
       new SlashCommandBuilder().setName('panel').setDescription('Open your private FUBU control panel (only you see it)').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('unban').setDescription('Unban a user by ID (optionally re-watchlist on rejoin)')
-        .addStringOption(o => o.setName('user_id').setDescription("The banned user's ID - start typing a name to search").setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName('user_id').setDescription("The banned user's ID, start typing a name to search").setRequired(true).setAutocomplete(true))
         .addBooleanOption(o => o.setName('watchlist').setDescription('Give them the Watchlist role when they rejoin'))
         .addStringOption(o => o.setName('reason').setDescription('Audit-log reason'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
@@ -739,10 +739,10 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('remove').setDescription('Take a member off the Watchlist').addUserOption(o => o.setName('user').setDescription('Member').setRequired(true)))
         .addSubcommand(s => s.setName('list').setDescription('List everyone on the Watchlist'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
-      new SlashCommandBuilder().setName('watchlist-terms').setDescription('Manage flagged terms - strict / loose / welfare')
+      new SlashCommandBuilder().setName('watchlist-terms').setDescription('Manage flagged terms: strict / loose / welfare')
         .addSubcommand(s => s.setName('add').setDescription('Flag a word or phrase')
           .addStringOption(o => o.setName('term').setDescription('Word or phrase').setRequired(true))
-          .addStringOption(o => o.setName('scope').setDescription('Which list (default strict)').addChoices({ name: 'strict - watchlist ban alerts', value: 'strict' }, { name: 'loose - day-to-day watch-log', value: 'loose' }, { name: 'welfare - support check-ins', value: 'welfare' })))
+          .addStringOption(o => o.setName('scope').setDescription('Which list (default strict)').addChoices({ name: 'strict: watchlist ban alerts', value: 'strict' }, { name: 'loose: day-to-day watch-log', value: 'loose' }, { name: 'welfare: support check-ins', value: 'welfare' })))
         .addSubcommand(s => s.setName('remove').setDescription('Unflag a word or phrase')
           .addStringOption(o => o.setName('term').setDescription('Word or phrase').setRequired(true))
           .addStringOption(o => o.setName('scope').setDescription('Which list (default strict)').addChoices({ name: 'strict', value: 'strict' }, { name: 'loose', value: 'loose' }, { name: 'welfare', value: 'welfare' })))
@@ -752,7 +752,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('watchlist-suggest').setDescription('Scan recent messages and recommend new watchlist terms')
         .addIntegerOption(o => o.setName('hours').setDescription('How far back to scan (default 6, max 24)').setMinValue(1).setMaxValue(24))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
-      new SlashCommandBuilder().setName('grade').setDescription('Grade a smart-watch card by its ID - trains the judge (owner only)')
+      new SlashCommandBuilder().setName('grade').setDescription('Grade a smart-watch card by its ID: trains the judge (owner only)')
         .addStringOption(o => o.setName('id').setDescription('The grade id shown on the card').setRequired(true))
         .addStringOption(o => o.setName('verdict').setDescription('Your call').setRequired(true).addChoices(
           { name: '🔨 Strike-worthy', value: 'strike' }, { name: '⛓️ Corner-only', value: 'corner' },
@@ -766,7 +766,7 @@ client.once('ready', async () => {
             { name: 'Regular member', value: 'member' }, { name: 'Trial mod', value: 'trial' }, { name: 'Mod', value: 'mod' }, { name: 'Admin', value: 'admin' }, { name: 'Owner', value: 'owner' })))
         .addSubcommand(s => s.setName('channel').setDescription('Who can see/use one channel')
           .addChannelOption(o => o.setName('channel').setDescription('Channel to inspect').setRequired(true)))
-        .addSubcommand(s => s.setName('audit').setDescription('Full permission audit - leaks, dangerous perms, exposure'))
+        .addSubcommand(s => s.setName('audit').setDescription('Full permission audit: leaks, dangerous perms, exposure'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('suggest').setDescription('Post a suggestion to the suggestions forum')
@@ -780,10 +780,10 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('confess-setup').setDescription('Create/repair the confessions + staff log channels (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
 
-      new SlashCommandBuilder().setName('whistleblow').setDescription('Privately DM a problem about the server/staff to the top - no channel, admins can’t snoop')
+      new SlashCommandBuilder().setName('whistleblow').setDescription('Privately DM a problem about the server/staff to the top, no channel, admins can’t snoop')
         .addStringOption(o => o.setName('to').setDescription('Who it goes to / who may unmask you').setRequired(true)
           .addChoices({ name: 'Head admin only', value: 'you' }, { name: 'Server owner only', value: 'her' },
-            { name: 'Both', value: 'both' }, { name: 'Anonymous - both see it, no one can unmask', value: 'anonymous' }))
+            { name: 'Both', value: 'both' }, { name: 'Anonymous: both see it, no one can unmask', value: 'anonymous' }))
         .addStringOption(o => o.setName('text').setDescription('What’s the problem?').setRequired(true).setMaxLength(1500))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('whistleblow-setup').setDescription('Set who receives whistleblows (bot owner only)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
@@ -802,11 +802,11 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('mod-applications').setDescription('Open or close mod applications when the team is full (admin)')
         .addSubcommand(s => s.setName('status').setDescription('Are mod applications open or closed right now?'))
-        .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications - accept new /apply-mod again'))
+        .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications: accept new /apply-mod again'))
         .addSubcommand(s => s.setName('close').setDescription('Close mod applications (team full); in-flight applications still finish')
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
-      new SlashCommandBuilder().setName('staff').setDescription('Staff roster - each tier’s count + members (@ · username · user id)')
+      new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
         .addStringOption(o => o.setName('member').setDescription('The trial mod to consider for full Mod').setRequired(true).setAutocomplete(true))
@@ -819,7 +819,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('reason').setDescription('Optional note, kept internal').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
 
-      // #roles picker management - one-up on the old Carl-bot setup: add/remove a self-assign role in a
+      // #roles picker management — one-up on the old Carl-bot setup: add/remove a self-assign role in a
       // section with one command, no manual message editing (admin).
       new SlashCommandBuilder().setName('roleselect-role').setDescription('Add or remove a self-assign role in #roles (admin)')
         .addSubcommand(s => s.setName('add').setDescription('Add a role to a #roles section')
@@ -835,21 +835,21 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('role').setDescription('The role to remove').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
 
-      new SlashCommandBuilder().setName('request-role').setDescription('Request a casual role - staff approves it')
+      new SlashCommandBuilder().setName('request-role').setDescription('Request a casual role, staff approves it')
         .addRoleOption(o => o.setName('role').setDescription('The role you want (or already have, if removing)').setRequired(true))
         .addBooleanOption(o => o.setName('remove').setDescription('Request to give this role UP instead of getting it (default: no)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('request-role-setup').setDescription('Create the role-requests channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
-      // Appeals - unified /appeal ban|strike. Each subcommand is gated by its OWN feature flag
-      // ('appeals' for ban, 'strikeAppeals' for strike - see the gate check near the interaction
+      // Appeals — unified /appeal ban|strike. Each subcommand is gated by its OWN feature flag
+      // ('appeals' for ban, 'strikeAppeals' for strike — see the gate check near the interaction
       // handler, and the comment in features.js on why one command needs two flags).
       new SlashCommandBuilder().setName('appeal').setDescription('Appeal a ban (for a friend) or one of your own strikes')
-        .addSubcommand(s => s.setName('ban').setDescription('Appeal a ban on a friend’s behalf - opens a private thread')
+        .addSubcommand(s => s.setName('ban').setDescription('Appeal a ban on a friend’s behalf, opens a private thread')
           .addStringOption(o => o.setName('username').setDescription('The banned person’s @username').setRequired(true))
           .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false)))
-        .addSubcommand(s => s.setName('strike').setDescription('Appeal one of your own strikes, alone - opens a private thread')
-          .addStringOption(o => o.setName('strike_id').setDescription('Which strike - pick from your own active strikes').setRequired(true).setAutocomplete(true))
+        .addSubcommand(s => s.setName('strike').setDescription('Appeal one of your own strikes, alone. Opens a private thread')
+          .addStringOption(o => o.setName('strike_id').setDescription('Which strike, pick from your own active strikes').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('note').setDescription('Optional: a line to open the appeal with').setRequired(false)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
@@ -858,8 +858,8 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
-      new SlashCommandBuilder().setName('help').setDescription('What can this bot do? - the member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
-      new SlashCommandBuilder().setName('tribe').setDescription('Your tribe - info, roster, standings, and (leaders) set the motto')
+      new SlashCommandBuilder().setName('help').setDescription('What can this bot do? The member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('tribe').setDescription('Your tribe: info, roster, standings, and (leaders) set the motto')
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
         .addSubcommand(s => s.setName('roster').setDescription('List a tribe’s members')
@@ -875,8 +875,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
         .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Which member').setRequired(true))
-          .addStringOption(o => o.setName('text').setDescription('The note - leave blank to read existing notes').setRequired(false)))
-        .addSubcommand(s => s.setName('leaderboard').setDescription('Tribe Tides leaderboard - top members by activity')
+          .addStringOption(o => o.setName('text').setDescription('The note, leave blank to read existing notes').setRequired(false)))
+        .addSubcommand(s => s.setName('leaderboard').setDescription('Tribe Tides leaderboard: top members by activity')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
         .addSubcommand(s => s.setName('rank').setDescription('Set a member’s rank by hand (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Member to rank').setRequired(true))
@@ -902,25 +902,25 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
-      new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes - weighted units, bans at 10')
+      new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes: weighted units, bans at 10')
         .addSubcommand(s => s.setName('view').setDescription('See a member’s current units + strike history')
           .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true)))
         .addSubcommand(s => s.setName('add').setDescription('Give a strike')
           .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true))
           .addStringOption(o => o.setName('rule').setDescription('Which rule (pick a rule, a reason, or both)').setRequired(false)
             .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
-          .addStringOption(o => o.setName('reason').setDescription('Why - posted publicly, no DMs (pick a rule, a reason, or both)').setRequired(false))
-          .addIntegerOption(o => o.setName('weight').setDescription('Severity - omit to use the picked rule’s decided weight').setRequired(false)
-            .addChoices({ name: '1 - minor', value: 1 }, { name: '2 - moderate', value: 2 }, { name: '3 - severe', value: 3 }))
-          .addStringOption(o => o.setName('timeout').setDescription('Attach a native Discord timeout, e.g. 30m/2h/3d - adds bonus units (linear by length, capped at +2)').setRequired(false))
-          .addStringOption(o => o.setName('corner').setDescription('Also send them to the Corner for this long, e.g. 30m/2h/30s - strips roles, restored on release').setRequired(false)))
-        .addSubcommand(s => s.setName('remove').setDescription('Remove ONE specific strike - start typing to search their strikes')
+          .addStringOption(o => o.setName('reason').setDescription('Why: posted publicly, no DMs (pick a rule, a reason, or both)').setRequired(false))
+          .addIntegerOption(o => o.setName('weight').setDescription('Severity, omit to use the picked rule’s decided weight').setRequired(false)
+            .addChoices({ name: '1: minor', value: 1 }, { name: '2: moderate', value: 2 }, { name: '3: severe', value: 3 }))
+          .addStringOption(o => o.setName('timeout').setDescription('Attach a native Discord timeout, e.g. 30m/2h/3d, adds bonus units (linear by length, capped at +2)').setRequired(false))
+          .addStringOption(o => o.setName('corner').setDescription('Also send them to the Corner for this long, e.g. 30m/2h/30s, strips roles, restored on release').setRequired(false)))
+        .addSubcommand(s => s.setName('remove').setDescription('Remove ONE specific strike, start typing to search their strikes')
           .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true))
-          .addStringOption(o => o.setName('strike_id').setDescription('Which strike - pick from the list').setRequired(true).setAutocomplete(true)))
+          .addStringOption(o => o.setName('strike_id').setDescription('Which strike, pick from the list').setRequired(true).setAutocomplete(true)))
         .addSubcommand(s => s.setName('clear').setDescription('Remove ALL of a member’s active strikes')
           .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
-      new SlashCommandBuilder().setName('verify').setDescription('Verify a member - no need to open the panel')
+      new SlashCommandBuilder().setName('verify').setDescription('Verify a member, no need to open the panel')
         .addUserOption(o => o.setName('user').setDescription('Member to verify').setRequired(true))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new SlashCommandBuilder().setName('features').setDescription('View or toggle bot features (Owner only)')
@@ -930,11 +930,11 @@ client.once('ready', async () => {
           .addBooleanOption(o => o.setName('on').setDescription('On or off').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('permguard').setDescription('Permission-drift guard (Owner only)')
-        .addSubcommand(s => s.setName('status').setDescription('Run a sweep now and show what it found (no changes made silently - this DOES fix drift)'))
+        .addSubcommand(s => s.setName('status').setDescription('Run a sweep now and show what it found (no changes made silently. This DOES fix drift)'))
         .addSubcommand(s => s.setName('resnapshot').setDescription('Review changes since the baseline, then keep/undo each before saving')
           .addBooleanOption(o => o.setName('force').setDescription('Skip the review and blindly adopt current permissions (old behaviour)').setRequired(false)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
-      // Monthly contests - management (organizers have the ManageEvents guild perm, so this shows to
+      // Monthly contests — management (organizers have the ManageEvents guild perm, so this shows to
       // them + admins + owner natively). The member-facing /contest-submit is separate + ungated.
       new SlashCommandBuilder().setName('contest').setDescription('Run the monthly community contests (organizers/staff)')
         .addSubcommand(s => s.setName('setup').setDescription('Create the contest channels + winner role and post the rules'))
@@ -945,14 +945,14 @@ client.once('ready', async () => {
               { name: 'Photography only', value: 'photography' }, { name: 'Writing only', value: 'writing' },
               { name: 'Drawing + Photography', value: 'drawing,photography' })))
         .addSubcommand(s => s.setName('status').setDescription('Show the current theme, entry counts and 🩷 leaders'))
-        .addSubcommand(s => s.setName('end').setDescription('Close the round now - tally 🩷, crown winners, assign the role'))
-        .addSubcommand(s => s.setName('reveal').setDescription('See the real submitter of every entry, incl. anonymous (private - for awarding)'))
+        .addSubcommand(s => s.setName('end').setDescription('Close the round now: tally 🩷, crown winners, assign the role'))
+        .addSubcommand(s => s.setName('reveal').setDescription('See the real submitter of every entry, incl. anonymous (private, for awarding)'))
         .addSubcommand(s => s.setName('panel').setDescription('Open the event organizer dashboard (buttons)'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageEvents),
       new SlashCommandBuilder().setName('contest-submit').setDescription('Enter this month\'s contest anonymously (your name stays hidden)')
         .addStringOption(o => o.setName('contest').setDescription('Which contest').setRequired(true)
           .addChoices({ name: '🎨 Drawing', value: 'drawing' }, { name: '📸 Photography', value: 'photography' }, { name: '✍️ Writing', value: 'writing' }))
-        .addAttachmentOption(o => o.setName('image').setDescription('Your entry image (Drawing/Photography - required there)').setRequired(false))
+        .addAttachmentOption(o => o.setName('image').setDescription('Your entry image (Drawing/Photography, required there)').setRequired(false))
         .addStringOption(o => o.setName('text').setDescription('Your written entry (Writing)').setRequired(false).setMaxLength(2000))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new ContextMenuCommandBuilder().setName('Report to watchlist').setType(ApplicationCommandType.Message)
@@ -1023,7 +1023,7 @@ client.once('ready', async () => {
     await ownerlog.ensureChannel(guild).catch(e => console.error('[ownerlog] channel init:', e.message));
     ownerlog.register(client);
     // Permission-drift guard: reconcile every channel's ROLE overwrites against the golden manifest
-    // snapshot (see permguard.js) - catches the "channel overwrite silently stopped inheriting the
+    // snapshot (see permguard.js) — catches the "channel overwrite silently stopped inheriting the
     // category's deny-by-default" class of bug (found 2026-07-30, #mod-announcements) automatically.
     const permResult = await permguard.sweepPermissions(guild, { notify: false }).catch(e => { console.error('[permguard] boot sweep failed:', e.message); return null; });
     if (permResult) console.log(`[permguard] boot sweep: ${permResult.fixed} overwrite(s) corrected, ${permResult.newMemberOverwrites.length} new member-overwrite(s) flagged, ${permResult.unmanagedChannels} channel(s) unmanaged (created after snapshot)`);
@@ -1043,7 +1043,7 @@ client.once('ready', async () => {
   }
 
   // Backfill sweep: auto-corner + delete any threads opened in general/chat channels BEFORE the
-  // auto-corner-on-thread rule shipped. Idempotent - a no-op on every boot after the first.
+  // auto-corner-on-thread rule shipped. Idempotent — a no-op on every boot after the first.
   try {
     const guild = await client.guilds.fetch(config.guildId);
     const swept = await sweepExistingAutoCornerThreads(guild);
@@ -1053,7 +1053,7 @@ client.once('ready', async () => {
   }
 
   // Auto-release expired corners every minute (survives restarts via state), announcing each in the
-  // corner channel ("time served") - otherwise a timed release is silent.
+  // corner channel ("time served") — otherwise a timed release is silent.
   // Precise release: each timed corner arms its own setTimeout (corner.js) that calls this handler at
   // exactly its time. Guarded so a timer + the backstop poller can't double-release/announce the same member.
   corner.setReleaseHandler(releaseCornerAndAnnounce);
@@ -1079,7 +1079,7 @@ client.once('ready', async () => {
   // Real-time enforcement is guildMemberUpdate; this catches pre-existing holders + missed events.
   if (dguild) await sweepMdni(dguild).catch(e => console.error(`[mdni] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdni(g)).catch(() => {}), 3600000);
-  // MDNI minor-STAFF lock: a minor with a staff role sees MDNI via the role allow (role-deny can't stop it) -
+  // MDNI minor-STAFF lock: a minor with a staff role sees MDNI via the role allow (role-deny can't stop it) —
   // maintain member-level denies for them. Boot + hourly, same cadence.
   if (dguild) await sweepMdniStaffLock(dguild).catch(e => console.error(`[mdni-lock] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g)).catch(() => {}), 3600000);
@@ -1140,12 +1140,12 @@ client.on('guildMemberAdd', async (member) => {
 });
 
 // Track the Unverified role clock in real time: when a member GAINS the role (mod un-verifies as
-// punishment, or autorole), stamp now so their reap clock starts then - not their join date. When
+// punishment, or autorole), stamp now so their reap clock starts then — not their join date. When
 // they LOSE it (verified/resolved), drop their reap bookkeeping. Only acts on a confirmed
 // transition (non-partial old member); pre-existing members are reconstructed by the sweep.
 // MDNI (18+) must be backed by an ADULT age role. Onboarding lets a 16-17 member self-select MDNI with
 // no age check, so we strip it from anyone who isn't a confirmed adult (minors, or adults who later
-// switch their age to 16-17). Flags the MINOR case to mods - a minor reaching for 18+ is worth a look.
+// switch their age to 16-17). Flags the MINOR case to mods — a minor reaching for 18+ is worth a look.
 async function enforceMdni(member, { notify = true } = {}) {
   if (!config.mdniEnforce || !config.mdniRoleId || member.user?.bot) return null;
   if (!member.roles.cache.has(config.mdniRoleId)) return null;
@@ -1155,7 +1155,7 @@ async function enforceMdni(member, { notify = true } = {}) {
   console.log(`[mdni] stripped MDNI from ${member.user.tag}${isMinor ? ' (MINOR 16-17)' : ' (no adult age role)'}`);
   if (notify && isMinor && config.modAnnounceChannelId) {   // real-time single-member notice (sweep summarizes instead)
     const ch = await member.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
-    if (ch) ch.send({ content: `## ⚠️ MDNI removed from a minor\n<@${member.id}> (\`${member.user.tag}\`) has the **16-17** age role but selected **MDNI** - auto-removed. Heads up in case it needs a closer look.`, allowedMentions: { parse: [] } }).catch(() => {});
+    if (ch) ch.send({ content: `## ⚠️ MDNI removed from a minor\n<@${member.id}> (\`${member.user.tag}\`) has the **16-17** age role but selected **MDNI**, auto-removed. Heads up in case it needs a closer look.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
   return { id: member.id, tag: member.user.tag, minor: isMinor };
 }
@@ -1177,16 +1177,16 @@ async function sweepMdni(guild) {
   if (minors.length && config.modAnnounceChannelId) {
     const ch = await guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
     if (ch) await ch.send({
-      content: `## ⚠️ MDNI removed from ${minors.length} minor${minors.length > 1 ? 's' : ''}\nThese members have the **16-17** age role but held **MDNI** (18+) - auto-removed by the age-gate:\n${minors.map(m => `• <@${m.id}> (\`${m.tag}\`)`).join('\n')}`,
+      content: `## ⚠️ MDNI removed from ${minors.length} minor${minors.length > 1 ? 's' : ''}\nThese members have the **16-17** age role but held **MDNI** (18+), auto-removed by the age-gate:\n${minors.map(m => `• <@${m.id}> (\`${m.tag}\`)`).join('\n')}`,
       allowedMentions: { parse: [] },
     }).catch(() => {});
   }
 }
 
-// MDNI is 18+ - and a minor must be excluded EVEN IF they're staff. Discord can't express "staff AND adult":
+// MDNI is 18+ — and a minor must be excluded EVEN IF they're staff. Discord can't express "staff AND adult":
 // at the role tier every allow is OR'd on top of every deny, so a MODS/ADMINS **allow** overrides a 16-17
-// role **deny** - a minor mod would still see the channel. Only a MEMBER-level overwrite beats a role allow.
-// So for any minor who'd otherwise see MDNI (i.e. staff - regular minors are already blocked by @everyone),
+// role **deny** — a minor mod would still see the channel. Only a MEMBER-level overwrite beats a role allow.
+// So for any minor who'd otherwise see MDNI (i.e. staff — regular minors are already blocked by @everyone),
 // maintain a member-level ViewChannel deny; drop it once they're no longer a minor-staff. Scoped to the few
 // minor-staff, never the ~800 regular minors. blessChannel keeps permguard from flagging the member-denies.
 async function enforceMdniStaffLock(member, { bless = true } = {}) {
@@ -1195,16 +1195,16 @@ async function enforceMdniStaffLock(member, { bless = true } = {}) {
   if (!ch) return null;
   const VIEW = PermissionsBitField.Flags.ViewChannel;
   const isMinor = member.roles.cache.has(config.minorAgeRoleId);
-  const needsLock = isMinor && ['mod', 'admin'].includes(opspanel.memberTier(member));   // minor mods/admins only - owner-tier exempt (owner ruling 2026-08-01)
+  const needsLock = isMinor && ['mod', 'admin'].includes(opspanel.memberTier(member));   // minor mods/admins only — owner-tier exempt (owner ruling 2026-08-01)
   const ow = ch.permissionOverwrites.cache.get(member.id);
   const botLocked = !!(ow && ow.type === 1 && ow.deny.has(VIEW) && ow.allow.bitfield === 0n);
   let changed = null;
   if (needsLock && !botLocked) {
-    await ch.permissionOverwrites.edit(member.id, { ViewChannel: false }, { reason: 'MDNI is 18+ - minor staff excluded (member deny overrides staff role allow)' }).catch(e => console.error('[mdni-lock] add:', e.message));
+    await ch.permissionOverwrites.edit(member.id, { ViewChannel: false }, { reason: 'MDNI is 18+ — minor staff excluded (member deny overrides staff role allow)' }).catch(e => console.error('[mdni-lock] add:', e.message));
     console.log(`[mdni-lock] locked minor-staff ${member.user.tag} out of MDNI`);
     changed = { id: member.id, tag: member.user.tag, locked: true };
   } else if (!needsLock && botLocked) {
-    await ch.permissionOverwrites.delete(member.id, 'no longer minor-staff - MDNI lock lifted').catch(e => console.error('[mdni-lock] del:', e.message));
+    await ch.permissionOverwrites.delete(member.id, 'no longer minor-staff — MDNI lock lifted').catch(e => console.error('[mdni-lock] del:', e.message));
     console.log(`[mdni-lock] lifted MDNI lock on ${member.user.tag}`);
     changed = { id: member.id, tag: member.user.tag, locked: false };
   }
@@ -1235,7 +1235,7 @@ async function sweepMdniStaffLock(guild) {
   return n;
 }
 
-// Only one age bracket at a time. Nothing previously enforced this - a member could hold multiple age
+// Only one age bracket at a time. Nothing previously enforced this — a member could hold multiple age
 // roles simultaneously (whatever assigned them, e.g. the old external selector, had no exclusivity check).
 // Real-time (guildMemberUpdate, oldMember diff picks the newly-added one to keep) + boot sweep (no diff
 // available, so it just keeps the first held in canonical order and flags the case as ambiguous for staff).
@@ -1250,15 +1250,15 @@ async function enforceAgeExclusivity(member, oldMember) {
   const keep = ambiguous ? held[0] : newlyAdded[0];
   const strip = held.filter(id => id !== keep);
   await member.roles.remove(strip, 'Only one age bracket allowed at a time').catch(e => console.error('[age-exclusivity] remove:', e.message));
-  console.log(`[age-exclusivity] ${member.user.tag} held ${held.length} age roles - kept ${keep}, stripped ${strip.join(',')}${ambiguous ? ' (ambiguous, picked first)' : ''}`);
+  console.log(`[age-exclusivity] ${member.user.tag} held ${held.length} age roles — kept ${keep}, stripped ${strip.join(',')}${ambiguous ? ' (ambiguous, picked first)' : ''}`);
   return { keep, strip, ambiguous };
 }
 
-// Age bracket + MDNI are a ONE-TIME choice made "during registration" (Rule 3) - not something to keep
+// Age bracket + MDNI are a ONE-TIME choice made "during registration" (Rule 3) — not something to keep
 // re-picking. The moment a member is first observed as Verified, their current age role + MDNI status is
 // snapshotted as their permanent choice; any change after that gets reverted and flagged to staff. This is
 // the backstop against the external role-selector (Discord onboarding or similar) that this bot doesn't
-// control - even if that path is still reachable, anything it does post-verification gets undone here.
+// control — even if that path is still reachable, anything it does post-verification gets undone here.
 function snapshotRegistrationLock(member) {
   return { ageRoleId: currentAgeRole(member), mdni: !!(config.mdniRoleId && member.roles.cache.has(config.mdniRoleId)) };
 }
@@ -1276,22 +1276,22 @@ async function whoChangedRoles(member) {
 const _rlBusy = new Set();   // re-entrancy guard: our own revert fires more guildMemberUpdate events
 async function enforceRegistrationLock(member, notify = true) {
   if (!config.verifiedRoleId || !member.roles.cache.has(config.verifiedRoleId)) return;
-  if (_rlBusy.has(member.id)) return;                       // mid-revert on this member - ignore the echo
+  if (_rlBusy.has(member.id)) return;                       // mid-revert on this member — ignore the echo
   const locks = state.getMeta('registrationLock') || {};
   if (!locks[member.id]) { locks[member.id] = snapshotRegistrationLock(member); state.setMeta('registrationLock', locks); return; }
   const lock = locks[member.id];
   const curAge = currentAgeRole(member);
   const curMdni = !!(config.mdniRoleId && member.roles.cache.has(config.mdniRoleId));
-  if (curAge === lock.ageRoleId && curMdni === lock.mdni) return;   // matches the locked baseline - nothing to do
+  if (curAge === lock.ageRoleId && curMdni === lock.mdni) return;   // matches the locked baseline — nothing to do
 
   // WHO changed it decides everything. Only a member re-picking their OWN registration is blocked. A mod/
   // admin (or the bot) changing it is a deliberate OVERRIDE → accept it as the new locked baseline so staff
   // CAN fix a bracket. Our own revert echoes (actor = the bot) are ignored.
   const actor = await whoChangedRoles(member);
-  if (actor && actor.id === member.client.user.id) return;  // bot's own change - ignore
+  if (actor && actor.id === member.client.user.id) return;  // bot's own change — ignore
   if (actor && actor.id !== member.id) {
     locks[member.id] = snapshotRegistrationLock(member); state.setMeta('registrationLock', locks);
-    console.log(`[registration-lock] override by ${actor.tag || actor.id} for ${member.user.tag} - new baseline locked`);
+    console.log(`[registration-lock] override by ${actor.tag || actor.id} for ${member.user.tag} — new baseline locked`);
     return;
   }
 
@@ -1316,7 +1316,7 @@ async function enforceRegistrationLock(member, notify = true) {
   if (!changes.length) return;
   console.log(`[registration-lock] reverted self-change for ${member.user.tag}: ${changes.join('; ')}`);
 
-  // Rate-limit the mod-announce post per member - a member spam-toggling shouldn't flood the channel (the
+  // Rate-limit the mod-announce post per member — a member spam-toggling shouldn't flood the channel (the
   // revert still happens every time; only the heads-up is throttled).
   if (!notify || !config.modAnnounceChannelId) return;
   const notified = state.getMeta('registrationLockNotified') || {};
@@ -1324,11 +1324,11 @@ async function enforceRegistrationLock(member, notify = true) {
   notified[member.id] = Date.now(); state.setMeta('registrationLockNotified', notified);
   const ch = await member.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
   if (ch) await ch.send({
-    content: `## 🔒 Registration lock\n<@${member.id}> (\`${member.user.tag}\`) tried to change their own **age/MDNI** after verifying - auto-reverted (it’s a one-time choice set at verification).\n${changes.map(c => `• ${c}`).join('\n')}\n_A mod/admin **can** override this by changing it for them - only self-changes are blocked._`,
+    content: `## 🔒 Registration lock\n<@${member.id}> (\`${member.user.tag}\`) tried to change their own **age/MDNI** after verifying, auto-reverted (it’s a one-time choice set at verification).\n${changes.map(c => `• ${c}`).join('\n')}\n_A mod/admin **can** override this by changing it for them. Only self-changes are blocked._`,
     allowedMentions: { parse: [] } }).catch(() => {});
 }
 // Boot self-heal: grandfather in every currently-Verified member with no lock snapshot yet (their
-// CURRENT state becomes their locked baseline - doesn't retroactively punish existing members).
+// CURRENT state becomes their locked baseline — doesn't retroactively punish existing members).
 async function sweepRegistrationLocks(guild) {
   if (!config.verifiedRoleId) return 0;
   await guild.members.fetch().catch(() => {});
@@ -1344,7 +1344,7 @@ async function sweepRegistrationLocks(guild) {
 // ── Tier auto-nesting ───────────────────────────────────────────────────────────────────────────────
 // Owner ⊇ Admin ⊇ Mod: higher tiers hold the lower ROLES, so @Mod reaches everyone above AND every
 // admin/owner inherits the MODS-✰ role's perks (embed/attach/voice) by being a mod. Trial Mod is
-// DELIBERATELY EXCLUDED - becoming a real mod/admin/owner STRIPS Trial Mod, so @Trial Mod only ever
+// DELIBERATELY EXCLUDED — becoming a real mod/admin/owner STRIPS Trial Mod, so @Trial Mod only ever
 // pings genuine trial mods (owner ruling 2026-07-30). Idempotent → safe on every role change + on boot.
 const NEST_MOD_ROLE = config.modRoleId || '1528316361665675316';
 const NEST_ADMIN_ROLE = process.env.FUBU_ADMIN_ROLE_ID || '1516179051105226833';
@@ -1369,7 +1369,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     if (newMember.guild.id !== config.guildId) return;
     await enforceTierNesting(newMember).catch(e => console.error('[tier-nest]', e.message));
     // Nobody should be able to browse to their own application. A mod+ can see the WHOLE review forum, so
-    // removing thread membership isn't enough - archive their own post to the owner-only channel instead
+    // removing thread membership isn't enough — archive their own post to the owner-only channel instead
     // (record kept, just moved out of reach). A trial mod can't see the forum at all; sealing their
     // applicant-thread membership is sufficient there. Idempotent either way.
     if (opspanel.memberTier(newMember)) await modapps.archiveOwnApplication(newMember.guild, newMember.id).catch(e => console.error('[modapps archive]', e.message));
@@ -1398,7 +1398,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
   }
 });
 
-// Mod-application review threads are mod+ only - but Discord lets any mod+ member (via Manage Threads)
+// Mod-application review threads are mod+ only — but Discord lets any mod+ member (via Manage Threads)
 // manually add someone to a SPECIFIC thread, and that add works even if the added person's own CHANNEL
 // permission denies them entirely (thread membership bypasses the parent's view-deny). A channel/category
 // lockout alone can't stop that. React the moment anyone below mod+ is added: remove them + notify.
@@ -1407,8 +1407,8 @@ client.on('threadMembersUpdate', async (addedMembers, removedMembers, thread) =>
     if (!addedMembers.size) return;
     const cfg = modapps.loadConfig();
     let removed = [], kind = '';
-    if (cfg.forumId && thread.parentId === cfg.forumId) { removed = await modapps.enforceReviewThreadMembers(thread.guild, thread); kind = 'review thread - mod+ only'; }
-    else if (cfg.appsChannelId && thread.parentId === cfg.appsChannelId) { removed = await modapps.enforceApplicantThreadMembers(thread.guild, thread); kind = 'application thread - applicant + staff only'; }
+    if (cfg.forumId && thread.parentId === cfg.forumId) { removed = await modapps.enforceReviewThreadMembers(thread.guild, thread); kind = 'review thread (mod+ only)'; }
+    else if (cfg.appsChannelId && thread.parentId === cfg.appsChannelId) { removed = await modapps.enforceApplicantThreadMembers(thread.guild, thread); kind = 'application thread (applicant + staff only)'; }
     else return;
     if (!removed.length) return;
     console.log(`[modapps] auto-removed non-staff member(s) from thread ${thread.id}: ${removed.map(m => m.user.tag).join(', ')}`);
@@ -1419,18 +1419,18 @@ client.on('threadMembersUpdate', async (addedMembers, removedMembers, thread) =>
 
 // A mod deleted a denied ban-appeal thread once (2026-08-01), erasing the record. Mods can no longer delete
 // threads in the appeal channels (ManageThreads denied there), but log ANY appeal-thread deletion to owner-log
-// regardless of who did it - a permanent, visible trail. (The transcript itself is snapshotted into the appeal
+// regardless of who did it — a permanent, visible trail. (The transcript itself is snapshotted into the appeal
 // record at decision time, so even a deletion can't lose the contents.)
 client.on('threadDelete', async (thread) => {
   try {
     const appealChans = [appeals.loadConfig().channelId, strikeAppeals.loadConfig().channelId].filter(Boolean);
     if (!thread.parentId || !appealChans.includes(thread.parentId)) return;
-    let who = '**unknown**';   // threadDelete carries no executor - find it in the audit log
+    let who = '**unknown**';   // threadDelete carries no executor — find it in the audit log
     const logs = await thread.guild.fetchAuditLogs({ type: AuditLogEvent.ThreadDelete, limit: 5 }).catch(() => null);
     const entry = logs && [...logs.entries.values()].find(e => e.targetId === thread.id || e.target?.name === thread.name);
     if (entry?.executor) who = `<@${entry.executor.id}>`;
     await ownerlog.log(thread.guild, { emoji: '🗑️', title: 'Appeal thread DELETED', color: 0xED4245,
-      detail: `**${thread.name}** (in <#${thread.parentId}>) was deleted by ${who}. Decided appeals are meant to stay archived, not deleted - the saved transcript is in the appeal record if you need it.` });
+      detail: `**${thread.name}** (in <#${thread.parentId}>) was deleted by ${who}. Decided appeals are meant to stay archived, not deleted — the saved transcript is in the appeal record if you need it.` });
   } catch (e) { console.error('[appeal-thread-delete]', e.message); }
 });
 
@@ -1447,7 +1447,7 @@ client.on('threadCreate', async (thread, newlyCreated) => {
     const panel = buildVerifyPanel(thread.ownerId, m?.user?.tag || null);
     const pingRoles = [config.modRoleId, config.trialModRoleId].filter(Boolean);
     const rolePing = pingRoles.map(r => `<@&${r}>`).join(' ');
-    const modPing = pingRoles.length ? `${rolePing} - a member is waiting to be verified.\n` : '';
+    const modPing = pingRoles.length ? `${rolePing}. A member is waiting to be verified.\n` : '';
     await thread.send({
       ...panel,
       content: `${modPing}${panel.content}`,
@@ -1461,7 +1461,7 @@ client.on('threadCreate', async (thread, newlyCreated) => {
 
 // Auto-corner (Rule 9, Right Channel Right Conversation): opening a thread in a general/chat category is
 // a quick, automatic Corner + the thread gets deleted (nothing left to salvage once the owner's cornered).
-// Staff are exempt - this is member-facing enforcement, not a staff restriction. Feeds the same
+// Staff are exempt — this is member-facing enforcement, not a staff restriction. Feeds the same
 // repeat-alert tracking as a manual /corner with rule 9, so a repeat offender still surfaces to staff.
 // Shared by the live threadCreate listener AND the boot-time backfill sweep (for threads opened before
 // this rule existed). Returns true if the thread was acted on (cornered + deleted), false if skipped.
@@ -1477,7 +1477,7 @@ async function autoCornerThread(guild, thread) {
   await thread.delete('Auto-corner: thread opened in a general/chat channel').catch(e => console.error('[auto-corner-thread] thread delete:', e.message));
   if (!r.ok) { console.error(`[auto-corner-thread] corner failed for ${member.id}: ${r.error}`); return false; }
   const relSec = Math.floor((Date.now() + config.autoCornerThreadDurationMs) / 1000);
-  const reasonText = `Rule 9: ${SERVER_RULES[8]} - opened a thread in <#${thread.parentId}>`;
+  const reasonText = `Rule 9: ${SERVER_RULES[8]} · opened a thread in <#${thread.parentId}>`;
   try {
     const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
     if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, `until <t:${relSec}:f>`, reasonText));
@@ -1497,7 +1497,7 @@ client.on('threadCreate', async (thread, newlyCreated) => {
   }
 });
 // One-time boot self-heal: sweep every covered channel for threads that predate this rule (opened before
-// the feature shipped) and apply the same treatment retroactively. Idempotent - after the first sweep,
+// the feature shipped) and apply the same treatment retroactively. Idempotent — after the first sweep,
 // the live threadCreate listener above catches everything instantly, so later boots find nothing to do.
 async function sweepExistingAutoCornerThreads(guild) {
   let swept = 0;
@@ -1507,7 +1507,7 @@ async function sweepExistingAutoCornerThreads(guild) {
     if (config.autoCornerThreadExcludedChannelIds.includes(ch.id)) continue;
     if (!config.autoCornerThreadCategoryIds.includes(ch.parentId)) continue;
     // Existing threads may already be auto-archived (Discord's own inactivity timeout) by the time this
-    // sweep runs - check both active AND archived, or a merely-quiet pre-existing thread gets missed.
+    // sweep runs — check both active AND archived, or a merely-quiet pre-existing thread gets missed.
     const active = await ch.threads.fetchActive().catch(() => null);
     const archived = await ch.threads.fetchArchived().catch(() => null);
     const threads = [...(active?.threads.values() || []), ...(archived?.threads.values() || [])];
@@ -1521,18 +1521,18 @@ async function sweepExistingAutoCornerThreads(guild) {
 
 // ── Watchlist: keyword monitor + ban/dismiss buttons ────────────────────────────────────────────────
 // Tier gates via the ops-panel's ROLE-based tiers (NOT the Administrator permission, per owner):
-//   canBan   = any staff tier (mod / admin / owner) - any mod can ban on a violation.
-//   canWLAdmin = ADMINS-★ role or owner ONLY - unban + editing the watchlist/terms.
+//   canBan   = any staff tier (mod / admin / owner) — any mod can ban on a violation.
+//   canWLAdmin = ADMINS-★ role or owner ONLY — unban + editing the watchlist/terms.
 // Authority via tierOf (bot owner supreme by user id; Administrator PERMISSION = owner tier; ADMINS-★ = admin).
 const canBan = (i) => !!opspanel.tierOf(i);                                        // any staff (mod+)
 const canWLAdmin = (i) => ['admin', 'owner', 'botowner'].includes(opspanel.tierOf(i)); // admin+
 const isOwner = (i) => ['owner', 'botowner'].includes(opspanel.tierOf(i));         // owner (role or Admin-perm) or bot owner
-// Trial Mod - a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
+// Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
 // low-risk, bounded things: VERIFY, view the dashboard read-only, and CORNER (rule+reason, ≤1h).
 const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.has(config.trialModRoleId));
 const canVerify = (i) => canBan(i) || isTrialMod(i);
 // A language mini-mod may use Send-to-corner + Report-to-watchlist, but ONLY on messages in THEIR OWN
-// language's channels (per-language roles now - French Mini-Mod acts only in French chat/VC, etc.), and
+// language's channels (per-language roles now — French Mini-Mod acts only in French chat/VC, etc.), and
 // only when the 'langMiniMod' feature is on. Dormant if no languages are configured.
 function miniModCanActOn(interaction, channelId) {
   return features.enabled('langMiniMod') && langmods.canActOn(interaction.member, channelId);
@@ -1555,7 +1555,7 @@ async function watchlistAlert(msg, hits, opts = {}) {
   // Smart-watch contextual judge (feature-gated, fail-open). Reads the flagged message in context and
   // either suppresses an obvious false positive (LIVE mode only) or annotates the alert with its verdict.
   // In shadow mode it only annotates + logs; a null/errored verdict falls through to today's behavior.
-  // When the LAB is active the AI moves OUT of the public log entirely - the watch-log reverts to plain
+  // When the LAB is active the AI moves OUT of the public log entirely — the watch-log reverts to plain
   // keyword flags and every AI verdict is posted (gradable) in the private admin lab channel instead.
   let smartNote = null;
   if (features.enabled('smartWatch') && !features.enabled('smartWatchLab')) {
@@ -1570,16 +1570,16 @@ async function watchlistAlert(msg, hits, opts = {}) {
     .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) ${opts.verb || 'matched a strict watchlist term'} in <#${msg.channel.id}>.`)
     .addFields(
       { name: 'Matched', value: (hits.map(h => `\`${h}\``).join(', ') || '-').slice(0, 1024) },
-      { name: 'What they said (saved copy)', value: (msg.content || (atts.length ? '_(no text - see mirrored attachment)_' : '-')).slice(0, 1024) },
+      { name: 'What they said (saved copy)', value: (msg.content || (atts.length ? '_(no text, see mirrored attachment)_' : '-')).slice(0, 1024) },
       { name: 'Original', value: `[jump to it](${msg.url}) · this report keeps a copy even if they delete it`, inline: true })
     .setFooter({ text: `user ${msg.author.id}` }).setTimestamp(new Date());
   if (atts.length) embed.addFields({ name: 'Attachments', value: `${atts.length} mirrored below (deletion-proof)`, inline: true });
   if (smartNote) embed.addFields({ name: 'AI context read', value: smartNote.slice(0, 1024) });
-  const freshNote = freshwatch.noteFor(msg.member);   // human heads-up only - NOT fed to the AI judge
+  const freshNote = freshwatch.noteFor(msg.member);   // human heads-up only — NOT fed to the AI judge
   if (freshNote) embed.addFields({ name: '🌱 Account age', value: freshNote.slice(0, 1024) });
   // Re-upload the attachments to the report (fetched immediately, so a later delete can't remove them).
   const files = atts.slice(0, 10).map(a => ({ attachment: a.url, name: a.name || 'attachment' }));
-  // opts.buttons: 'full' (Ban+Dismiss, default) · 'dismiss' (welfare - no ban) · 'none'.
+  // opts.buttons: 'full' (Ban+Dismiss, default) · 'dismiss' (welfare — no ban) · 'none'.
   let components = [];
   if (opts.buttons === 'dismiss') components = [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_dismiss:${msg.author.id}`).setEmoji('🗑️').setLabel('Dismiss').setStyle(ButtonStyle.Secondary))];
@@ -1607,7 +1607,7 @@ async function labEvaluateAndPost(msg, member) {
   if (!ch) return;
   const onWatch = !!(config.watchlistRoleId && member.roles.cache.has(config.watchlistRoleId));
   // WELFARE takes priority (mirrors production): a non-watchlisted member's distress signal gets a welfare
-  // card with distress-appropriate grading (🫂 genuine / ⬜ hyperbole) and no multi-action - punishment
+  // card with distress-appropriate grading (🫂 genuine / ⬜ hyperbole) and no multi-action — punishment
   // verdicts don't apply to someone's wellbeing.
   if (!onWatch) {
     const wBase = watchlist.loadWelfare();
@@ -1621,7 +1621,7 @@ async function labEvaluateAndPost(msg, member) {
   const expanded = onWatch ? [...watchlist.loadLabStrict(), ...watchlist.loadLabLoose()] : watchlist.loadLabLoose();
   const all = [...new Set([...base, ...expanded])];
   const hits = all.length ? watchlist.matchTerms(msg.content, all) : [];
-  // LOOSE stays keyword-gated (cost/noise across the whole server). STRICT is FULL behavioral coverage -
+  // LOOSE stays keyword-gated (cost/noise across the whole server). STRICT is FULL behavioral coverage —
   // the judge reads EVERY message from a watchlisted member (a small, deliberately-watched population),
   // keyword or not, matching the strict rubric's "is this person being disruptive/resuming?" intent.
   if (!onWatch && !hits.length) return;
@@ -1633,21 +1633,21 @@ async function labEvaluateAndPost(msg, member) {
   // when the judge would SURFACE it (every read is still shadow-logged by evaluateLab above regardless).
   if (onWatch && !hits.length && !wouldSurface) return;
   const baseSet = new Set(base.map(t => t.toLowerCase()));
-  const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '_(behavioral read - no keyword)_').slice(0, 1024); // ⁺ = expansion-only (lab)
+  const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '_(behavioral read, no keyword)_').slice(0, 1024); // ⁺ = expansion-only (lab)
   const conf = v.confidence.toFixed(2);
   const rule = v.likelyRule ? `, Rule ${v.likelyRule}` : '';
-  const verdictText = `${v.surface ? 'looks real' : 'likely false positive'} - ${v.reason} _(conf ${conf}, ${v.category}${rule})_`;
+  const verdictText = `${v.surface ? 'looks real' : 'likely false positive'}, ${v.reason} _(conf ${conf}, ${v.category}${rule})_`;
   const emb = new EmbedBuilder()
     .setColor(wouldSurface ? 0xE7AC4E : 0x2ECC71)
-    .setTitle(`🧪 Lab - ${scope} candidate`)
+    .setTitle(`🧪 Lab: ${scope} candidate`)
     .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) in <#${msg.channel.id}> · [jump](${msg.url})`)
     .addFields(
       { name: 'Matched', value: matchedDisplay },
-      { name: 'Message (saved copy)', value: (msg.content || '_(no text - attachment/embed)_').slice(0, 1024) },
-      { name: `AI verdict - ${wouldSurface ? '👁️ WOULD SURFACE' : '🙈 WOULD HIDE'}`, value: verdictText.slice(0, 1024) })
+      { name: 'Message (saved copy)', value: (msg.content || '_(no text, attachment/embed)_').slice(0, 1024) },
+      { name: `AI verdict: ${wouldSurface ? '👁️ WOULD SURFACE' : '🙈 WOULD HIDE'}`, value: verdictText.slice(0, 1024) })
     .setFooter({ text: `#${msg.channel?.name || '?'} · flagged ${msg.author.id}` })
     .setTimestamp(new Date());
-  const freshNote = freshwatch.noteFor(msg.member);   // human heads-up only - NOT part of the AI verdict
+  const freshNote = freshwatch.noteFor(msg.member);   // human heads-up only — NOT part of the AI verdict
   if (freshNote) emb.addFields({ name: '🌱 Account age', value: freshNote.slice(0, 1024) });
   const aiS = wouldSurface ? '1' : '0';
   const row = new ActionRowBuilder().addComponents(
@@ -1663,17 +1663,17 @@ async function labEvaluateAndPost(msg, member) {
   smartwatch.registerCard(gradeId, { content: (msg.content || '').slice(0, 1024), aiWouldSurface: wouldSurface, task: 'rule', channel: msg.channel?.name, author: msg.author?.id, cardMsgId: sent?.id, cardChannelId: ch.id });
   // Multi-action prototype: the judge may also propose strikes/corners on OTHER messages in the read
   // context. Post each as its own gradable card (same 🔨/⛓️/⬜ buttons) so admins can score whether the
-  // richer read is trustworthy. aiSurface=1 - proposing an action means the AI would surface/act.
+  // richer read is trustworthy. aiSurface=1 — proposing an action means the AI would surface/act.
   for (const a of (d.actions || []).slice(0, 4)) {
     const emoji = a.action === 'strike' ? '🔨' : '⛓️';
     const aRule = a.rule ? `, Rule ${a.rule}` : '';
     const aEmb = new EmbedBuilder().setColor(0x9B59B6)
-      .setTitle(`🔎 Lab - AI proposes ${emoji} ${a.action.toUpperCase()} (from the thread)`)
-      .setDescription(`On \`${a.who}\`'s message in <#${msg.channel.id}> - spotted while reading context around the flag above.`)
+      .setTitle(`🔎 Lab: AI proposes ${emoji} ${a.action.toUpperCase()} (from the thread)`)
+      .setDescription(`On \`${a.who}\`'s message in <#${msg.channel.id}>. Spotted while reading context around the flag above.`)
       .addFields(
-        { name: 'Matched', value: '_(context proposal - not a keyword hit)_' },
+        { name: 'Matched', value: '_(context proposal, not a keyword hit)_' },
         { name: 'Message (saved copy)', value: (a.quote || '_(no text)_').slice(0, 1024) },
-        { name: `AI proposes - ${a.action.toUpperCase()}${aRule}`, value: (a.reason || '-').slice(0, 1024) })
+        { name: `AI proposes: ${a.action.toUpperCase()}${aRule}`, value: (a.reason || '-').slice(0, 1024) })
       .setTimestamp(new Date());
     const aGradeId = smartwatch.genGradeId();
     aEmb.setFooter({ text: `#${msg.channel?.name || '?'} · proposal · grade id ${aGradeId}` });
@@ -1702,15 +1702,15 @@ async function postWelfareLabCard(msg, ch, hits, base) {
   const baseSet = new Set(base.map(t => t.toLowerCase()));
   const matchedDisplay = (hits.map(h => baseSet.has(h.toLowerCase()) ? `\`${h}\`` : `\`${h}\`⁺`).join(', ') || '-').slice(0, 1024);
   const sev = (v.severity && v.severity !== 'none') ? ` · urgency ${v.severity}` : '';
-  const verdictText = `${wouldSurface ? 'genuine distress - worth a check-in' : 'likely hyperbole / venting'} - ${v.reason} _(conf ${v.confidence.toFixed(2)}${sev})_`;
+  const verdictText = `${wouldSurface ? 'genuine distress, worth a check-in' : 'likely hyperbole / venting'}, ${v.reason} _(conf ${v.confidence.toFixed(2)}${sev})_`;
   const emb = new EmbedBuilder()
     .setColor(wouldSurface ? 0x5DADE2 : 0x2ECC71)
-    .setTitle('🫂 Lab - welfare candidate')
+    .setTitle('🫂 Lab: welfare candidate')
     .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) in <#${msg.channel.id}> · [jump](${msg.url})`)
     .addFields(
       { name: 'Matched', value: matchedDisplay },
-      { name: 'Message (saved copy)', value: (msg.content || '_(no text - attachment/embed)_').slice(0, 1024) },
-      { name: `AI verdict - ${wouldSurface ? '🫂 WOULD SURFACE (check in)' : '🙈 WOULD HIDE (hyperbole)'}`, value: verdictText.slice(0, 1024) })
+      { name: 'Message (saved copy)', value: (msg.content || '_(no text, attachment/embed)_').slice(0, 1024) },
+      { name: `AI verdict: ${wouldSurface ? '🫂 WOULD SURFACE (check in)' : '🙈 WOULD HIDE (hyperbole)'}`, value: verdictText.slice(0, 1024) })
     .setFooter({ text: `#${msg.channel?.name || '?'} · welfare · flagged ${msg.author.id}` })
     .setTimestamp(new Date());
   const freshNote = freshwatch.noteFor(msg.member);
@@ -1729,41 +1729,41 @@ async function postWelfareLabCard(msg, ch, hits, base) {
 
 // Reason+weight modal for a message-based strike. Carries the flagged message ref so the submit
 // handler can strike + reply on that message with the reason (public, in-channel, no DM). Weight is a
-// typed field (1/2/3) rather than a dropdown - Discord modals can't hold select menus. ruleN (optional,
+// typed field (1/2/3) rather than a dropdown — Discord modals can't hold select menus. ruleN (optional,
 // picked via the strike_rule_pick select BEFORE this modal shows) is carried in the customId so the
-// submit handler can build the same "Rule N: <title> - <reason>" text /strike add uses. prefillNote
+// submit handler can build the same "Rule N: <title> — <reason>" text /strike add uses. prefillNote
 // (optional) seeds the reason field's default text (e.g. context from a repeat-Corner conversion).
 function strikeReasonModal(memberId, channelId, messageId, ruleN, prefillNote) {
   const ruleSeg = ruleN || 'x';
   const ruleObj = ruleN ? rules.byIndex(Number(ruleN)) : null;
   const ruleTitle = ruleObj?.title || null;
-  // If the picked rule already has a decided weight, pre-fill it and stop requiring the field - the
+  // If the picked rule already has a decided weight, pre-fill it and stop requiring the field — the
   // mod can just submit as-is. Otherwise fall back to the old "type it, default 1" behavior.
   const ruleWeight = ruleObj ? rules.weightOf(ruleObj.key) : null;
   const m = new ModalBuilder().setCustomId(`strike_reason:${memberId}:${channelId || 0}:${messageId || 0}:${ruleSeg}`)
-    .setTitle(ruleTitle ? `Strike - Rule ${ruleN}: ${ruleTitle}`.slice(0, 45) : 'Strike - reason + weight');
-  // Required only when no rule was picked (rule OR reason, not both) - the strike_rule_pick select
+    .setTitle(ruleTitle ? `Strike · Rule ${ruleN}: ${ruleTitle}`.slice(0, 45) : 'Strike: reason + weight');
+  // Required only when no rule was picked (rule OR reason, not both) — the strike_rule_pick select
   // beforehand already covers the "gave a rule" half of that requirement.
-  // Discord caps a TextInput label at 45 chars - anything longer makes showModal throw "Invalid string
+  // Discord caps a TextInput label at 45 chars — anything longer makes showModal throw "Invalid string
   // length", which (thrown from a select handler) leaves the interaction unacked → "didn't respond in
   // time". Keep labels short AND slice(0,45) as a hard backstop so no label can ever overflow again.
   const reasonInput = new TextInputBuilder().setCustomId('reason')
-    .setLabel((ruleN ? 'Reason (optional - rule already picked)' : 'Reason - posted publicly, no DMs').slice(0, 45))
+    .setLabel((ruleN ? 'Reason (optional, rule already picked)' : 'Reason: posted publicly, no DMs').slice(0, 45))
     .setStyle(TextInputStyle.Short).setRequired(!ruleN).setMaxLength(300);
   if (prefillNote) reasonInput.setValue(prefillNote.slice(0, 300));
   const weightInput = new TextInputBuilder().setCustomId('weight')
-    .setLabel((ruleWeight ? `Weight - Rule ${ruleN} default (edit if needed)` : 'Weight: 1 minor / 2 moderate / 3 severe').slice(0, 45))
+    .setLabel((ruleWeight ? `Weight: Rule ${ruleN} default (edit if needed)` : 'Weight: 1 minor / 2 moderate / 3 severe').slice(0, 45))
     .setStyle(TextInputStyle.Short).setRequired(!ruleWeight).setValue(String(ruleWeight || 1)).setMaxLength(1);
-  // Optional: ALSO send them to the corner for a duration - same spirit as /strike's timeout field, but
+  // Optional: ALSO send them to the corner for a duration — same spirit as /strike's timeout field, but
   // the corner (strip roles + jail) instead of a native mute. Blank = strike only.
   const cornerInput = new TextInputBuilder().setCustomId('corner')
-    .setLabel('Also corner them? (30s/30m/2h - blank = no)')
+    .setLabel('Also corner them? (30s/30m/2h, blank = no)')
     .setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10);
   m.addComponents(new ActionRowBuilder().addComponents(reasonInput), new ActionRowBuilder().addComponents(weightInput), new ActionRowBuilder().addComponents(cornerInput));
   return m;
 }
 // Alert staff when a member has been repeatedly cornered for the SAME rule (config.cornerRepeatAlertThreshold,
-// default 3) - never auto-strikes; the button opens the normal strike modal pre-filled so a human decides.
+// default 3) — never auto-strikes; the button opens the normal strike modal pre-filled so a human decides.
 async function maybeAlertCornerRepeat(guild, member, ruleN, repeatCount) {
   if (!ruleN || repeatCount < config.cornerRepeatAlertThreshold) return;
   const ch = config.modAnnounceChannelId && await guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
@@ -1772,7 +1772,7 @@ async function maybeAlertCornerRepeat(guild, member, ruleN, repeatCount) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`corner_convert:${member.id}:${ruleN}`).setEmoji('⚠️').setLabel('Convert to Strike').setStyle(ButtonStyle.Danger));
   await ch.send({
-    content: `🔁 <@${member.id}> has been sent to the Corner **${repeatCount} times** for the same rule - **${ruleN}. ${ruleTitle}**. Consider converting to a Strike.`,
+    content: `🔁 <@${member.id}> has been sent to the Corner **${repeatCount} times** for the same rule: **${ruleN}. ${ruleTitle}**. Consider converting to a Strike.`,
     components: [row], allowedMentions: { parse: [] },
   }).catch(e => console.error('[corner] repeat alert:', e.message));
 }
@@ -1785,7 +1785,7 @@ function ruleRow(customId) {
       { label: 'Other / no specific rule', value: 'none' }));
 }
 // The "Send to corner" reason/duration/sweep modal. The rule (picked via the corner_rule_pick select
-// BEFORE this modal shows - a modal can't hold the rule dropdown) is carried in the customId so the
+// BEFORE this modal shows — a modal can't hold the rule dropdown) is carried in the customId so the
 // submit handler can fold it into the reason. ruleN is a 1-based rule number or null.
 function cornerReasonModal(memberId, channelId, messageId, ruleN) {
   return new ModalBuilder().setCustomId(`corner_reason:${memberId}:${channelId}:${messageId}:${ruleN || 'x'}`).setTitle('Send to corner').addComponents(
@@ -1827,13 +1827,13 @@ async function handleWatchlistButton(interaction) {
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
     if (!member) // already left - the only escalation left is a ban so they can't rejoin
       return interaction.update({ content: `⚠️ <@${userId}> already left. Ban so they can’t rejoin?`, embeds: keep, components: [banConfirmRow(userId, 'Confirm ban')], allowedMentions: { parse: [] } }).catch(() => {});
-    // Rule → reason+weight modal (two steps - a modal can't hold the rule dropdown).
+    // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
     const ref = originalRefFromAlert(keep[0]);
     return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${userId}:${ref?.channelId || 0}:${ref?.messageId || 0}`)], flags: MessageFlags.Ephemeral });
   }
   if (action === 'wl_corner') {   // lighter than Strike: a casual, timed cool-off straight from the flag
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
-    if (!member) return interaction.update({ content: `⛓️ <@${userId}> already left - can’t corner.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+    if (!member) return interaction.update({ content: `⛓️ <@${userId}> already left. Can’t corner.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
     if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
       return interaction.reply({ content: 'You can’t corner an admin or the owner.', flags: MessageFlags.Ephemeral });
     const durationMs = config.cornerDefaultDurationMs;
@@ -1846,7 +1846,7 @@ async function handleWatchlistButton(interaction) {
     } catch (e) { console.error('[wl_corner] announce:', e.message); }
     await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (from watch-log)', color: CORNER_RED,
       desc: `<@${userId}> was cornered until ${relPhrase(relSec * 1000)} from a watch-log flag.\n**By:** <@${interaction.user.id}>` });
-    return interaction.update({ content: `⛓️ Cornered <@${userId}> until <t:${relSec}:f> - stripped **${r.stripped}** role(s). By <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+    return interaction.update({ content: `⛓️ Cornered <@${userId}> until <t:${relSec}:f>, stripped **${r.stripped}** role(s). By <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (action === 'wl_ban') { // legacy direct-ban buttons on older reports
     return interaction.update({ components: [banConfirmRow(userId, 'Confirm ban')] }).catch(() => {});
@@ -1854,8 +1854,8 @@ async function handleWatchlistButton(interaction) {
   if (action === 'wl_banok') {
     try {
       await interaction.guild.members.ban(userId, { reason: `Watchlist ban by ${interaction.user.tag}` });
-      await ownerlog.log(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `<@${userId}> - by <@${interaction.user.id}>.` });
-      return interaction.update({ content: `🔨 Banned <@${userId}> - by <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+      await ownerlog.log(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `<@${userId}> — by <@${interaction.user.id}>.` });
+      return interaction.update({ content: `🔨 Banned <@${userId}> by <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
     } catch (e) {
       return interaction.update({ content: `❌ Ban failed: ${e.message}`, components: [] }).catch(() => {});
     }
@@ -1871,7 +1871,7 @@ async function manualWatchReport(message, reporter) {
   const embed = new EmbedBuilder().setColor(0xE67E22).setTitle('🚩 Reported message')
     .setDescription(`<@${reporter.id}> reported <@${message.author.id}> (\`${message.author.tag}\`) in <#${message.channel.id}>.`)
     .addFields(
-      { name: 'What they said (saved copy)', value: (message.content || (atts.length ? '_(no text - see mirrored attachment)_' : '-')).slice(0, 1024) },
+      { name: 'What they said (saved copy)', value: (message.content || (atts.length ? '_(no text, see mirrored attachment)_' : '-')).slice(0, 1024) },
       { name: 'Original', value: `[jump to it](${message.url}) · saved here even if they delete it`, inline: true })
     .setFooter({ text: `user ${message.author.id}` }).setTimestamp(new Date());
   if (atts.length) embed.addFields({ name: 'Attachments', value: `${atts.length} mirrored below`, inline: true });
@@ -1888,17 +1888,17 @@ async function manualWatchReport(message, reporter) {
 }
 
 // Monitor: a member ON the Watchlist role who trips a flagged term → alert mods. Dormant until terms exist.
-// Tribe Tides: per-member cooldown (in-memory; resets on restart, which is fine - it only rate-limits farming).
+// Tribe Tides: per-member cooldown (in-memory; resets on restart, which is fine — it only rate-limits farming).
 const _tideCooldown = new Map();   // `${tribeKey}:${userId}` -> last-earned ms
-// Set a member's tribe rank to a specific rung (exclusive - removes the other rank roles). announce only for
+// Set a member's tribe rank to a specific rung (exclusive — removes the other rank roles). announce only for
 // real promotions (rank ≥ 1), never for the baseline Initiate. Never throws into the caller.
 async function applyTribeRank(guild, tribe, member, rankIndex, reason, announce = true) {
   const ranks = tribe.ranks || []; if (!ranks[rankIndex]) return;
   const keepId = ranks[rankIndex].roleId;
   const removeIds = ranks.filter((r, i) => i !== rankIndex && r.roleId && member.roles.cache.has(r.roleId)).map(r => r.roleId);
   try {
-    if (removeIds.length) await member.roles.remove(removeIds, `tribe rank change - ${reason}`);
-    if (keepId && !member.roles.cache.has(keepId)) await member.roles.add(keepId, `tribe rank: ${ranks[rankIndex].name} - ${reason}`);
+    if (removeIds.length) await member.roles.remove(removeIds, `tribe rank change — ${reason}`);
+    if (keepId && !member.roles.cache.has(keepId)) await member.roles.add(keepId, `tribe rank: ${ranks[rankIndex].name} — ${reason}`);
     if (announce && rankIndex >= 1 && tribe.hallId) {
       const hall = await guild.channels.fetch(tribe.hallId).catch(() => null);
       if (hall) await hall.send({ content: `## ${tribe.emoji || '🌊'} Rank up\n> <@${member.id}> rose to **${ranks[rankIndex].name}**.`, allowedMentions: { users: [member.id] } }).catch(() => {});
@@ -1906,7 +1906,7 @@ async function applyTribeRank(guild, tribe, member, rankIndex, reason, announce 
   } catch (e) { console.error('[tribe-rank] apply:', e.message); }
 }
 // Membership guard: the ONLY legitimate ways in/out of a tribe are the #roles picker (first join),
-// /request-role approval, /tribe invite, and /tribe banish - each updates authoritative membership
+// /request-role approval, /tribe invite, and /tribe banish — each updates authoritative membership
 // (tribes.setMembership). Any MANUAL role add or strip disagrees with it and is reverted here. One
 // corrective action per fire; after it, authorized === hasRole so subsequent fires no-op (no loop).
 async function enforceTribeMembership(member) {
@@ -1915,8 +1915,8 @@ async function enforceTribeMembership(member) {
     const authorized = tribes.isAuthorized(t.key, member.id);
     const hasRole = member.roles.cache.has(t.roleId);
     if (authorized === hasRole) continue;
-    if (authorized && !hasRole) await member.roles.add(t.roleId, 'Tribe guard: manual strip reverted - release is via /tribe banish').catch(() => {});
-    else await member.roles.remove(t.roleId, 'Tribe guard: manual add reverted - join via #roles / request / invite').catch(() => {});
+    if (authorized && !hasRole) await member.roles.add(t.roleId, 'Tribe guard: manual strip reverted — release is via /tribe banish').catch(() => {});
+    else await member.roles.remove(t.roleId, 'Tribe guard: manual add reverted — join via #roles / request / invite').catch(() => {});
   }
 }
 // Auto-promote (never demote) a member to the highest rank their tenure + Tides have earned.
@@ -1924,7 +1924,7 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
   const tribe = tribes.get(tribeKey); if (!tribe || !(tribe.ranks || []).length) return;
   const earned = tribes.earnedRankIndex(tribe, member.id);
   const current = tribes.currentRankIndex(member, tribe);
-  if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto - tenure + Tides', earned >= 1);
+  if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + Tides', earned >= 1);
 }
 
 client.on('messageCreate', async (msg) => {
@@ -1963,14 +1963,14 @@ client.on('messageCreate', async (msg) => {
       const hit = wordfilter.check(state, msg.content);
       if (hit) { await msg.delete().catch(e => console.error('[wordfilter] delete:', e.message)); return; }
     }
-    // LAB pass (independent, private admin channel) - runs BEFORE the production routing so the watchlist
+    // LAB pass (independent, private admin channel) — runs BEFORE the production routing so the watchlist
     // strict early-return below doesn't skip it. Staff excluded, same population as loose. Own try/catch so
     // an AI hiccup never blocks the real keyword flags that follow.
     if (features.enabled('smartWatchLab') && config.smartWatchLabChannelId && !opspanel.memberTier(member)) {
       try { await labEvaluateAndPost(msg, member); } catch (e) { console.error('[smartwatch-lab]', e.message); }
     }
     // STRICT: a watchlisted member trips a strict term → mod-announcements alert (ban buttons + ping).
-    // Strict ENCOMPASSES loose - a watchlisted member is matched against strict + loose combined, so you
+    // Strict ENCOMPASSES loose — a watchlisted member is matched against strict + loose combined, so you
     // only ever add strict-ONLY extras to the strict list (every loose term is auto-included here).
     if (config.watchlistRoleId && member.roles.cache.has(config.watchlistRoleId)) {
       const strict = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])];
@@ -1983,7 +1983,7 @@ client.on('messageCreate', async (msg) => {
       const wHits = welfare.length ? watchlist.matchTerms(msg.content, welfare) : [];
       if (wHits.length) {
         await watchlistAlert(msg, wHits, { scope: 'welfare', channelId: config.watchLogChannelId, title: '🫂 Welfare check',
-          color: 0x5DADE2, verb: 'may need support - flagged on the welfare watch', ping: false, buttons: 'dismiss' });
+          color: 0x5DADE2, verb: 'may need support, flagged on the welfare watch', ping: false, buttons: 'dismiss' });
         return;
       }
       const loose = watchlist.loadLoose();
@@ -1999,7 +1999,7 @@ client.on('messageDelete', async (msg) => {
   try { if (msg.channelId && contest.isContestChannel(msg.channelId)) await contest.onMessageDelete(msg); }
   catch (e) { console.error('[contest] messageDelete:', e.message); }
   // If a promotion-vote message is deleted by hand, auto-cancel its record so the orphan can't block a
-  // re-open (the poll is unreachable once its message is gone - nothing left to vote on or resolve).
+  // re-open (the poll is unreachable once its message is gone — nothing left to vote on or resolve).
   try {
     const rec = promote.cancelByMessageId(msg.id);
     if (rec) console.log(`[promote] auto-cancelled orphaned vote for ${rec.candidateId} (message ${msg.id} deleted)`);
@@ -2030,8 +2030,8 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'appeal' && interaction.options.getSubcommand() === 'strike') {
       try {
         const focused = interaction.options.getFocused() || '';
-        // Scoped to the CALLER's own strikes only - self-service, and excludes the strike that
-        // crossed the ban threshold (not appealable this way - see strikeAppeals.js's submit()).
+        // Scoped to the CALLER's own strikes only — self-service, and excludes the strike that
+        // crossed the ban threshold (not appealable this way — see strikeAppeals.js's submit()).
         return interaction.respond(strikes.autocompleteChoices(state, interaction.user.id, { query: focused, excludeCrossedBan: true }));
       } catch (e) { console.error('[appeal-strike] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
@@ -2087,7 +2087,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
-  // Event organizer dashboard (buttons/modal, customId 'evp_*') - its own namespace, gated to organizers.
+  // Event organizer dashboard (buttons/modal, customId 'evp_*') — its own namespace, gated to organizers.
   if (contest.isEventPanelInteraction(interaction)) {
     try { await contest.handleEventPanel(interaction); }
     catch (e) {
@@ -2098,7 +2098,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
-  // Permguard reconcile popup (buttons, customId 'pg_*') - owner-only, gated inside the handler.
+  // Permguard reconcile popup (buttons, customId 'pg_*') — owner-only, gated inside the handler.
   if (permguard.isReconcileInteraction(interaction)) {
     try { await permguard.handleReconcile(interaction); }
     catch (e) {
@@ -2133,7 +2133,7 @@ client.on('interactionCreate', async (interaction) => {
     const stats = smartwatch.labStats(meta.task);          // accuracy scoped to this task (rule vs welfare)
     const acc = stats.total ? Math.round(100 * stats.right / stats.total) : 0;
     const e2 = EmbedBuilder.from(emb).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
-      name: 'Labeled ✅', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> - AI was ${correct ? '✅ right' : '❌ wrong'}\n` +
+      name: 'Labeled ✅', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}>, AI was ${correct ? '✅ right' : '❌ wrong'}\n` +
         `Judge accuracy so far (${meta.task}): **${acc}%** (${stats.right}/${stats.total}) · this example now guides the ${meta.task} judge.` });
     // Drop the grade/note buttons but KEEP any Link (jump) button (across both rows) so the card stays navigable.
     const links = (interaction.message.components?.flatMap(r => r.components) || []).filter(b => b.style === ButtonStyle.Link);
@@ -2141,7 +2141,7 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.update({ embeds: [e2], components: comps }).catch(() => {});
   }
   // ✏️ Correct-its-read: record the correct verdict + REASONING (a richer calibration example than a plain
-  // grade - the note is fed back into the judge prompt). customId sw_note:<task>:<aiSurface 0/1>.
+  // grade — the note is fed back into the judge prompt). customId sw_note:<task>:<aiSurface 0/1>.
   if (interaction.isButton?.() && interaction.customId.startsWith('sw_note:')) {
     const isAdmin = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)
       || (config.adminRoleId && interaction.member?.roles?.cache?.has(config.adminRoleId));
@@ -2184,14 +2184,14 @@ client.on('interactionCreate', async (interaction) => {
     try {
       if (card?.embeds?.[0]) {
         const e2 = EmbedBuilder.from(card.embeds[0]).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
-          name: '✏️ Corrected', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> - AI was ${correct ? '✅ right' : '❌ wrong'}\ncorrect read: _${note}_\nnow guiding the ${meta.task} judge · accuracy **${acc}%** (${stats.right}/${stats.total})`.slice(0, 1024) });
+          name: '✏️ Corrected', value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}>, AI was ${correct ? '✅ right' : '❌ wrong'}\ncorrect read: _${note}_\nnow guiding the ${meta.task} judge · accuracy **${acc}%** (${stats.right}/${stats.total})`.slice(0, 1024) });
         const links = (card.components?.flatMap(r => r.components) || []).filter(b => b.style === ButtonStyle.Link);
         await card.edit({ embeds: [e2], components: links.length ? [new ActionRowBuilder().addComponents(...links.map(b => ButtonBuilder.from(b)))] : [] }).catch(() => {});
       }
     } catch { /* annotate best-effort */ }
-    return interaction.editReply(`✏️ Correction saved - the judge will now weigh: _"${note}"_ on cases like this. (${meta.task} accuracy ${acc}%.)`);
+    return interaction.editReply(`✏️ Correction saved. The judge will now weigh: _"${note}"_ on cases like this. (${meta.task} accuracy ${acc}%.)`);
   }
-  // Rule picker shown before the strike reason+weight modal (watch-log Strike button + right-click Strike) -
+  // Rule picker shown before the strike reason+weight modal (watch-log Strike button + right-click Strike) —
   // a modal can't hold a dropdown, so this is a select-then-modal step, same shape as the dashboard's
   // Corner/Ban pickers. customId: strike_rule_pick:<memberId>:<channelId>:<messageId>
   if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('strike_rule_pick:')) {
@@ -2207,31 +2207,31 @@ client.on('interactionCreate', async (interaction) => {
     const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
     return interaction.showModal(cornerReasonModal(memberId, channelId, messageId, ruleN));
   }
-  // #roles pickers (roleselect.js) - any member, no staff gate.
-  // Age/Color: single-select dropdown - swap to the chosen role, stripping any other held role in the
+  // #roles pickers (roleselect.js) — any member, no staff gate.
+  // Age/Color: single-select dropdown — swap to the chosen role, stripping any other held role in the
   // same group. Age additionally refuses outright once Verified (registration lock; index.js's
   // enforceRegistrationLock is the backstop either way, but this avoids the confusing "applied then
   // silently reverted" experience).
-  // #roles Tribes picker - loyalty model: first tribe is a free self-join; after that you can't self-join
+  // #roles Tribes picker — loyalty model: first tribe is a free self-join; after that you can't self-join
   // (must be accepted) and can't switch/leave (a Warden must banish you first).
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'roleselect_tribe') {
     const tribe = tribes.get(interaction.values[0]);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     const member = interaction.member;
     const current = tribes.memberTribe(member);
-    if (current) return interaction.reply({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t leave or switch on your own - a **Warden must release you** first (\`/tribe banish\`).`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    if (tribes.isVeteran(member.id)) return interaction.reply({ content: `You’ve pledged to a tribe before, so you can’t just self-join - **${tribe.shortName || tribe.name}** has to **accept** you. Use \`/request-role\` to petition, or ask a Warden to invite you.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (current) return interaction.reply({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t leave or switch on your own. A **Warden must release you** first (\`/tribe banish\`).`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (tribes.isVeteran(member.id)) return interaction.reply({ content: `You’ve pledged to a tribe before, so you can’t just self-join. **${tribe.shortName || tribe.name}** has to **accept** you. Use \`/request-role\` to petition, or ask a Warden to invite you.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
-    const ok = await member.roles.add(tribe.roleId, 'First tribe - self-join via #roles').then(() => true).catch(() => false);
-    if (!ok) { tribes.setMembership(tribe.key, member.id, false); return interaction.editReply('Couldn’t add the tribe role - tell an admin.'); }
+    const ok = await member.roles.add(tribe.roleId, 'First tribe — self-join via #roles').then(() => true).catch(() => false);
+    if (!ok) { tribes.setMembership(tribe.key, member.id, false); return interaction.editReply('Couldn’t add the tribe role. Tell an admin.'); }
     if (tribe.hallId) { const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
-    return interaction.editReply(`${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}** - welcome. This is your allegiance now; a Warden must release you before you could ever join another.`);
+    return interaction.editReply(`${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; a Warden must release you before you could ever join another.`);
   }
   if (interaction.isStringSelectMenu?.() && (interaction.customId === 'roleselect_age' || interaction.customId === 'roleselect_color')) {
     const isAge = interaction.customId === 'roleselect_age';
     if (isAge && config.verifiedRoleId && interaction.member.roles.cache.has(config.verifiedRoleId)) {
-      return interaction.reply({ content: 'Your age bracket is locked once you’re verified - it’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can correct it for you.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Your age bracket is locked once you’re verified. It’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can correct it for you.', flags: MessageFlags.Ephemeral });
     }
     const group = (isAge ? roleselect.AGE : roleselect.COLORS).map(([, id]) => id);
     const chosen = interaction.values[0];
@@ -2243,7 +2243,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { return interaction.reply({ content: `Couldn’t update that: ${e.message}`, flags: MessageFlags.Ephemeral }); }
     return interaction.reply({ content: clearing ? '✅ Color cleared.' : `✅ Set to <@&${chosen}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
-  // Watchlist-suggest approve menu - an ADMINS-★ picks terms to add from the recommender's multi-select.
+  // Watchlist-suggest approve menu — an ADMINS-★ picks terms to add from the recommender's multi-select.
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'wlsug_add') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can add terms.', flags: MessageFlags.Ephemeral });
     const done = suggest.applySelection(interaction.values);
@@ -2252,7 +2252,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('modapp_submit')) {   // 'modapp_submit' or 'modapp_submit:lang:<Language>'
     try { return await modapps.submitFromModal(interaction, config); }
-    catch (e) { console.error(`[modapps] modal ${e.message}`); return interaction.reply({ content: 'Could not submit that - try again.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+    catch (e) { console.error(`[modapps] modal ${e.message}`); return interaction.reply({ content: 'Could not submit that. Try again.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'modapp_pos_langsel') {
     try { return await modapps.handlePositionSelect(interaction); }
@@ -2269,12 +2269,12 @@ client.on('interactionCreate', async (interaction) => {
       const [, memberId, channelId, messageId, ruleSeg] = interaction.customId.split(':');
       const ruleN = ruleSeg && ruleSeg !== 'x' ? ruleSeg : null;
       const rawReason = (interaction.fields.getTextInputValue('reason') || '').trim();
-      const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? ` - ${rawReason}` : ''}` : (rawReason || null);
+      const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? `, ${rawReason}` : ''}` : (rawReason || null);
       let durStr = '';
       try { durStr = (interaction.fields.getTextInputValue('duration') || '').trim(); } catch { /* older modal had no duration field */ }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       let durationMs = config.cornerDefaultDurationMs;
-      if (durStr) { const d = corner.parseDuration(durStr); if (!d) return interaction.editReply('Bad duration - use e.g. `30s`, `10m`, `2h`, `1d` (or leave it blank for 15m).'); durationMs = d; }
+      if (durStr) { const d = corner.parseDuration(durStr); if (!d) return interaction.editReply('Bad duration. Use e.g. `30s`, `10m`, `2h`, `1d` (or leave it blank for 15m).'); durationMs = d; }
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply('That member isn’t in the server anymore.');
@@ -2299,11 +2299,11 @@ client.on('interactionCreate', async (interaction) => {
         sweepNote = `\n🧹 Sweep (${Math.min(mins, 120)}m): +${done.length} more${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
         // Public-facing result: announce the sweep in the channel so everyone sees it, not just the mod's ack.
         if (done.length) await target.channel.send({
-          content: `🧹 **Corner sweep** - <@${interaction.user.id}> cooled this channel down and also sent ${done.map(id => `<@${id}>`).join(', ')} to the corner ${whenPhrase}.`,
+          content: `🧹 **Corner sweep**: <@${interaction.user.id}> cooled this channel down and also sent ${done.map(id => `<@${id}>`).join(', ')} to the corner ${whenPhrase}.`,
           allowedMentions: { parse: [] } }).catch(e => console.error('[corner-sweep] public announce:', e.message));
       }
       const relSec = Math.floor((Date.now() + durationMs) / 1000);
-      return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` - ${reason}` : ''}. Stripped **${res.stripped}** role(s).${sweepNote}`, allowedMentions: { parse: [] } });
+      return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` (${reason})` : ''}. Stripped **${res.stripped}** role(s).${sweepNote}`, allowedMentions: { parse: [] } });
     } catch (e) { console.error(`[corner-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not corner.') : interaction.reply({ content: 'Could not corner.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
@@ -2313,19 +2313,19 @@ client.on('interactionCreate', async (interaction) => {
       const [, memberId, channelId, messageId, ruleSeg] = interaction.customId.split(':');
       const ruleN = ruleSeg && ruleSeg !== 'x' ? ruleSeg : null;
       const rawReason = (interaction.fields.getTextInputValue('reason') || '').trim();
-      if (!ruleN && !rawReason) return interaction.reply({ content: 'Give a reason - pick a rule beforehand, type a reason, or both.', flags: MessageFlags.Ephemeral });
-      const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? ` - ${rawReason}` : ''}` : rawReason;
+      if (!ruleN && !rawReason) return interaction.reply({ content: 'Give a reason: pick a rule beforehand, type a reason, or both.', flags: MessageFlags.Ephemeral });
+      const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? `, ${rawReason}` : ''}` : rawReason;
       const weightRaw = (interaction.fields.getTextInputValue('weight') || '').trim();
       // Blank field (allowed when the rule's weight was pre-filled and the field made optional) → use
       // the rule's own decided weight. Anything typed always wins, even if it differs from the rule's
-      // default - that's a deliberate override, not an error.
+      // default — that's a deliberate override, not an error.
       const ruleObj = ruleN ? rules.byIndex(Number(ruleN)) : null;
       const ruleWeight = ruleObj ? rules.weightOf(ruleObj.key) : null;
       const weight = weightRaw ? Number(weightRaw) : ruleWeight;
       if (![1, 2, 3].includes(weight)) return interaction.reply({ content: 'Weight must be 1, 2, or 3.', flags: MessageFlags.Ephemeral });
       let cornerMs = null, cornerStr = '';
       try { cornerStr = (interaction.fields.getTextInputValue('corner') || '').trim(); } catch { /* older modal had no corner field */ }
-      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return interaction.reply({ content: 'Bad corner duration - use e.g. `30m`, `2h`, `30s` (or leave it blank).', flags: MessageFlags.Ephemeral }); }
+      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return interaction.reply({ content: 'Bad corner duration. Use e.g. `30m`, `2h`, `30s` (or leave it blank).', flags: MessageFlags.Ephemeral }); }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
@@ -2342,17 +2342,17 @@ client.on('interactionCreate', async (interaction) => {
           await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${member.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
         } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
       }
-      // In-channel notice on the flagged message (no DM) - public, carries the reason.
+      // In-channel notice on the flagged message (no DM) — public, carries the reason.
       if (channelId !== '0' && messageId !== '0') {
         const ch = await guild.channels.fetch(channelId).catch(() => null);
         const orig = ch && await ch.messages.fetch(messageId).catch(() => null);
-        // Strikes are a real notification the member should get, not a reference-only mention - ping them.
-        if (orig) await orig.reply({ content: `⚠️ <@${member.id}> - a strike was given for this message: ${reason} (${weight} unit${weight > 1 ? 's' : ''}). Strike ID: \`${res.id}\` - appealable with \`/appeal strike\`.`, allowedMentions: { users: [member.id] } }).catch(() => {});
+        // Strikes are a real notification the member should get, not a reference-only mention — ping them.
+        if (orig) await orig.reply({ content: `⚠️ <@${member.id}>, a strike was given for this message: ${reason} (${weight} unit${weight > 1 ? 's' : ''}). Strike ID: \`${res.id}\`. Appealable with \`/appeal strike\`.`, allowedMentions: { users: [member.id] } }).catch(() => {});
       }
       const banNote = res.crossedBan ? banConfirmRow(member.id, 'Confirm ban') : null;
       await ownerlog.log(guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
-        detail: `<@${member.id}> - ${strikes.formatUnits(weight)} unit(s), ${reason} - by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
-      return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike - now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ' - 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
+        detail: `<@${member.id}> — ${strikes.formatUnits(weight)} unit(s), ${reason} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
+      return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike, now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [] });
     } catch (e) { console.error(`[strike-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not strike.') : interaction.reply({ content: 'Could not strike.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
@@ -2360,7 +2360,7 @@ client.on('interactionCreate', async (interaction) => {
     const id = interaction.customId || '';
     try {
       if (id.startsWith('vpanel_')) return await handleVerifyButton(interaction);
-      // #roles pickers (roleselect.js) - generic multi-toggle (regions/notifications/pronouns/misc):
+      // #roles pickers (roleselect.js) — generic multi-toggle (regions/notifications/pronouns/misc):
       // add if missing, remove if present. Same mechanic the old Carl-bot reactions had, just bot-owned.
       if (id.startsWith('roleselect_toggle:')) {
         const roleId = id.split(':')[1];
@@ -2369,16 +2369,16 @@ client.on('interactionCreate', async (interaction) => {
         catch (e) { return interaction.reply({ content: `Couldn’t update that: ${e.message}`, flags: MessageFlags.Ephemeral }); }
         return interaction.reply({ content: `${has ? '➖ Removed' : '➕ Added'} <@&${roleId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
-      // MDNI toggle - gated to holding an adult age bracket, and locked once Verified (backed by
+      // MDNI toggle — gated to holding an adult age bracket, and locked once Verified (backed by
       // enforceRegistrationLock either way; this just avoids the confusing apply-then-revert experience).
       if (id.startsWith('roleselect_mdni:')) {
         const roleId = id.split(':')[1];
         const has = interaction.member.roles.cache.has(roleId);
         if (config.verifiedRoleId && interaction.member.roles.cache.has(config.verifiedRoleId)) {
-          return interaction.reply({ content: 'MDNI is locked once you’re verified - it’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can change it for you.', flags: MessageFlags.Ephemeral });
+          return interaction.reply({ content: 'MDNI is locked once you’re verified. It’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can change it for you.', flags: MessageFlags.Ephemeral });
         }
         if (!has && !config.adultAgeRoleIds.some(aid => interaction.member.roles.cache.has(aid))) {
-          return interaction.reply({ content: 'Pick an adult age bracket (18+) first - MDNI requires it.', flags: MessageFlags.Ephemeral });
+          return interaction.reply({ content: 'Pick an adult age bracket (18+) first. MDNI requires it.', flags: MessageFlags.Ephemeral });
         }
         try { if (has) await interaction.member.roles.remove(roleId, 'Role picker toggle'); else await interaction.member.roles.add(roleId, 'Role picker toggle'); }
         catch (e) { return interaction.reply({ content: `Couldn’t update that: ${e.message}`, flags: MessageFlags.Ephemeral }); }
@@ -2435,7 +2435,7 @@ client.on('interactionCreate', async (interaction) => {
       if (id.startsWith('wb_')) return await whistleblow.handleButton(interaction);   // unseal self-gates to the entrusted holder
       if (id.startsWith('modapp_')) {
         if (id === 'modapp_accept' || id === 'modapp_deny' || id === 'modapp_undo') {
-          // The ACTUAL server owner (guild.ownerId, dynamic) - plus any temporary approvers in config
+          // The ACTUAL server owner (guild.ownerId, dynamic) — plus any temporary approvers in config
           // (used while the real owner is inactive; clear the list once they're back). Undoing a decision
           // is as consequential as making one, so it takes the same tier.
           const approvers = modapps.loadConfig().approvers || [];
@@ -2462,10 +2462,10 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
-  // Feature gate - belt-and-suspenders on top of not registering disabled commands: if a command
+  // Feature gate — belt-and-suspenders on top of not registering disabled commands: if a command
   // whose feature is turned off is somehow invoked, decline it.
   if (interaction.isChatInputCommand?.() || interaction.isMessageContextMenuCommand?.()) {
-    // /appeal has two subcommands owned by two independently-toggleable features - the generic
+    // /appeal has two subcommands owned by two independently-toggleable features — the generic
     // one-command-to-one-feature lookup can't tell them apart, so check the subcommand directly.
     const fk = interaction.commandName === 'appeal'
       ? (interaction.options.getSubcommand() === 'strike' ? 'strikeAppeals' : 'appeals')
@@ -2479,7 +2479,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't report a bot's message.", flags: MessageFlags.Ephemeral });
     const ok = await manualWatchReport(target, interaction.user).catch(() => false);
-    return interaction.reply({ content: ok ? `🚩 Reported <@${target.author.id}> to the mods - an admin can add them to the watchlist from there.` : 'Failed to post the report.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    return interaction.reply({ content: ok ? `🚩 Reported <@${target.author.id}> to the mods. An admin can add them to the watchlist from there.` : 'Failed to post the report.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Report') {
     // Member-facing: right-click a message → Apps → Report → anonymous report to staff (works anywhere).
@@ -2489,12 +2489,12 @@ client.on('interactionCreate', async (interaction) => {
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't report a bot's message.", flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const text = `Reported message: "${(target.content || '[no text - see link]').slice(0, 400)}" - ${target.url}`;
+    const text = `Reported message: "${(target.content || '[no text, see link]').slice(0, 400)}" · ${target.url}`;
     const r = await reports.submit(interaction.guild, interaction.member, target.author, text);
     return interaction.editReply(r.ok ? `✅ Reported that message to staff anonymously (Report #${r.num}). They won’t know it was you.` : `❌ ${r.msg}`);
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Send to corner') {
-    // Same access + tier rules as /corner, but the trigger is a specific message - and that message
+    // Same access + tier rules as /corner, but the trigger is a specific message — and that message
     // gets forwarded into the corner so the member (and mods) see exactly what put them there.
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
     if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
@@ -2510,7 +2510,7 @@ client.on('interactionCreate', async (interaction) => {
     const targetTier = opspanel.memberTier(member);
     if (member.id === guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
     if ((RANK[targetTier] || 0) > actorRank) return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
-    // Rule → duration/reason/sweep modal (two steps - a modal can't hold the rule dropdown). Blank
+    // Rule → duration/reason/sweep modal (two steps — a modal can't hold the rule dropdown). Blank
     // duration = the 15m default; the rule is optional ("Other / no specific rule").
     return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`corner_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
@@ -2521,7 +2521,7 @@ client.on('interactionCreate', async (interaction) => {
     if (target.author?.bot) return interaction.reply({ content: "Can't strike a bot.", flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(target.author.id).catch(() => null);
     if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
-    // Rule → reason+weight modal (two steps - a modal can't hold the rule dropdown).
+    // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
     return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
   if (!interaction.isChatInputCommand()) return;
@@ -2535,8 +2535,8 @@ client.on('interactionCreate', async (interaction) => {
     const r = appeals.reset(interaction.options.getString('user'));
     if (!r.ok) return interaction.reply({ content: `❌ ${r.msg}`, flags: MessageFlags.Ephemeral });
     await ownerlog.log(interaction.guild, { emoji: '♻️', title: 'Ban appeal reset', color: 0x5865F2,
-      detail: `**${r.bannedTag}**’s previously **${r.status}** appeal was cleared by <@${interaction.user.id}> - they can be appealed again. (Archived, not deleted.)` }).catch(() => {});
-    return interaction.reply({ content: `♻️ Cleared **${r.bannedTag}**’s previously **${r.status}** appeal - a friend can open a fresh \`/appeal ban\` for them now. (Archived, history kept.)`, flags: MessageFlags.Ephemeral });
+      detail: `**${r.bannedTag}**’s previously **${r.status}** appeal was cleared by <@${interaction.user.id}> — they can be appealed again. (Archived, not deleted.)` }).catch(() => {});
+    return interaction.reply({ content: `♻️ Cleared **${r.bannedTag}**’s previously **${r.status}** appeal. A friend can open a fresh \`/appeal ban\` for them now. (Archived, history kept.)`, flags: MessageFlags.Ephemeral });
   }
   if (name === 'weights') {
     try {
@@ -2545,7 +2545,7 @@ client.on('interactionCreate', async (interaction) => {
       const embed = buildWeightsEmbed();
       if (pin) {
         const sent = await interaction.channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
-        if (!sent) return interaction.reply({ content: 'Couldn’t post here - check my permissions in this channel.', flags: MessageFlags.Ephemeral });
+        if (!sent) return interaction.reply({ content: 'Couldn’t post here. Check my permissions in this channel.', flags: MessageFlags.Ephemeral });
         await sent.pin().catch(e => console.error('[weights] pin:', e.message));
         return interaction.reply({ content: `📌 Posted + pinned the infraction guide here. Trial mods with access to this channel can now see it (and anyone can pull it with \`/weights\`).`, flags: MessageFlags.Ephemeral });
       }
@@ -2558,7 +2558,7 @@ client.on('interactionCreate', async (interaction) => {
     if (wantFix && !canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can run the fix (grant roles). Run without `fix` to just see the report.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const scan = Math.min(Math.max(interaction.options.getInteger('scan') || 1500, 100), 3000);
-    // [roleId, minLevel] - cumulative: at level N you should hold every role whose threshold ≤ N.
+    // [roleId, minLevel] — cumulative: at level N you should hold every role whose threshold ≤ N.
     const THRESH = [['1529120692845674687', 5], ['1529121181767176313', 10], ['1529121191384842330', 25], ['1529121471946035330', 50]];
     const RNAME = { '1529120692845674687': 'Novice', '1529121181767176313': 'Inter', '1529121191384842330': 'Elite', '1529121471946035330': 'NOLIFE' };
     const ARCANE = '437808476106784770', BOTCMD = '1528704767466016870';
@@ -2583,12 +2583,12 @@ client.on('interactionCreate', async (interaction) => {
       const miss = THRESH.filter(([rid, min]) => lvl >= min && !m.roles.cache.has(rid)).map(([rid]) => rid);
       if (!miss.length) continue;
       missing.push({ name: m.displayName, id: uid, lvl, miss });
-      if (wantFix) { const ok = await m.roles.add(miss, `levelcheck resync - earned by level ${lvl}`).then(() => true).catch(() => false); ok ? fixed++ : fixErr++; }
+      if (wantFix) { const ok = await m.roles.add(miss, `levelcheck resync — earned by level ${lvl}`).then(() => true).catch(() => false); ok ? fixed++ : fixErr++; }
     }
     missing.sort((a, b) => b.lvl - a.lvl);
     if (!missing.length) return interaction.editReply(`## ✅ Level roles all landed\n-# scanned ${fetched} log msgs · ${level.size} members seen\n> Every active member has every level role they've earned.`);
-    const lines = missing.slice(0, 35).map(f => `> ${wantFix ? '✅' : '⚠️'} **${f.name}** (<@${f.id}>) · L${f.lvl} - ${wantFix ? 'granted' : 'missing'}: ${f.miss.map(r => RNAME[r]).join(', ')}`);
-    const header = wantFix ? `## 🔧 Level-role resync - granted to ${fixed} member(s)${fixErr ? ` · ${fixErr} failed` : ''}` : `## ⚠️ ${missing.length} member(s) missing earned level roles`;
+    const lines = missing.slice(0, 35).map(f => `> ${wantFix ? '✅' : '⚠️'} **${f.name}** (<@${f.id}>) · L${f.lvl} · ${wantFix ? 'granted' : 'missing'}: ${f.miss.map(r => RNAME[r]).join(', ')}`);
+    const header = wantFix ? `## 🔧 Level-role resync: granted to ${fixed} member(s)${fixErr ? ` · ${fixErr} failed` : ''}` : `## ⚠️ ${missing.length} member(s) missing earned level roles`;
     return interaction.editReply({ content: `${header}\n-# scanned ${fetched} log msgs · ${level.size} members${wantFix ? '' : ' · run `/levelcheck fix:true` to grant them'}\n${lines.join('\n')}${missing.length > 35 ? `\n-# +${missing.length - 35} more` : ''}`.slice(0, 1950), allowedMentions: { parse: [] } });
   }
   if (name === 'stats') {
@@ -2624,19 +2624,19 @@ client.on('interactionCreate', async (interaction) => {
       const ruleCounts = {};
       for (const e of [...strikeInPeriod, ...cornerInPeriod]) if (e.ruleIndex) ruleCounts[e.ruleIndex] = (ruleCounts[e.ruleIndex] || 0) + 1;
       const topRule = Object.entries(ruleCounts).sort((a, b) => b[1] - a[1])[0];
-      const topRuleStr = topRule ? `Rule ${topRule[0]}${rules.byIndex(Number(topRule[0]))?.title ? `: ${rules.byIndex(Number(topRule[0])).title}` : ''} - cited **${topRule[1]}×**` : '-';
+      const topRuleStr = topRule ? `Rule ${topRule[0]}${rules.byIndex(Number(topRule[0]))?.title ? `: ${rules.byIndex(Number(topRule[0])).title}` : ''}, cited **${topRule[1]}×**` : 'none';
       const fmtCorner = e => `⛓️ <t:${Math.floor(e.at / 1000)}:R>${e.ruleIndex ? ` · Rule ${e.ruleIndex}` : ''}`;
       const fmtStrike = e => `${e.active ? '⚠️' : '✔️'} <t:${Math.floor(e.at / 1000)}:R> · ${strikes.formatUnits(e.weight)}u${e.ruleIndex ? ` · Rule ${e.ruleIndex}` : (e.reason ? ` · ${e.reason.slice(0, 40)}` : '')}`;
       const recentCorners = cornerInPeriod.slice(-5).reverse().map(fmtCorner).join('\n') || '_none_';
       const recentStrikes = strikeInPeriod.slice(-5).reverse().map(fmtStrike).join('\n') || '_none_';
       const embed = new EmbedBuilder()
         .setColor(activeUnits > 0 || corneredRec ? CORNER_RED : 0x57F287)
-        .setAuthor({ name: `${user.tag} - moderation record`, iconURL: user.displayAvatarURL() })
-        .setDescription(`Record for <@${user.id}> over **${periodLabel}**.${corneredRec ? `\n\n🚫 **Currently in the corner**${corneredRec.releaseAt ? ` - releases ${relPhrase(corneredRec.releaseAt)}` : ' (indefinite)'}.` : ''}`)
+        .setAuthor({ name: `${user.tag}: moderation record`, iconURL: user.displayAvatarURL() })
+        .setDescription(`Record for <@${user.id}> over **${periodLabel}**.${corneredRec ? `\n\n🚫 **Currently in the corner**${corneredRec.releaseAt ? `, releases ${relPhrase(corneredRec.releaseAt)}` : ' (indefinite)'}.` : ''}`)
         .addFields(
           { name: '⛓️ Corners', value: `**${cornerInPeriod.length}** in ${periodLabel}\n**${cornerAll.length}** all-time`, inline: true },
-          { name: '⚠️ Strikes', value: `**${strikeInPeriod.length}** received in ${periodLabel}\n**${strikeAll.length}** all-time\n**${activeStrikes.length} active** - ${strikes.formatUnits(activeUnits)} units (${tier})`, inline: true },
-          { name: '⏱️ Corner time', value: `Sentenced: **${sentencedMs ? humanDur(sentencedMs) : '-'}**${indefinite ? ` _(+${indefinite} open-ended)_` : ''}\nServed (all corners): **${servedMs ? humanDur(servedMs) : '-'}**${corneredRec ? ' _(incl. ongoing)_' : ''}`, inline: true },
+          { name: '⚠️ Strikes', value: `**${strikeInPeriod.length}** received in ${periodLabel}\n**${strikeAll.length}** all-time\n**${activeStrikes.length} active**, ${strikes.formatUnits(activeUnits)} units (${tier})`, inline: true },
+          { name: '⏱️ Corner time', value: `Sentenced: **${sentencedMs ? humanDur(sentencedMs) : 'none'}**${indefinite ? ` _(+${indefinite} open-ended)_` : ''}\nServed (all corners): **${servedMs ? humanDur(servedMs) : 'none'}**${corneredRec ? ' _(incl. ongoing)_' : ''}`, inline: true },
           { name: '🎯 Most-cited rule', value: topRuleStr, inline: false },
           { name: 'Recent corners', value: recentCorners.slice(0, 1024), inline: true },
           { name: 'Recent strikes', value: recentStrikes.slice(0, 1024), inline: true },
@@ -2652,7 +2652,7 @@ client.on('interactionCreate', async (interaction) => {
       const word = (interaction.options.getString('word') || '').trim();
       const durStr = (interaction.options.getString('duration') || '').trim();
       let durationMs = null;
-      if (durStr) { durationMs = corner.parseDuration(durStr); if (!durationMs) return interaction.reply({ content: 'Bad duration - use e.g. `30m`, `2h`, `3d` (or leave it blank for no expiry).', flags: MessageFlags.Ephemeral }); }
+      if (durStr) { durationMs = corner.parseDuration(durStr); if (!durationMs) return interaction.reply({ content: 'Bad duration. Use e.g. `30m`, `2h`, `3d` (or leave it blank for no expiry).', flags: MessageFlags.Ephemeral }); }
       const r = wordfilter.add(state, word, durationMs, interaction.user.id);
       if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
       const until = r.filter.expiresAt ? `until <t:${Math.floor(r.filter.expiresAt / 1000)}:f> (<t:${Math.floor(r.filter.expiresAt / 1000)}:R>)` : 'until removed (no expiry)';
@@ -2663,7 +2663,7 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'list') {
       const list = wordfilter.active(state);
       if (!list.length) return interaction.reply({ content: 'No active word filters.', flags: MessageFlags.Ephemeral });
-      const lines = list.map(f => `• \`${f.word}\` - ${f.expiresAt ? `expires <t:${Math.floor(f.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${f.count || 0}** · by <@${f.byId}>`);
+      const lines = list.map(f => `• \`${f.word}\` · ${f.expiresAt ? `expires <t:${Math.floor(f.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${f.count || 0}** · by <@${f.byId}>`);
       return interaction.reply({ content: `🧹 **Active word filters:**\n${lines.join('\n')}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'remove') {
@@ -2672,7 +2672,7 @@ client.on('interactionCreate', async (interaction) => {
       if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
       await logCorner(interaction.guild, { emoji: '🧹', title: 'WORD FILTER REMOVED', color: CORNER_GREEN,
         desc: `Stopped auto-deleting \`${r.removed.word}\` (deleted **${r.removed.count || 0}** message(s) while active).\n**By:** <@${interaction.user.id}>` }).catch(() => {});
-      return interaction.reply({ content: `✅ Stopped the filter for \`${r.removed.word}\` - it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: `✅ Stopped the filter for \`${r.removed.word}\`, it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
     }
   }
   if (name === 'pending') {
@@ -2700,7 +2700,7 @@ client.on('interactionCreate', async (interaction) => {
     try { await interaction.guild.bans.remove(id, reason); }
     catch (e) { return interaction.reply({ content: `❌ Unban failed: ${e.message} (are they actually banned?)`, flags: MessageFlags.Ephemeral }); }
     if (keepWatch) watchlist.addPending(id);
-    await ownerlog.log(interaction.guild, { emoji: '🔓', title: 'Unbanned', color: 0x57F287, detail: `\`${id}\` - ${reason} - by <@${interaction.user.id}>.${keepWatch ? ' Will be re-watchlisted on rejoin.' : ''}` });
+    await ownerlog.log(interaction.guild, { emoji: '🔓', title: 'Unbanned', color: 0x57F287, detail: `\`${id}\` — ${reason} — by <@${interaction.user.id}>.${keepWatch ? ' Will be re-watchlisted on rejoin.' : ''}` });
     return interaction.reply({ flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] },
       content: `✅ Unbanned <@${id}>.` + (keepWatch ? ' They\'ll get the **Watchlist** role automatically when they rejoin.' : '') });
   }
@@ -2746,7 +2746,7 @@ client.on('interactionCreate', async (interaction) => {
         const lines = Object.entries(r.results).map(([k, v]) => {
           const c = contest.CONTESTS.find(x => x.key === k);
           if (!v) return `• ${c.label}: no winner (no votes)`;
-          return `• ${c.label}: ${v.winners.map(w => w.anonymous ? 'anon' : `<@${w.memberId}>`).join(' & ')} - ${v.votes} 🩷`;
+          return `• ${c.label}: ${v.winners.map(w => w.anonymous ? 'anon' : `<@${w.memberId}>`).join(' & ')} · ${v.votes} 🩷`;
         }).join('\n');
         return interaction.editReply(`🏁 Round closed, winners crowned + role assigned. Results also posted to <#1529981479331827722>.\n${lines}`);
       }
@@ -2754,14 +2754,14 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const data = await contest.revealEntries(interaction.guild);
         if (!data.round) return interaction.editReply('No active contest round to reveal.');
-        const blocks = [`## 🕵️ Contest entries - real submitters\n-# ${data.round.theme} · private · public anonymity untouched`];
+        const blocks = [`## 🕵️ Contest entries: real submitters\n-# ${data.round.theme} · private · public anonymity untouched`];
         for (const c of data.contests) {
           if (!c.entries.length) { blocks.push(`### ${c.emoji} ${c.label}\n> _no entries_`); continue; }
           const lines = [];
           for (const e of c.entries) {
             const m = await interaction.guild.members.fetch(e.memberId).catch(() => null);
             const nm = m ? m.displayName : (await client.users.fetch(e.memberId).catch(() => null))?.username || e.memberId;
-            lines.push(`> ${e.anonymous ? '🕶️' : '👤'} **${nm}** (<@${e.memberId}>) - ${e.votes} 🩷${e.anonymous ? ' · _anon_' : ''} · [entry](https://discord.com/channels/${interaction.guild.id}/${c.channelId}/${e.messageId})`);
+            lines.push(`> ${e.anonymous ? '🕶️' : '👤'} **${nm}** (<@${e.memberId}>) · ${e.votes} 🩷${e.anonymous ? ' · _anon_' : ''} · [entry](https://discord.com/channels/${interaction.guild.id}/${c.channelId}/${e.messageId})`);
           }
           blocks.push(`### ${c.emoji} ${c.label} (${c.entries.length})\n${lines.join('\n')}`);
         }
@@ -2785,14 +2785,14 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'view') {
       const total = strikes.totalUnits(state, user.id);
       const active = strikes.activeEntries(state, user.id);
-      const lines = active.map(e => `\`${e.id}\` - **${strikes.formatUnits(e.weight)}** unit${e.weight === 1 ? '' : 's'} - ${e.ruleIndex ? `Rule ${e.ruleIndex}: ${SERVER_RULES[Number(e.ruleIndex) - 1]} - ` : ''}${e.reason || '_(no reason)_'}${e.timeoutMs ? ' ⏱️' : ''} - <t:${Math.floor(e.at / 1000)}:d>`);
+      const lines = active.map(e => `\`${e.id}\` · **${strikes.formatUnits(e.weight)}** unit${e.weight === 1 ? '' : 's'} · ${e.ruleIndex ? `Rule ${e.ruleIndex}: ${SERVER_RULES[Number(e.ruleIndex) - 1]} · ` : ''}${e.reason || '_(no reason)_'}${e.timeoutMs ? ' ⏱️' : ''} · <t:${Math.floor(e.at / 1000)}:d>`);
       return R(`⚠️ <@${user.id}> is at **${strikes.formatUnits(total)}/${cap} units** (${strikes.tierName(total)}).${lines.length ? `\n${lines.join('\n')}` : ' No active strikes.'}`);
     }
     if (sub === 'add') {
       if (member.id === interaction.guild.ownerId) return R('You can’t strike the server owner.');
       const reason = (interaction.options.getString('reason') || '').trim();
       const ruleN = interaction.options.getString('rule');
-      if (!ruleN && !reason) return R('Give a reason - pick **which rule** they broke, type a **custom reason**, or both.');
+      if (!ruleN && !reason) return R('Give a reason: pick **which rule** they broke, type a **custom reason**, or both.');
       // weight omitted → use the picked rule's already-decided weight. Manually given always wins, even
       // over a rule with a different default (a deliberate override, not an error).
       const ruleObj = ruleN ? rules.byIndex(Number(ruleN)) : null;
@@ -2800,19 +2800,19 @@ client.on('interactionCreate', async (interaction) => {
       let weight = interaction.options.getInteger('weight');
       let weightAutoFilled = false;
       if (weight == null) {
-        if (ruleWeight == null) return R(ruleN ? `Rule ${ruleN} doesn’t have a decided weight yet - specify one (1-3) manually.` : 'Specify a **weight** (1-3), or pick a rule that already has one decided.');
+        if (ruleWeight == null) return R(ruleN ? `Rule ${ruleN} doesn’t have a decided weight yet. Specify one (1-3) manually.` : 'Specify a **weight** (1-3), or pick a rule that already has one decided.');
         weight = ruleWeight; weightAutoFilled = true;
       }
       const timeoutStr = interaction.options.getString('timeout');
       let timeoutMs = null;
       if (timeoutStr) {
         timeoutMs = corner.parseDuration(timeoutStr);
-        if (!timeoutMs) return R('Bad timeout duration - use e.g. `30s`, `30m`, `2h`, `3d`.');
+        if (!timeoutMs) return R('Bad timeout duration. Use e.g. `30s`, `30m`, `2h`, `3d`.');
       }
       const cornerStr = interaction.options.getString('corner');
       let cornerMs = null;
-      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return R('Bad corner duration - use e.g. `30m`, `2h`, `30s`.'); }
-      const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? ` - ${reason}` : ''}` : reason;
+      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return R('Bad corner duration. Use e.g. `30m`, `2h`, `30s`.'); }
+      const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? `, ${reason}` : ''}` : reason;
       const res = await strikes.addStrike(interaction.guild, member, state, { weight, ruleIndex: ruleN, reason: reasonText, timeoutMs, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
       if (cornerMs) {
@@ -2824,30 +2824,30 @@ client.on('interactionCreate', async (interaction) => {
           await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${user.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
         } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
       }
-      // res.weight is the EFFECTIVE weight (base + the timeout's linear-capped bonus) - always show
+      // res.weight is the EFFECTIVE weight (base + the timeout's linear-capped bonus) — always show
       // that, never the raw input, so the mod sees what was actually recorded.
       const bonus = strikes.timeoutBonusUnits(timeoutMs);
       // Public, no DMs: post in the channel the command was run in, in addition to the mod's ephemeral ack.
       // Strike ID included so the member can look up + appeal it without asking staff what it is.
-      // Public, no DMs, but a real notification - ping the struck member (unlike reference-only mentions).
-      await interaction.channel.send({ content: `⚠️ <@${user.id}> was given a strike - ${reasonText}${timeoutMs ? ' (+ timeout)' : ''}. Strike ID: \`${res.id}\` - appealable with \`/appeal strike\`.`, allowedMentions: { users: [user.id] } }).catch(() => {});
+      // Public, no DMs, but a real notification — ping the struck member (unlike reference-only mentions).
+      await interaction.channel.send({ content: `⚠️ <@${user.id}> was given a strike, ${reasonText}${timeoutMs ? ' (+ timeout)' : ''}. Strike ID: \`${res.id}\`. Appealable with \`/appeal strike\`.`, allowedMentions: { users: [user.id] } }).catch(() => {});
       const banNote = res.crossedBan ? banConfirmRow(user.id, 'Confirm ban') : null;
       await ownerlog.log(interaction.guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
-        detail: `<@${user.id}> - ${strikes.formatUnits(res.weight)} unit(s), ${reasonText}${timeoutMs ? ' + timeout' : ''} - by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${cap}.` });
-      return interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight} - Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''} - now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ' - 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
+        detail: `<@${user.id}> — ${strikes.formatUnits(res.weight)} unit(s), ${reasonText}${timeoutMs ? ' + timeout' : ''} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${cap}.` });
+      return interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight}, Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''}, now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'remove') {
       const strikeId = interaction.options.getString('strike_id');
       const r = await strikes.removeStrike(interaction.guild, member, state, strikeId, interaction.user.tag);
-      if (!r.ok) return R(`No active strike \`${strikeId}\` found on <@${user.id}> - check \`/strike view\` for the right ID.`);
+      if (!r.ok) return R(`No active strike \`${strikeId}\` found on <@${user.id}>. Check \`/strike view\` for the right ID.`);
       await ownerlog.log(interaction.guild, { emoji: '➖', title: 'Strike removed', color: 0x57F287,
-        detail: `\`${strikeId}\` from <@${user.id}> - by <@${interaction.user.id}>. Now ${strikes.formatUnits(r.totalUnits)}/${cap}.` });
-      return R(`✅ Removed strike \`${strikeId}\` from <@${user.id}> - now **${strikes.formatUnits(r.totalUnits)}/${cap} units** (${r.tier}).`);
+        detail: `\`${strikeId}\` from <@${user.id}> — by <@${interaction.user.id}>. Now ${strikes.formatUnits(r.totalUnits)}/${cap}.` });
+      return R(`✅ Removed strike \`${strikeId}\` from <@${user.id}>, now **${strikes.formatUnits(r.totalUnits)}/${cap} units** (${r.tier}).`);
     }
     if (sub === 'clear') {
       const r = await strikes.clearStrikes(interaction.guild, member, state, interaction.user.tag);
-      if (r.cleared) await ownerlog.log(interaction.guild, { emoji: '🧹', title: 'Strikes cleared', color: 0x57F287, detail: `All strikes (${r.cleared}) on <@${user.id}> - by <@${interaction.user.id}>.` });
+      if (r.cleared) await ownerlog.log(interaction.guild, { emoji: '🧹', title: 'Strikes cleared', color: 0x57F287, detail: `All strikes (${r.cleared}) on <@${user.id}> — by <@${interaction.user.id}>.` });
       return R(r.cleared ? `🧹 Cleared all strikes on <@${user.id}> (removed ${r.cleared}).` : `<@${user.id}> had no strikes.`);
     }
     return;
@@ -2869,7 +2869,7 @@ client.on('interactionCreate', async (interaction) => {
     const sub = interaction.options.getSubcommand();
     if (sub === 'list') {
       const flags = features.load();
-      const lines = features.REGISTRY.map(r => `${flags[r.key] === true ? '🟢' : '⚫'} \`${r.key}\` - ${r.audience}${r.built ? '' : ' (planned)'}`).join('\n');
+      const lines = features.REGISTRY.map(r => `${flags[r.key] === true ? '🟢' : '⚫'} \`${r.key}\` · ${r.audience}${r.built ? '' : ' (planned)'}`).join('\n');
       return interaction.reply({ content: `**Features:**\n${lines}`, flags: MessageFlags.Ephemeral });
     }
     if (sub === 'toggle') {
@@ -2878,9 +2878,9 @@ client.on('interactionCreate', async (interaction) => {
       if (!features.get(key)) return interaction.reply({ content: `Unknown feature \`${key}\`.`, flags: MessageFlags.Ephemeral });
       features.setEnabled(key, on);
       const restart = features.needsRestart(key);
-      await ownerlog.log(interaction.guild, { emoji: on ? '🟢' : '⚫', title: `Feature ${on ? 'enabled' : 'disabled'}`, color: on ? 0x57F287 : 0x99AAB5, detail: `\`${key}\` - by <@${interaction.user.id}>.` });
+      await ownerlog.log(interaction.guild, { emoji: on ? '🟢' : '⚫', title: `Feature ${on ? 'enabled' : 'disabled'}`, color: on ? 0x57F287 : 0x99AAB5, detail: `\`${key}\` — by <@${interaction.user.id}>.` });
       return interaction.reply({ content: `${on ? '🟢' : '⚫'} \`${key}\` → **${on ? 'ON' : 'OFF'}**.`
-        + (restart ? ' ⚠️ Restart the bot for this to fully take effect (it adds/removes commands or options).' : ' Takes effect immediately - no restart needed.'),
+        + (restart ? ' ⚠️ Restart the bot for this to fully take effect (it adds/removes commands or options).' : ' Takes effect immediately, no restart needed.'),
         flags: MessageFlags.Ephemeral });
     }
     return;
@@ -2893,16 +2893,16 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'status') {
       const r = await permguard.sweepPermissions(interaction.guild, { notify: true });
       const lines = [`🛡️ Sweep complete.`, `Corrected: **${r.fixed}** overwrite(s).`, `New per-member overrides flagged: **${r.newMemberOverwrites.length}**.`, `Unmanaged channels (created after last snapshot): **${r.unmanagedChannels}**.`];
-      if (r.fixed) lines.push('', ...r.corrections.slice(0, 15).map(c => `• #${c.channel} - ${c.role}`));
+      if (r.fixed) lines.push('', ...r.corrections.slice(0, 15).map(c => `• #${c.channel} · ${c.role}`));
       return interaction.editReply(lines.join('\n'));
     }
     if (sub === 'resnapshot') {
       if (interaction.options.getBoolean('force')) {
         const r = await permguard.resnapshot(interaction.guild);
-        await ownerlog.log(interaction.guild, { emoji: '📸', title: 'Permission baseline re-snapshotted (forced)', color: 0x5865F2, detail: `${r.channels} channels, ${r.overwrites} overwrite entries - by <@${interaction.user.id}>. Whatever's live right now is the new "correct" state (no review).` });
+        await ownerlog.log(interaction.guild, { emoji: '📸', title: 'Permission baseline re-snapshotted (forced)', color: 0x5865F2, detail: `${r.channels} channels, ${r.overwrites} overwrite entries — by <@${interaction.user.id}>. Whatever's live right now is the new "correct" state (no review).` });
         return interaction.editReply(`📸 New baseline saved: **${r.channels}** channels, **${r.overwrites}** overwrite entries. This is now what permguard will enforce.`);
       }
-      // Default: interactive review - show every change since the baseline, keep/undo each, then commit.
+      // Default: interactive review — show every change since the baseline, keep/undo each, then commit.
       return permguard.openReconcile(interaction);
     }
     return;
@@ -2950,7 +2950,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
   if (name === 'grade') {
-    // OWNER-ONLY. Grade a smart-watch card by its short ID (works when there are no buttons - e.g. live).
+    // OWNER-ONLY. Grade a smart-watch card by its short ID (works when there are no buttons — e.g. live).
     if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the bot owner can grade cards.', flags: MessageFlags.Ephemeral });
     const gid = (interaction.options.getString('id') || '').trim().toUpperCase();
     const verdict = interaction.options.getString('verdict');
@@ -2958,7 +2958,7 @@ client.on('interactionCreate', async (interaction) => {
     const meta = smartwatch.VERDICT_META[verdict];
     if (!meta) return interaction.reply({ content: 'Unknown verdict.', flags: MessageFlags.Ephemeral });
     const card = smartwatch.lookupCard(gid);
-    if (!card) return interaction.reply({ content: `No card with id \`${gid}\` - check the grade id on the card (only the last ~400 are kept).`, flags: MessageFlags.Ephemeral });
+    if (!card) return interaction.reply({ content: `No card with id \`${gid}\`. Check the grade id on the card (only the last ~400 are kept).`, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const aiWouldSurface = !!card.aiWouldSurface;
     smartwatch.addExample({ ts: Date.now(), verdict, task: meta.task, content: card.content, note, channel: card.channel, aiWouldSurface, author: card.author, by: interaction.user.id, byTag: interaction.user.tag });
@@ -2972,13 +2972,13 @@ client.on('interactionCreate', async (interaction) => {
         const cm = cch && await cch.messages.fetch(card.cardMsgId).catch(() => null);
         if (cm?.embeds?.[0]) {
           const e2 = EmbedBuilder.from(cm.embeds[0]).setColor(correct ? 0x3BA55D : 0xED4245).addFields({
-            name: `✅ Graded via /grade (\`${gid}\`)`, value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}> - AI was ${correct ? '✅ right' : '❌ wrong'}${note ? `\ncorrect read: _${note}_` : ''}\n${meta.task} accuracy **${acc}%** (${stats.right}/${stats.total})`.slice(0, 1024) });
+            name: `✅ Graded via /grade (\`${gid}\`)`, value: `**${meta.label.split(' (')[0]}** by <@${interaction.user.id}>, AI was ${correct ? '✅ right' : '❌ wrong'}${note ? `\ncorrect read: _${note}_` : ''}\n${meta.task} accuracy **${acc}%** (${stats.right}/${stats.total})`.slice(0, 1024) });
           const links = (cm.components?.flatMap(r => r.components) || []).filter(b => b.style === ButtonStyle.Link);
           await cm.edit({ embeds: [e2], components: links.length ? [new ActionRowBuilder().addComponents(...links.map(b => ButtonBuilder.from(b)))] : [] }).catch(() => {});
         }
       }
     } catch { /* annotate best-effort */ }
-    return interaction.editReply(`✅ Graded \`${gid}\` as **${meta.label.split(' (')[0]}** - AI was ${correct ? 'right ✅' : 'wrong ❌'}. ${meta.task} accuracy now **${acc}%**${note ? ' · note saved to guide the judge' : ''}.`);
+    return interaction.editReply(`✅ Graded \`${gid}\` as **${meta.label.split(' (')[0]}**, AI was ${correct ? 'right ✅' : 'wrong ❌'}. ${meta.task} accuracy now **${acc}%**${note ? ' · note saved to guide the judge' : ''}.`);
   }
   if (name === 'watchlist-suggest') {
     if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnly, flags: MessageFlags.Ephemeral });
@@ -3027,11 +3027,11 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[confessions] submit ${e.message}`); return interaction.editReply('Could not post that confession.').catch(() => {}); }
   }
   if (name === 'whistleblow-setup') {
-    if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the **bot owner** can set up whistleblows - you become the “you” who can unseal. (This is bot-owner-only.)', flags: MessageFlags.Ephemeral });
+    if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the **bot owner** can set up whistleblows. You become the “you” who can unseal. (This is bot-owner-only.)', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const cfg = await whistleblow.setup(interaction.guild, interaction.user.id);
-      return interaction.editReply(`✅ Whistleblows now DM **you** (<@${cfg.you}>) and/or the **owner** (<@${cfg.her}>) per the sender’s choice - delivered privately, never in a channel, so no one with Administrator can snoop. Members report with \`/whistleblow\`.`);
+      return interaction.editReply(`✅ Whistleblows now DM **you** (<@${cfg.you}>) and/or the **owner** (<@${cfg.her}>) per the sender’s choice, delivered privately, never in a channel, so no one with Administrator can snoop. Members report with \`/whistleblow\`.`);
     } catch (e) { console.error(`[whistleblow] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'whistleblow') {
@@ -3041,7 +3041,7 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const r = await whistleblow.submit(interaction.guild, interaction.member, interaction.options.getString('text'), interaction.options.getString('to'));
       return interaction.editReply(r.ok
-        ? `✅ Sent **Whistleblow #${r.num}** - delivered privately by DM. You chose: **${whistleblow.CHOICES[r.choice]}**.${r.choice === 'anonymous' ? ' No identity was stored - this can never be traced to you.' : ''}`
+        ? `✅ Sent **Whistleblow #${r.num}**, delivered privately by DM. You chose: **${whistleblow.CHOICES[r.choice]}**.${r.choice === 'anonymous' ? ' No identity was stored. This can never be traced to you.' : ''}`
         : `❌ ${r.msg}`);
     } catch (e) { console.error(`[whistleblow] submit ${e.message}`); return interaction.editReply('Could not send that.').catch(() => {}); }
   }
@@ -3050,13 +3050,13 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { forum, apps } = await modapps.setup(interaction.guild, config);
-      return interaction.editReply(`✅ Mod applications ready - staff review forum <#${forum.id}> (anon 👍/👎, admins decide) + applicant threads in <#${apps.id}>. Members apply with \`/apply-mod\`.`);
+      return interaction.editReply(`✅ Mod applications ready: staff review forum <#${forum.id}> (anon 👍/👎, admins decide) + applicant threads in <#${apps.id}>. Members apply with \`/apply-mod\`.`);
     } catch (e) { console.error(`[modapps] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'apply-mod') {
     if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
-    if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet - ask an admin to run `/apply-mod-setup`.', flags: MessageFlags.Ephemeral });
+    if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet. Ask an admin to run `/apply-mod-setup`.', flags: MessageFlags.Ephemeral });
     if (!modapps.applicationsOpen()) return interaction.reply({ content: modapps.closedNotice(), flags: MessageFlags.Ephemeral });
     // If language mini-mods are set up, ask which position first; otherwise go straight to the mod modal.
     if (features.enabled('langMiniMod') && langmods.isConfigured()) {
@@ -3085,7 +3085,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'open') {
       await modapps.setApplicationsOpen(interaction.guild, true);
-      await ownerlog.log(interaction.guild, { emoji: '✅', title: 'Mod applications REOPENED', color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> - members can \`/apply-mod\` again.` });
+      await ownerlog.log(interaction.guild, { emoji: '✅', title: 'Mod applications REOPENED', color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> — members can \`/apply-mod\` again.` });
       return interaction.editReply('✅ Mod applications are now **OPEN**. Members can `/apply-mod` again.');
     }
     return;
@@ -3094,7 +3094,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can view the census.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const members = await interaction.guild.members.fetch().catch(() => null);
-    if (!members) return interaction.editReply('Couldn’t load the member list - try again.').catch(() => {});
+    if (!members) return interaction.editReply('Couldn’t load the member list. Try again.').catch(() => {});
     const trialId = modapps.loadConfig().trialModRoleId;
     // Counted by HIGHEST tier so nobody is double-counted (higher tiers absorb the lower). memberTier
     // returns owner→admin→mod (the bot's canonical tier); Trial Mod is only counted for people below mod.
@@ -3112,17 +3112,17 @@ client.on('interactionCreate', async (interaction) => {
     const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
     // MEMBER NAMES are plain text (display name), NOT @mentions: Discord's mobile client resolves a member
     // mention only from its OWN cache, so uncached members render "@unknown-user" (owner: "only shows who I'm
-    // friends with") - content vs embed doesn't change that. displayName always renders correctly. TIER HEADERS
-    // use role mentions (<@&id>) - roles ARE always cached, so those resolve + carry the role's real colour.
+    // friends with") — content vs embed doesn't change that. displayName always renders correctly. TIER HEADERS
+    // use role mentions (<@&id>) — roles ARE always cached, so those resolve + carry the role's real colour.
     // Owner-tier membership keys off 4 personal roles + guild owner, but the VISIBLE role is OWNER⚜️
-    // (OWNER_DISPLAY_ROLE_ID) - use it for the header so it resolves + colours like the rest. parse:[] = role
+    // (OWNER_DISPLAY_ROLE_ID) — use it for the header so it resolves + colours like the rest. parse:[] = role
     // names resolve/colour but nobody is pinged. Fancy markdown: ## header, -# subtext, code-styled handle + id.
     const line = (m) => `**${m.displayName}** · \`${m.user.username}\` · \`${m.id}\``;
     const block = (roleId, emoji, label, arr) => {
-      const head = roleId ? `<@&${roleId}> - \`${arr.length}\`` : `${emoji} **${label}** - \`${arr.length}\``;
+      const head = roleId ? `<@&${roleId}>: \`${arr.length}\`` : `${emoji} **${label}**: \`${arr.length}\``;
       return `\n${head}\n${arr.length ? arr.map(line).join('\n') : '-# _(none)_'}`;
     };
-    const out = `## 👥 Staff - \`${owner + admin + mod + trial}\` total\n-# of ${humans.toLocaleString()} members · counted at their highest tier\n`
+    const out = `## 👥 Staff: \`${owner + admin + mod + trial}\` total\n-# of ${humans.toLocaleString()} members · counted at their highest tier\n`
       + block(opspanel.OWNER_DISPLAY_ROLE_ID, '👑', 'Owner', byTier.owner)
       + block(opspanel.ADMIN_ROLE_ID, '🛡️', 'Admin', byTier.admin)
       + block(opspanel.MOD_ROLE_ID, '⚒️', 'Mod', byTier.mod)
@@ -3144,15 +3144,15 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const kind = name === 'promote-mod' ? 'mod' : 'trial';
     const r = await promote.start(interaction.guild, target, interaction.user.id, config, kind);
-    return interaction.editReply(r.ok ? `✅ Promotion vote opened in <#${r.channelId}> - staff vote 👍/👎, an owner confirms.` : `❌ ${r.msg}`).catch(() => {});
+    return interaction.editReply(r.ok ? `✅ Promotion vote opened in <#${r.channelId}>. Staff vote 👍/👎, an owner confirms.` : `❌ ${r.msg}`).catch(() => {});
   }
   if (name === 'demote-trial') {
-    // Owner/approver only - the inverse of accepting an application, so it takes the same tier.
+    // Owner/approver only — the inverse of accepting an application, so it takes the same tier.
     const approvers = modapps.loadConfig().approvers || [];
     if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can demote a trial mod.', flags: MessageFlags.Ephemeral });
     const roleId = modapps.loadConfig().trialModRoleId;
-    if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured - run `/apply-mod-setup` first.', flags: MessageFlags.Ephemeral });
+    if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured. Run `/apply-mod-setup` first.', flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
     if (!target.roles.cache.has(roleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Trial Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
@@ -3161,7 +3161,7 @@ client.on('interactionCreate', async (interaction) => {
     const ok = await target.roles.remove(roleId, `Trial Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
     return interaction.editReply(ok
       ? `✅ Removed the **Trial Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
-      : '❌ Couldn’t remove the role - make sure the bot’s own role sits above **Trial Mod**.').catch(() => {});
+      : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Trial Mod**.').catch(() => {});
   }
   if (name === 'help') {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
@@ -3171,7 +3171,7 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'list') {
       const board = tribes.standings(interaction.guild);
       if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
-      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}** - ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.points || 0} pts\``).join('\n');
+      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}** · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.points || 0} pts\``).join('\n');
       const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Points arrive with the territory system.' });
       return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the land`, embeds: [embed] });
     }
@@ -3198,14 +3198,14 @@ client.on('interactionCreate', async (interaction) => {
       const members = tribes.roster(interaction.guild, tribe);
       const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
       const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body);
-      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} - Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed] });
+      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed] });
     }
     if (sub === 'leaderboard') {
       const top = tribes.topTides(tribe.key, 15);
-      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name} - Tides\n> No Tides earned yet - chat in the hall to start climbing.`, allowedMentions: { parse: [] } });
-      const lines = top.map((e, i) => `> ${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> - \`${e.points} 🌊\``);
+      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name}: Tides\n> No Tides earned yet. Chat in the hall to start climbing.`, allowedMentions: { parse: [] } });
+      const lines = top.map((e, i) => `> ${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> · \`${e.points} 🌊\``);
       const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(lines.join('\n'));
-      return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name} - Tides Leaderboard\n-# top ${top.length} by activity`, embeds: [embed], allowedMentions: { parse: [] } });
+      return interaction.reply({ content: `## ${tribe.emoji || '🌊'} ${tribe.shortName || tribe.name}: Tides Leaderboard\n-# top ${top.length} by activity`, embeds: [embed], allowedMentions: { parse: [] } });
     }
     if (sub === 'motto') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
@@ -3223,11 +3223,11 @@ client.on('interactionCreate', async (interaction) => {
         if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
         if (target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> is already in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         const other = tribes.memberTribe(target);
-        if (other && other.key !== tribe.key) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}** - a member can only be in one tribe. Banish them there first.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        if (other && other.key !== tribe.key) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}**. A member can only be in one tribe. Banish them there first.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         tribes.setMembership(tribe.key, target.id, true);   // authorize BEFORE adding so the guard honors it
         const ok = await target.roles.add(tribe.roleId, `Tribe invite by ${interaction.user.tag}`).then(() => true).catch(() => false);
-        if (!ok) { tribes.setMembership(tribe.key, target.id, false); return interaction.editReply('Couldn’t add the tribe role - make sure my role sits above it.'); }
+        if (!ok) { tribes.setMembership(tribe.key, target.id, false); return interaction.editReply('Couldn’t add the tribe role. Make sure my role sits above it.'); }
         if (tribe.hallId) {
           const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null);
           if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new member joins ${tribe.shortName || tribe.name}\n-# welcomed by <@${interaction.user.id}>\n> <@${target.id}>, the tribe stands with you.`, allowedMentions: { users: [target.id] } }).catch(() => {});
@@ -3241,14 +3241,14 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         tribes.setMembership(tribe.key, target.id, false);   // de-authorize BEFORE removing so the guard honors it
         const ok = await target.roles.remove(tribe.roleId, `Tribe banish by ${interaction.user.tag}`).then(() => true).catch(() => false);
-        return interaction.editReply(ok ? `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` : 'Couldn’t remove the role - check my role position.');
+        return interaction.editReply(ok ? `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` : 'Couldn’t remove the role. Check my role position.');
       }
       if (sub === 'announce') {
         if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });
         const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
         if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
         const msg = interaction.options.getString('message').slice(0, 1500).replace(/\n/g, '\n> ');
-        await throne.send({ content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name} - Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(e => console.error('[tribe announce]', e.message));
+        await throne.send({ content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name}: Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(e => console.error('[tribe announce]', e.message));
         return interaction.reply({ content: `📣 Posted to <#${tribe.throneId}> and rallied the tribe.`, flags: MessageFlags.Ephemeral });
       }
       if (sub === 'note') {
@@ -3256,18 +3256,18 @@ client.on('interactionCreate', async (interaction) => {
         const text = interaction.options.getString('text');
         if (text) { tribes.addNote(tribe.key, target.id, text, interaction.user.id); return interaction.reply({ content: `📝 Noted on <@${target.id}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
         const notes = tribes.getNotes(tribe.key, target.id);
-        if (!notes.length) return interaction.reply({ content: `No notes on <@${target.id}> yet - add one with \`/tribe note user:@… text:…\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-        const body = notes.map(n => `> ${n.text}\n-# - <@${n.by}> · <t:${Math.floor(n.at / 1000)}:R>`).join('\n');
+        if (!notes.length) return interaction.reply({ content: `No notes on <@${target.id}> yet. Add one with \`/tribe note user:@… text:…\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        const body = notes.map(n => `> ${n.text}\n-# by <@${n.by}> · <t:${Math.floor(n.at / 1000)}:R>`).join('\n');
         return interaction.reply({ content: `## 📝 Notes on ${target.displayName}\n${body}`.slice(0, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
       if (sub === 'rank') {
         if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
-        if (!tribes.isMember(target, tribe)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}** - invite them first with \`/tribe invite\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        if (!tribes.isMember(target, tribe)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}**. Invite them first with \`/tribe invite\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         const rankKey = interaction.options.getString('rank');
         const idx = (tribe.ranks || []).findIndex(r => r.key === rankKey);
         if (idx < 0) return interaction.reply({ content: 'That rank isn’t set up for this tribe.', flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        await applyTribeRank(interaction.guild, tribe, target, idx, `manual - set by <@${interaction.user.id}>`, false);
+        await applyTribeRank(interaction.guild, tribe, target, idx, `manual — set by <@${interaction.user.id}>`, false);
         return interaction.editReply({ content: `${tribe.emoji || '🌊'} Set <@${target.id}> to **${tribe.ranks[idx].name}** in ${tribe.shortName || tribe.name}.`, allowedMentions: { parse: [] } });
       }
     }
@@ -3278,7 +3278,7 @@ client.on('interactionCreate', async (interaction) => {
     const parseHex = h => { const m = String(h || '').trim().replace(/^#/, ''); return /^[0-9a-fA-F]{6}$/.test(m) ? parseInt(m, 16) : null; };
     if (sub === 'create') {
       const color = parseHex(interaction.options.getString('color'));
-      if (color === null) return interaction.reply({ content: 'Bad primary colour - use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
+      if (color === null) return interaction.reply({ content: 'Bad primary colour. Use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
       const c2raw = interaction.options.getString('color2'); const color2 = c2raw ? parseHex(c2raw) : null;
       if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
       const leaderMember = interaction.options.getMember('leader');
@@ -3289,7 +3289,7 @@ client.on('interactionCreate', async (interaction) => {
           emoji: interaction.options.getString('emoji'), color, color2, style: interaction.options.getString('style'), leaderMember,
         }, config);
         for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
-        return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name} - founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → ${leaderMember ? `<@${leaderMember.id}>` : '_unassigned_'}\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard · drag the role up in Server Settings if you want it higher in the hoist.`, allowedMentions: { parse: [] } });
+        return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → ${leaderMember ? `<@${leaderMember.id}>` : '_unassigned_'}\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard · drag the role up in Server Settings if you want it higher in the hoist.`, allowedMentions: { parse: [] } });
       } catch (e) { console.error('[tribe-admin create]', e.message); return interaction.editReply(`❌ Build failed: ${e.message}`); }
     }
     if (sub === 'register') {
@@ -3301,7 +3301,7 @@ client.on('interactionCreate', async (interaction) => {
       const t = tribes.register({ key, name: interaction.options.getString('name'), shortName: interaction.options.getString('name'),
         emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
-      return interaction.reply({ content: `## ${t.emoji} ${t.name} - registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in \`/tribe list\` and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in \`/tribe list\` and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
   }
   if (name === 'roleselect-role') {
@@ -3316,7 +3316,7 @@ client.on('interactionCreate', async (interaction) => {
         : roleselect.removeRoleFromSection(section, role.id);
       if (!r.ok) return interaction.editReply(`❌ ${r.error}`);
       await roleselect.rebuildFromIndex(interaction.guild, config.rolesChannelId, roleselect.SECTION_BLOCK_INDEX[section]);
-      return interaction.editReply(`✅ ${sub === 'add' ? 'Added' : 'Removed'} <@&${role.id}> ${sub === 'add' ? 'to' : 'from'} **${roleselect.SECTION_TITLE[section]}** - #roles updated.`);
+      return interaction.editReply(`✅ ${sub === 'add' ? 'Added' : 'Removed'} <@&${role.id}> ${sub === 'add' ? 'to' : 'from'} **${roleselect.SECTION_TITLE[section]}**. #roles updated.`);
     } catch (e) { console.error(`[roleselect-role] ${e.message}`); return interaction.editReply(`Failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'request-role-setup') {
@@ -3332,7 +3332,7 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const removing = interaction.options.getBoolean('remove') || false;
       const r = await rolereq.submit(interaction.guild, interaction.member, interaction.options.getRole('role'), config, removing);
-      return interaction.editReply(r.ok ? `✅ Requested ${removing ? 'to give up' : ''} **${r.role}** - staff will review it.` : `❌ ${r.msg}`);
+      return interaction.editReply(r.ok ? `✅ Requested ${removing ? 'to give up' : ''} **${r.role}**. Staff will review it.` : `❌ ${r.msg}`);
     } catch (e) { console.error(`[rolereq] ${e.message}`); return interaction.editReply('Could not send that request.').catch(() => {}); }
   }
   if (name === 'appeal-setup') {
@@ -3340,7 +3340,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, created } = await appeals.setup(interaction.guild, config);
-      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Friends of a banned member appeal with \`/appeal ban <username>\` - it opens a private thread; staff Approve (unbans) or Deny.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Friends of a banned member appeal with \`/appeal ban <username>\`. It opens a private thread; staff Approve (unbans) or Deny.`);
     } catch (e) { console.error(`[appeals] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'appeal-strike-setup') {
@@ -3348,7 +3348,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const { channel, created } = await strikeAppeals.setup(interaction.guild);
-      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. A struck member appeals their own strike with \`/appeal strike <strike>\` - it opens a private thread; staff Approve (removes it) or Deny.`);
+      return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. A struck member appeals their own strike with \`/appeal strike <strike>\`. It opens a private thread; staff Approve (removes it) or Deny.`);
     } catch (e) { console.error(`[strikeAppeals] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'appeal') {
@@ -3366,7 +3366,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     try {
       const r = await strikeAppeals.submit(interaction.guild, interaction.member, state, interaction.options.getString('strike_id'), interaction.options.getString('note'));
-      return interaction.editReply(r.ok ? `✅ Opened your strike appeal → <#${r.threadId}>. Explain your side there - staff will decide.` : `❌ ${r.msg}`);
+      return interaction.editReply(r.ok ? `✅ Opened your strike appeal → <#${r.threadId}>. Explain your side there. Staff will decide.` : `❌ ${r.msg}`);
     } catch (e) { console.error(`[strikeAppeals] ${e.message}`); return interaction.editReply('Could not open that appeal.').catch(() => {}); }
   }
   if (name === 'report-setup' || name === 'modmail-setup') {
@@ -3420,7 +3420,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name !== 'corner' && name !== 'uncorner') return;
   try {
     // Access is tied to the MOD ROLE (not a permission). Admins can always use it as an override. Trial
-    // mods may ALSO corner - but only regular members (the tier check below stops them cornering staff)
+    // mods may ALSO corner — but only regular members (the tier check below stops them cornering staff)
     // and under restrictions (rule + reason required, ≤1h), enforced in the corner block.
     const trial = isTrialMod(interaction);
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
@@ -3433,7 +3433,7 @@ client.on('interactionCreate', async (interaction) => {
     if (member.id === client.user.id) return interaction.reply({ content: 'I cannot corner myself.', flags: MessageFlags.Ephemeral });
 
     if (name === 'corner') {
-      // Tier hierarchy: you may corner your OWN staff tier or LOWER - never a higher tier. So equal
+      // Tier hierarchy: you may corner your OWN staff tier or LOWER — never a higher tier. So equal
       // tiers can corner each other (mod↔mod, admin↔admin), staff can corner regular members, but a mod
       // can't corner an admin. Ranks: owner > admin > mod > member. The guild owner is never cornerable
       // (and OWNER⚜️ sits above the bot's role, so the bot couldn't strip it regardless).
@@ -3456,12 +3456,12 @@ client.on('interactionCreate', async (interaction) => {
       // Reason: a picked rule and/or a custom typed reason. Show both when present.
       const ruleN = interaction.options.getString('rule');
       const customReason = interaction.options.getString('reason');
-      const reasonText = [ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}` : null, customReason].filter(Boolean).join(' - ') || null;
+      const reasonText = [ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}` : null, customReason].filter(Boolean).join(', ') || null;
       // Trial-mod restrictions: must give a rule OR a reason (same "not both required" convention as
       // /strike elsewhere), and the corner can't exceed 1 hour.
       if (trial) {
         if (!ruleN && !customReason) return interaction.reply({ content: 'As a **trial mod**, you must pick a **rule** or give a **reason** to corner someone.', flags: MessageFlags.Ephemeral });
-        if (!durationMs) return interaction.reply({ content: 'As a **trial mod**, you must set a **duration** - max **1 hour** (e.g. `30m`, `1h`).', flags: MessageFlags.Ephemeral });
+        if (!durationMs) return interaction.reply({ content: 'As a **trial mod**, you must set a **duration**, max **1 hour** (e.g. `30m`, `1h`).', flags: MessageFlags.Ephemeral });
         if (durationMs > 3600000) return interaction.reply({ content: 'As a **trial mod**, a corner can be **at most 1 hour**.', flags: MessageFlags.Ephemeral });
       }
       // Multi-corner: `also` lists extra members (mentions or IDs) → corner the whole set at once.
@@ -3474,7 +3474,7 @@ client.on('interactionCreate', async (interaction) => {
         const unknown = ids.filter(id => !extras.some(m => m.id === id));
         const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, [member, ...extras], durationMs, { ruleN, reasonText });
         const lines = [];
-        if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` - ${reasonText}` : ''}`);
+        if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` (${reasonText})` : ''}`);
         if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
         if (unknown.length) lines.push(`❓ Not found: ${unknown.map(id => `\`${id}\``).join(', ')}`);
         return interaction.editReply({ content: lines.join('\n') || 'Nobody to corner.', allowedMentions: { parse: [] } });
@@ -3495,7 +3495,7 @@ client.on('interactionCreate', async (interaction) => {
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
         desc: `<@${user.id}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${interaction.user.id}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
-      return interaction.editReply(`🚫 Sent ${user} to the corner ${modWhen}${reasonText ? ` - ${reasonText}` : ''}. Stripped **${r.stripped}** role(s).`);
+      return interaction.editReply(`🚫 Sent ${user} to the corner ${modWhen}${reasonText ? ` (${reasonText})` : ''}. Stripped **${r.stripped}** role(s).`);
     } else {
       const inCorner = interaction.channelId === config.cornerChannelId;
       const durStr = interaction.options.getString('duration');
@@ -3524,7 +3524,7 @@ client.on('interactionCreate', async (interaction) => {
         if (cornerCh) await cornerCh.send(cornerReleasedMessage(user.id));
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       await logCorner(guild, { emoji: '🔓', title: 'RELEASED', color: CORNER_GREEN,
-        desc: `<@${user.id}> was released - roles restored.\n**By:** <@${interaction.user.id}>${served}${missedRolesNote(r.missed)}` });
+        desc: `<@${user.id}> was released: roles restored.\n**By:** <@${interaction.user.id}>${served}${missedRolesNote(r.missed)}` });
       return interaction.editReply(`✅ Released ${user} from the corner. Restored **${r.restored}** role(s)${r.missed && r.missed.length ? ` · ⚠️ ${r.missed.length} couldn't be restored (see log)` : ''}${served}.`);
     }
   } catch (err) {

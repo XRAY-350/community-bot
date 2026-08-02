@@ -1,12 +1,12 @@
-// modapps.js - mod applications, two-sided:
-//   • APPLICANT side: a PRIVATE THREAD the applicant is added to - they view their application and talk
+// modapps.js — mod applications, two-sided:
+//   • APPLICANT side: a PRIVATE THREAD the applicant is added to — they view their application and talk
 //     to staff there (staff post to ask questions, they reply). They see only their own.
-//   • STAFF side: a post in the private, staff-only mod-applications FORUM - mods give an ANONYMOUS
+//   • STAFF side: a post in the private, staff-only mod-applications FORUM — mods give an ANONYMOUS
 //     👍/👎 (advisory; counts shown, never who voted), and admins/owners make the final Accept/Deny
 //     (no auto-decide). The advisory tally STARTS NEGATIVE based on the applicant's punishment record
-//     (−2 per strike · −3 if watchlisted · −1 if cornered - cornering barely counts since it's often
+//     (−2 per strike · −3 if watchlisted · −1 if cornered — cornering barely counts since it's often
 //     just a joke; watchlist + strikes are the real signals). Accept grants the Trial Mod role.
-//   • Private staff talk happens in #mod-discussion or the staff post - the applicant can't see either.
+//   • Private staff talk happens in #mod-discussion or the staff post — the applicant can't see either.
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField,
   MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
@@ -18,7 +18,7 @@ const ownerlog = require('./ownerlog');
 const CONFIG_FILE = process.env.FUBU_MODAPPS_FILE || '/home/ubuntu/.fubu_modapps.json';
 const STATE_FILE = process.env.FUBU_MODAPPS_STATE_FILE || '/home/ubuntu/.fubu_modapps_state.json';
 const P = PermissionsBitField.Flags;
-// A vote's weight is the voter's staff tier - an admin's 👍/👎 counts double a mod's, an owner's triple.
+// A vote's weight is the voter's staff tier — an admin's 👍/👎 counts double a mod's, an owner's triple.
 const VOTE_WEIGHT = { mod: 1, admin: 2, owner: 3 };
 // up/down entries are { id, w }; tolerate plain-ID strings from before weighted voting shipped (weight 1).
 const idOf = e => (typeof e === 'object' && e !== null) ? e.id : e;
@@ -81,7 +81,7 @@ async function setup(guild, config) {
       availableTags: TAGS.map(t => ({ name: t.name, moderated: true, emoji: { id: null, name: t.emoji } })),
       defaultAutoArchiveDuration: 10080, reason: 'Mod applications review forum',
     });
-    // Mods VOTE only (buttons); they must NOT be able to add/remove review-thread members - that's the
+    // Mods VOTE only (buttons); they must NOT be able to add/remove review-thread members — that's the
     // thread-membership leak vector (a mod hand-adds a non-mod, bypassing the channel view-deny). Deny
     // ManageThreads for the mod role here; admins/owners keep it, and the bot keeps it for auto-strip.
     if (opspanel.MOD_ROLE_ID) await forum.permissionOverwrites.edit(opspanel.MOD_ROLE_ID, { ManageThreads: false }, { reason: 'mods vote only; thread-member management is admin+' }).catch(() => {});
@@ -116,7 +116,7 @@ function buildModal(track = 'mod', lang = null) {
     new TextInputBuilder().setCustomId(q.id).setLabel(q.label).setStyle(q.style).setRequired(q.required).setMaxLength(q.max)));
   return m;
 }
-// Step 1 of applying: pick the POSITION (only shown when language mini-mods are configured - otherwise
+// Step 1 of applying: pick the POSITION (only shown when language mini-mods are configured — otherwise
 // /apply-mod goes straight to the mod modal). Moderator → mod modal; Language mini-mod → language picker.
 const positionRow = () => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_pos_mod').setEmoji('🛡️').setLabel('Moderator').setStyle(ButtonStyle.Primary),
@@ -127,7 +127,7 @@ function languageSelectRow() {
   return new ActionRowBuilder().addComponents(menu);
 }
 // Human label for a post's position (mod vs a specific language mini-mod).
-const positionLabel = (post) => post?.track === 'lang' ? `🌐 Language mini-mod - ${post.lang}` : '🛡️ Moderator';
+const positionLabel = (post) => post?.track === 'lang' ? `🌐 Language mini-mod: ${post.lang}` : '🛡️ Moderator';
 
 const voteRow = (up, down, done) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_up').setEmoji('👍').setLabel(String(up)).setStyle(ButtonStyle.Success).setDisabled(!!done),
@@ -135,10 +135,10 @@ const voteRow = (up, down, done) => new ActionRowBuilder().addComponents(
 const decideRow = (done) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_accept').setEmoji('✅').setLabel('Accept').setStyle(ButtonStyle.Secondary).setDisabled(!!done),
   new ButtonBuilder().setCustomId('modapp_deny').setEmoji('❌').setLabel('Deny').setStyle(ButtonStyle.Secondary).setDisabled(!!done));
-// Staff can message the applicant WITHOUT revealing who - relayed to their thread as the bot.
+// Staff can message the applicant WITHOUT revealing who — relayed to their thread as the bot.
 const askRow = (done) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_askanon').setEmoji('🕵️').setLabel('Ask anonymously').setStyle(ButtonStyle.Secondary).setDisabled(!!done));
-// Shown only on a RESOLVED post - a way back if a decision was a mistake (fat-finger accept, or a
+// Shown only on a RESOLVED post — a way back if a decision was a mistake (fat-finger accept, or a
 // reversal-on-reflection). Reverses the Trial Mod grant + reopens the application for a fresh decision.
 const undoRow = () => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_undo').setEmoji('↩️').setLabel('Undo decision').setStyle(ButtonStyle.Secondary));
@@ -155,7 +155,7 @@ function reviewEmbed(post, answers, resolution, byId) {
       { name: 'Why mod?', value: (answers.why || '-').slice(0, 1024) });
   if (answers.exp) e.addFields({ name: 'Experience', value: answers.exp.slice(0, 1024) });
   if (answers.extra) e.addFields({ name: 'Anything else', value: answers.extra.slice(0, 1024) });
-  e.addFields({ name: '💬 Applicant thread', value: post.appThreadId ? `<#${post.appThreadId}> - jump here to message them (opens only for staff)` : '-', inline: false });
+  e.addFields({ name: '💬 Applicant thread', value: post.appThreadId ? `<#${post.appThreadId}> · jump here to message them (opens only for staff)` : '-', inline: false });
   e.addFields(
     { name: 'Record', value: `${post.recordReason} → starts at **${post.startPoints}**`, inline: true },
     { name: 'Mod tally (anon)', value: `👍 ${post.up?.length || 0} · 👎 ${post.down?.length || 0} voter(s) · **weighted = ${tally}**`, inline: true });
@@ -221,7 +221,7 @@ async function vote(interaction, dir) {
   if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
   if (post.status !== 'open') return interaction.reply({ content: copy.modapps.votingClosed, flags: MessageFlags.Ephemeral });
   const uid = interaction.user.id;
-  // Weight is locked in at the moment you vote (your tier right now) - a later promotion/demotion doesn't
+  // Weight is locked in at the moment you vote (your tier right now) — a later promotion/demotion doesn't
   // retroactively reweigh a vote you already cast; vote again if you want it to count at your new tier.
   const tier = opspanel.memberTier(interaction.member);
   const w = VOTE_WEIGHT[tier] || 1;
@@ -231,10 +231,10 @@ async function vote(interaction, dir) {
   if (!wasInDir) (dir === 'up' ? up : down).push({ id: uid, w });
   post.up = up; post.down = down; saveState(state);
   const answers = answersFromEmbed(interaction.message.embeds[0]);
-  // ephemeral personal ack (so THEY know their vote registered) - but the post shows only counts, anonymously
+  // ephemeral personal ack (so THEY know their vote registered) — but the post shows only counts, anonymously
   await interaction.update({ embeds: [reviewEmbed(post, answers)], components: reviewComponents(post, false) });
   const ack = wasInDir ? `Your ${dir === 'up' ? '👍' : '👎'} was removed.`
-    : `Your ${dir === 'up' ? '👍' : '👎'} is counted (anonymous) - as **${tier || 'staff'}**, it's worth **${w}**.`;
+    : `Your ${dir === 'up' ? '👍' : '👎'} is counted (anonymous). As **${tier || 'staff'}**, it's worth **${w}**.`;
   return interaction.followUp({ content: ack, flags: MessageFlags.Ephemeral }).catch(() => {});
 }
 
@@ -260,14 +260,14 @@ async function resolve(interaction, accepted, config) {
   if (appThread) {
     await appThread.send(accepted
       ? `🎉 Your application was **accepted**!${roleGiven ? ` You’ve been given the **${grantLabel}** role. 🌱` : ''} Staff will guide you from here.`
-      : `Thanks for applying - your application wasn’t accepted this time. You’re welcome to apply again later. 💛`).catch(() => {});
+      : `Thanks for applying. Your application wasn’t accepted this time. You’re welcome to apply again later. 💛`).catch(() => {});
     await appThread.setArchived(true).catch(() => {});
   }
   const review = await interaction.guild.channels.fetch(interaction.channelId).catch(() => null);
   if (review) { await review.setAppliedTags([accepted ? c.tags.accepted : c.tags.denied].filter(Boolean)).catch(() => {}); await review.setLocked(true).catch(() => {}); await review.setArchived(true).catch(() => {}); }
   await ownerlog.log(interaction.guild, { emoji: accepted ? '✅' : '❌', title: `Mod application ${accepted ? 'accepted' : 'denied'}`, color: accepted ? 0x57F287 : 0xED4245,
-    detail: `<@${post.applicantId}> - ${positionLabel(post)}${accepted && roleGiven ? ` (granted ${grantLabel})` : ''} - by <@${interaction.user.id}>.` });
-  return interaction.followUp({ content: accepted ? (roleGiven ? `✅ Accepted - gave <@${post.applicantId}> the **${grantLabel}** role.` : `✅ Accepted (couldn’t assign the **${grantLabel}** role - check role hierarchy).`) : `❌ Denied. Applicant was notified in their thread.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    detail: `<@${post.applicantId}> — ${positionLabel(post)}${accepted && roleGiven ? ` (granted ${grantLabel})` : ''} — by <@${interaction.user.id}>.` });
+  return interaction.followUp({ content: accepted ? (roleGiven ? `✅ Accepted. Gave <@${post.applicantId}> the **${grantLabel}** role.` : `✅ Accepted (couldn’t assign the **${grantLabel}** role, check role hierarchy).`) : `❌ Denied. Applicant was notified in their thread.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
 }
 
 function applicantEmbed(answers) {
@@ -317,7 +317,7 @@ async function askAnonModal(interaction) {
   if (!post.appThreadId) return interaction.reply({ content: copy.modapps.noThread, flags: MessageFlags.Ephemeral });
   const m = new ModalBuilder().setCustomId(`modapp_ask:${post.appThreadId}`).setTitle('Ask the applicant (anonymous)');
   m.addComponents(new ActionRowBuilder().addComponents(
-    new TextInputBuilder().setCustomId('q').setLabel('Question - sent without your name').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
+    new TextInputBuilder().setCustomId('q').setLabel('Question (sent without your name)').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
   return interaction.showModal(m);
 }
 async function handleAskModal(interaction) {
@@ -361,11 +361,11 @@ async function undo(interaction, config) {
   const appThread = post.appThreadId ? await interaction.guild.channels.fetch(post.appThreadId).catch(() => null) : null;
   if (appThread) {
     await appThread.setArchived(false).catch(() => {});
-    await appThread.send('↩️ Quick update - your application has been reopened for another look. Hang tight; staff will follow up here. 🌱').catch(() => {});
+    await appThread.send('↩️ Quick update: your application has been reopened for another look. Hang tight; staff will follow up here. 🌱').catch(() => {});
   }
   await ownerlog.log(interaction.guild, { emoji: '↩️', title: 'Mod application decision undone', color: 0xF1C40F,
-    detail: `<@${post.applicantId}> - was ${wasAccepted ? 'accepted' : 'denied'}, reopened${roleRemoved ? ` (removed ${grantLabel})` : ''} - by <@${interaction.user.id}>.` });
-  return interaction.followUp({ content: `↩️ Reopened the application${wasAccepted ? (roleRemoved ? ` and removed the **${grantLabel}** role` : ` (⚠️ couldn’t remove **${grantLabel}** - check the role/hierarchy)`) : ''}. It’s back to **open** for a fresh decision.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
+    detail: `<@${post.applicantId}> — was ${wasAccepted ? 'accepted' : 'denied'}, reopened${roleRemoved ? ` (removed ${grantLabel})` : ''} — by <@${interaction.user.id}>.` });
+  return interaction.followUp({ content: `↩️ Reopened the application${wasAccepted ? (roleRemoved ? ` and removed the **${grantLabel}** role` : ` (⚠️ couldn’t remove **${grantLabel}**, check the role/hierarchy)`) : ''}. It’s back to **open** for a fresh decision.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
 async function handleButton(interaction, config) {
@@ -378,7 +378,7 @@ async function handleButton(interaction, config) {
   if (id === 'modapp_undo') return undo(interaction, config);
   // applicant-facing position picker (not staff-gated in index.js): Moderator → mod modal; Language
   // mini-mod → show the language dropdown.
-  // Re-check the closed gate here too - a stale position picker (opened while apps were open, clicked after
+  // Re-check the closed gate here too — a stale position picker (opened while apps were open, clicked after
   // they closed) shouldn't reach the form. Turn them away up front instead of after they've typed it all.
   if (id === 'modapp_pos_mod') {
     if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
@@ -396,7 +396,7 @@ async function handlePositionSelect(interaction) {
 }
 
 // One-time self-heal (idempotent, safe to run every boot): votes cast before weighted voting shipped
-// are plain ID strings (weight 1 by the idOf/weightOf tolerance above) - upgrade them to {id, w} using
+// are plain ID strings (weight 1 by the idOf/weightOf tolerance above) — upgrade them to {id, w} using
 // each voter's CURRENT tier, so a vote already cast (e.g. an owner's, before this shipped) gets the
 // weight it should've had, without making anyone re-click. Re-renders any post it actually changed.
 async function upgradeLegacyVotes(guild) {
@@ -426,22 +426,22 @@ async function upgradeLegacyVotes(guild) {
 }
 
 // Enforce mod+-only membership on a review-forum thread: Discord lets ANY member with Manage Threads
-// (i.e. any mod+) manually add someone to a specific thread - and that grant works even for someone whose
+// (i.e. any mod+) manually add someone to a specific thread — and that grant works even for someone whose
 // CHANNEL-level permission is explicitly denied (thread membership bypasses the parent's ViewChannel deny).
 // So a channel/category lockout alone can't stop a mod from hand-adding a trial mod to one review thread to
-// ask their opinion - which is exactly how a real leak happened (found 2026-07-30: a trial mod was added to
+// ask their opinion — which is exactly how a real leak happened (found 2026-07-30: a trial mod was added to
 // a specific application's review thread and could see + post there). This removes anyone below mod+ the
 // moment they're found in a review thread, regardless of how they got there. Returns the list removed.
 // Fetch a member, RETRYING transient failures (rate limits / network) so a sweep never silently SKIPS a
-// leaker just because one fetch got 429'd - that bug let two demoted mods linger in every review thread
+// leaker just because one fetch got 429'd — that bug let two demoted mods linger in every review thread
 // (2026-08-01). Returns {member} on success, {gone:true} on a real Unknown Member (they left), or
-// {unknown:true} if we still couldn't tell after retries - on which the caller must SKIP, never remove.
+// {unknown:true} if we still couldn't tell after retries — on which the caller must SKIP, never remove.
 async function fetchMemberResilient(guild, userId, tries = 4) {
   for (let i = 0; i < tries; i++) {
     try { return { member: await guild.members.fetch(userId) }; }
     catch (e) {
-      if (e?.code === 10007) return { gone: true };            // Unknown Member - genuinely left the guild
-      if (i === tries - 1) return { unknown: true };           // transient (rate limit / network) - give up
+      if (e?.code === 10007) return { gone: true };            // Unknown Member — genuinely left the guild
+      if (i === tries - 1) return { unknown: true };           // transient (rate limit / network) — give up
       await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     }
   }
@@ -455,15 +455,15 @@ async function enforceReviewThreadMembers(guild, thread) {
     const userId = m.id;
     if (userId === guild.client.user.id) continue;
     const r = await fetchMemberResilient(guild, userId);
-    if (r.unknown) continue;                                   // couldn't verify - never remove on uncertainty
-    if (r.member && opspanel.memberTier(r.member)) continue;   // legitimately mod+ - belongs here
+    if (r.unknown) continue;                                   // couldn't verify — never remove on uncertainty
+    if (r.member && opspanel.memberTier(r.member)) continue;   // legitimately mod+ — belongs here
     await thread.members.remove(userId).catch(() => {});       // non-staff, or left the guild → strip
     if (r.member) removed.push(r.member);
   }
   return removed;
 }
 // Applicant PRIVATE threads (in the apps channel) should hold ONLY the applicant + staff. Same
-// thread-membership-bypass risk as review threads, but the applicant themselves legitimately belongs - so
+// thread-membership-bypass risk as review threads, but the applicant themselves legitimately belongs — so
 // strip anyone who is neither staff NOR this thread's applicant. If we can't identify the applicant (state
 // lost), we SKIP rather than risk removing the legit applicant.
 async function enforceApplicantThreadMembers(guild, thread) {
@@ -484,7 +484,7 @@ async function enforceApplicantThreadMembers(guild, thread) {
   }
   return removed;
 }
-// When someone drops below mod+ (demoted), Discord KEEPS their existing review-thread memberships - an
+// When someone drops below mod+ (demoted), Discord KEEPS their existing review-thread memberships — an
 // ex-mod would still see staff deliberations. Sweep this specific user out of every review thread on the
 // demotion event (the guildMemberUpdate handler already confirmed they're now non-staff). Returns count.
 async function removeDemotedFromReviewThreads(guild, userId) {
@@ -502,7 +502,7 @@ async function removeDemotedFromReviewThreads(guild, userId) {
   }
   return removed;
 }
-// Sweep every review thread (active + archived) in the forum on boot - catches anything added while the
+// Sweep every review thread (active + archived) in the forum on boot — catches anything added while the
 // bot was offline, or before this enforcement existed. Returns the total removed.
 async function sweepReviewThreadMembers(guild) {
   const c = loadConfig();
@@ -521,7 +521,7 @@ async function sweepReviewThreadMembers(guild) {
 // thread (it's private, only the applicant is added), so their replies notify nobody. Mirror each reply
 // onto the STAFF review post so the whole two-sided conversation lives in one anonymous place, and ping
 // the mod role so staff actually get notified. Ping is debounced (RELAY_PING_MS) so a chatty applicant
-// firing off several lines pings once, not once per line - every line still mirrors.
+// firing off several lines pings once, not once per line — every line still mirrors.
 const RELAY_PING_MS = 90 * 1000;
 async function relayApplicantReply(msg, config) {
   const ch = msg.channel;
@@ -556,7 +556,7 @@ async function relayApplicantReply(msg, config) {
 
 // Owner-only archive channel: created once, cached in the modapps config (same file/pattern as
 // forumId/appsChannelId). @everyone AND MODS/ADMINS explicitly denied (they'd otherwise inherit view from
-// the mod-activities category) - only the OWNER roles can see it. This is where a mod+'s own application
+// the mod-activities category) — only the OWNER roles can see it. This is where a mod+'s own application
 // is moved (see archiveOwnApplication) once they can browse the whole forum and would otherwise find it.
 async function ensureArchiveChannel(guild) {
   let c = loadConfig();
@@ -577,11 +577,11 @@ async function ensureArchiveChannel(guild) {
   return channel;
 }
 
-// A mod+ can browse the ENTIRE review forum (that's the job) - so unlike a trial mod (blocked from the
+// A mod+ can browse the ENTIRE review forum (that's the job) — so unlike a trial mod (blocked from the
 // forum outright), removing them from their own applicant thread isn't enough; they'd still find their own
 // review post just by scrolling the forum. So instead: post a static archived copy to the owner-only
 // archive channel, then DELETE both the review post and the applicant thread from the forum/apps channel.
-// History is kept (the archive), but nobody below owner - including the person themselves - can browse to
+// History is kept (the archive), but nobody below owner — including the person themselves — can browse to
 // it anymore. Idempotent (posts are removed from state as they're archived). Returns count archived.
 async function archiveOwnApplication(guild, memberId) {
   const state = loadState();
@@ -607,8 +607,8 @@ async function archiveOwnApplication(guild, memberId) {
 }
 
 // Trial-mod-only fix: a trial mod can't see the review forum at all (category-gated), so their only handle
-// on their own application is the private applicant thread they're a member of - remove their membership
-// (thread + review post stay for staff). Idempotent. NOT sufficient for mod+ - see archiveOwnApplication.
+// on their own application is the private applicant thread they're a member of — remove their membership
+// (thread + review post stay for staff). Idempotent. NOT sufficient for mod+ — see archiveOwnApplication.
 async function sealOwnApplication(guild, memberId) {
   const state = loadState();
   const mine = Object.values(state.posts).filter(p => p.applicantId === memberId && p.appThreadId);

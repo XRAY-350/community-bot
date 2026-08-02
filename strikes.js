@@ -1,6 +1,6 @@
-// strikes.js - weighted, cumulative strike ledger. Replaces the old flat role-ladder: a strike now
+// strikes.js — weighted, cumulative strike ledger. Replaces the old flat role-ladder: a strike now
 // carries a weight (1-3 units, staff-chosen), strikes never expire on their own, and total units
-// (not a role position) is the record. Ban threshold is 10 cumulative units - this module NEVER
+// (not a role position) is the record. Ban threshold is 10 cumulative units — this module NEVER
 // auto-bans; it only reports whether the threshold was crossed so the caller can surface a staff
 // Confirm button (this bot has never auto-banned anywhere; that stays true here too).
 const crypto = require('crypto');
@@ -10,11 +10,11 @@ const rules = require('./rules');
 const BAN_THRESHOLD = 10;
 // A timeout adds bonus units LINEAR with its length (1h = 1 unit, 30m = 0.5), capped at 2 units so a
 // multi-day timeout doesn't dwarf the whole 10-unit ban scale (owner-decided 2026-07-30). Totals can now
-// be fractional (e.g. 2.5) - tierRole/tierName floor them, since a role tier only fully applies once you
+// be fractional (e.g. 2.5) — tierRole/tierName floor them, since a role tier only fully applies once you
 // cross the whole unit (matches the ban check itself, which is an exact >=10, never rounded early).
 const TIMEOUT_BONUS_CAP = 2;
 function timeoutBonusUnits(timeoutMs) { return timeoutMs ? Math.min(timeoutMs / 3600000, TIMEOUT_BONUS_CAP) : 0; }
-// Clean display for a possibly-fractional unit count - "2", "2.5", never "2.500000000004".
+// Clean display for a possibly-fractional unit count — "2", "2.5", never "2.500000000004".
 function formatUnits(n) { return Number.isInteger(n) ? String(n) : (Math.round(n * 100) / 100).toString(); }
 
 // Visible tier roles: ONE role per unit total (Strike 1..9), a smooth green→red gradient. A member's role
@@ -34,7 +34,7 @@ function tierName(totalUnits) {
 function ledger(state, memberId) { return (state.getMeta('strikes') || {})[memberId] || []; }
 function activeEntries(state, memberId) { return ledger(state, memberId).filter(e => e.active); }
 
-// Human-readable label for one strike entry - "Rule 5: Respect Everyone - 2 units - 3d ago" (or the
+// Human-readable label for one strike entry — "Rule 5: Respect Everyone — 2 units — 3d ago" (or the
 // custom reason if no rule was picked). Used everywhere a person needs to pick a strike WITHOUT already
 // knowing its raw ID: staff /strike remove autocomplete, the dashboard's strike picker, and (once built)
 // the member-facing /appeal strike autocomplete.
@@ -44,11 +44,11 @@ function entryLabel(entry) {
   const ageStr = days > 0 ? `${days}d ago` : `${Math.max(1, Math.floor(ageMs / 3600000))}h ago`;
   const ruleTitle = entry.ruleIndex ? rules.byIndex(Number(entry.ruleIndex))?.title : null;
   const what = ruleTitle ? `Rule ${entry.ruleIndex}: ${ruleTitle}` : (entry.reason ? entry.reason.slice(0, 60) : 'No reason given');
-  return `${what} - ${formatUnits(entry.weight)} unit${entry.weight === 1 ? '' : 's'} - ${ageStr}`;
+  return `${what} · ${formatUnits(entry.weight)} unit${entry.weight === 1 ? '' : 's'} · ${ageStr}`;
 }
-// Autocomplete choices for a member's active strikes - { name, value } pairs, Discord's 25-choice cap
+// Autocomplete choices for a member's active strikes — { name, value } pairs, Discord's 25-choice cap
 // applied, newest first. excludeCrossedBan drops the strike that pushed them over the ban threshold
-// (not appeal-eligible - used by /appeal strike; staff's /strike remove doesn't need that exclusion).
+// (not appeal-eligible — used by /appeal strike; staff's /strike remove doesn't need that exclusion).
 function autocompleteChoices(state, memberId, { excludeCrossedBan = false, query = '' } = {}) {
   const q = query.toLowerCase();
   return activeEntries(state, memberId)
@@ -60,7 +60,7 @@ function autocompleteChoices(state, memberId, { excludeCrossedBan = false, query
 }
 function totalUnits(state, memberId) { return activeEntries(state, memberId).reduce((s, e) => s + e.weight, 0); }
 
-// Every member with at least one active strike - for a dashboard roster page (mirrors listCornered()'s
+// Every member with at least one active strike — for a dashboard roster page (mirrors listCornered()'s
 // role in the Corner page: list everyone, click one to act, no need to already know who to look up).
 function activeMembers(state) {
   const all = state.getMeta('strikes') || {};
@@ -77,7 +77,7 @@ function saveLedger(state, memberId, entries) {
 }
 
 // Swap the member's visible tier role to match their current total, if it doesn't already match.
-// Handles both directions - escalation (new strike) and de-escalation (appeal removal / clear).
+// Handles both directions — escalation (new strike) and de-escalation (appeal removal / clear).
 async function recomputeTier(guild, member, state, byTag) {
   const ids = (config.strikeRoleIds || []).filter(Boolean);
   const target = tierRole(totalUnits(state, member.id));
@@ -92,12 +92,12 @@ async function recomputeTier(guild, member, state, byTag) {
 async function addStrike(guild, member, state, { weight, ruleIndex, reason, timeoutMs, byId, byTag }) {
   const entries = ledger(state, member.id);
   const totalBefore = totalUnits(state, member.id);
-  // A timeout adds bonus units ON TOP of the base weight - linear with length, capped (see
+  // A timeout adds bonus units ON TOP of the base weight — linear with length, capped (see
   // timeoutBonusUnits): 30m=+0.5, 1h=+1, 2h+=+2 max. This is the ONE place that combines them, so every
   // caller (slash command, modal, dashboard quick-strike) gets it automatically.
   const effectiveWeight = weight + timeoutBonusUnits(timeoutMs);
-  // Persisted (not just returned) so eligibility checks - e.g. "the strike that crossed the ban
-  // threshold isn't appealable" - stay correct later, regardless of subsequent strikes/removals
+  // Persisted (not just returned) so eligibility checks — e.g. "the strike that crossed the ban
+  // threshold isn't appealable" — stay correct later, regardless of subsequent strikes/removals
   // shifting the running total.
   const crossedBan = (totalBefore + effectiveWeight) >= BAN_THRESHOLD;
   const entry = {
@@ -113,7 +113,7 @@ async function addStrike(guild, member, state, { weight, ruleIndex, reason, time
   return { id: entry.id, weight: effectiveWeight, totalUnits: total, tier: tierName(total), crossedBan };
 }
 
-// Deactivate ONE specific strike by id (the appeal-removal primitive - the guided appeal workflow
+// Deactivate ONE specific strike by id (the appeal-removal primitive — the guided appeal workflow
 // itself, thread + review + buttons, is separate future work). Returns { ok, totalUnits, tier }.
 async function removeStrike(guild, member, state, strikeId, byTag) {
   const entries = ledger(state, member.id);
@@ -126,7 +126,7 @@ async function removeStrike(guild, member, state, strikeId, byTag) {
   return { ok: true, totalUnits: total, tier: tierName(total) };
 }
 
-// Change ONE active strike's weight (units) - the "partial appeal / re-weigh" primitive. newWeight <= 0
+// Change ONE active strike's weight (units) — the "partial appeal / re-weigh" primitive. newWeight <= 0
 // deactivates it (same effect as removeStrike). Otherwise the weight is updated and the tier role recomputed.
 // Returns { ok, oldWeight, newWeight, removed, totalUnits, tier }.
 async function setStrikeWeight(guild, member, state, strikeId, newWeight, byTag) {
@@ -154,7 +154,7 @@ async function clearStrikes(guild, member, state, byTag) {
 
 // One-time boot self-heal: a member holding a Strike I/II/III role today (the old flat-ladder system)
 // but with NO ledger entries yet gets seeded with one legacy entry at that role's position as weight
-// (I=1, II=2, III=3) - so switching to weighted units doesn't erase anyone's standing or hand out a
+// (I=1, II=2, III=3) — so switching to weighted units doesn't erase anyone's standing or hand out a
 // free reset. Idempotent: a member who already has ledger entries is skipped. Returns the count seeded.
 async function migrateLegacyStrikes(guild, state) {
   const ids = (config.strikeRoleIds || []).filter(Boolean);

@@ -1,4 +1,4 @@
-// wordfilter.js - temporary "auto-delete any message containing this word" filters. A staffer arms a
+// wordfilter.js — temporary "auto-delete any message containing this word" filters. A staffer arms a
 // word/phrase for a duration (or indefinitely); every NEW non-staff message that matches is deleted on
 // the spot until the timer runs out. State lives in the shared state store under meta key 'wordFilters':
 // an array of { word, byId, at, expiresAt, count }. Matching reuses the watchlist's normalized,

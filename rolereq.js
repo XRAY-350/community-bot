@@ -1,6 +1,6 @@
-// rolereq.js - casual role requests. A member runs /request-role, picks a role, and it goes to a
+// rolereq.js — casual role requests. A member runs /request-role, picks a role, and it goes to a
 // staff-only channel where anyone mod+ can Approve (assigns it) or Deny. Only SAFE/casual roles are
-// requestable - never staff/important roles. A role is refused if it: is @everyone, is a bot/integration
+// requestable — never staff/important roles. A role is refused if it: is @everyone, is a bot/integration
 // (managed) role, sits at/above the bot (unassignable), carries ANY power permission, or is a known
 // system/staff role (mod/admin/owner/trial/verified/unverified/corner/watchlist/strike).
 const fs = require('fs');
@@ -29,9 +29,9 @@ function systemRoleIds(config) {
 function whyNotRequestable(role, guild, me, config) {
   if (role.id === guild.id) return 'that’s @everyone';
   if (role.managed) return 'that’s a bot/integration role';
-  if (role.position >= me.roles.highest.position) return 'that role is above me - I can’t assign it';
-  if (POWER.some(p => role.permissions.has(p))) return 'that’s a staff/permission role - not requestable';
-  if (systemRoleIds(config).has(role.id)) return 'that’s a staff/system role - not requestable';
+  if (role.position >= me.roles.highest.position) return 'that role is above me, I can’t assign it';
+  if (POWER.some(p => role.permissions.has(p))) return 'that’s a staff/permission role, not requestable';
+  if (systemRoleIds(config).has(role.id)) return 'that’s a staff/system role, not requestable';
   return null;
 }
 
@@ -75,7 +75,7 @@ async function submit(guild, member, role, config, removing = false) {
   return { ok: true, role: role.name };
 }
 
-// Approve/deny - gated to staff (mods+) in index.js.
+// Approve/deny — gated to staff (mods+) in index.js.
 async function handleButton(interaction) {
   const [action, userId, roleId, act] = interaction.customId.split(':');
   const removing = act === 'remove';

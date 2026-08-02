@@ -1,4 +1,4 @@
-// opspanel.js - pinned, TIER-GATED ops dashboard for the FUBU bot, in the mod-only dashboard channel.
+// opspanel.js — pinned, TIER-GATED ops dashboard for the FUBU bot, in the mod-only dashboard channel.
 // One pinned message, edited in place, nav via a select menu. TIERS (owner ⊇ admin ⊇ mod) gate actions:
 // the pinned panel shows everything, but each action re-checks the clicker's tier and refuses if they
 // don't meet it. Deps (state/corner/sweep/config/…) are injected by index.js via wire() so the panel
@@ -22,10 +22,10 @@ const OWNER_ROLE_IDS = (process.env.FUBU_OWNER_ROLE_IDS ||
 const ADMIN_ROLE_ID = process.env.FUBU_ADMIN_ROLE_ID || '1516179051105226833';
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1528316361665675316';
 // The single VISIBLE OWNER⚜️ role (what members actually see/reference in-server; also in config.identifyingRoleIds,
-// kept when cornering). Owner-tier MEMBERSHIP is still keyed off the 4 personal-admin roles + guild owner above -
+// kept when cornering). Owner-tier MEMBERSHIP is still keyed off the 4 personal-admin roles + guild owner above —
 // this is purely the role to DISPLAY for the owner tier (e.g. the /staff header), so it resolves + carries its colour.
 const OWNER_DISPLAY_ROLE_ID = process.env.FUBU_OWNER_DISPLAY_ROLE_ID || '1527430885287264438';
-// The BOT owner - the single supreme authority (distinct from the Discord SERVER owner and from the OWNER
+// The BOT owner — the single supreme authority (distinct from the Discord SERVER owner and from the OWNER
 // role). Ranks above everyone: passes every gate ("no command the bot owner can't run") and can hold
 // commands NOBODY else can run. Structural, not role-dependent.
 const BOT_OWNER_ID = process.env.FUBU_BOT_OWNER_ID || '865843812907089940';
@@ -34,22 +34,22 @@ const meets = (tier, needed) => (RANK[tier] || 0) >= (RANK[needed] || 99);
 // True for the bot owner ONLY. Accepts an interaction (.user.id) or a member (.id).
 function isBotOwner(x) { const id = x && (x.user ? x.user.id : x.id); return !!id && id === BOT_OWNER_ID; }
 
-// ROLE-ONLY tier (no Administrator-permission fallback) - used for the watchlist gates, staff detection,
+// ROLE-ONLY tier (no Administrator-permission fallback) — used for the watchlist gates, staff detection,
 // AND who-can-be-cornered TARGETING. Deliberately role-based: the bot owner is NOT special here, so they
-// are treated as their role tier and remain cornerable/targetable (their COMMAND authority is separate -
+// are treated as their role tier and remain cornerable/targetable (their COMMAND authority is separate —
 // see isBotOwner/tierOf). server owner + OWNER role both sit at 'owner'.
 function memberTier(member) {
   const roles = member && member.roles && member.roles.cache;
   if (!roles) return null;
   // OWNER tier is a SAFEGUARD: the OWNER role AND the Administrator permission must BOTH be true (a partial
-  // owner - one without the other - is not recognized). The Discord SERVER owner is always owner regardless.
+  // owner — one without the other — is not recognized). The Discord SERVER owner is always owner regardless.
   const ownerCombo = OWNER_ROLE_IDS.some(id => roles.has(id)) && !!(member.permissions && member.permissions.has(PermissionsBitField.Flags.Administrator));
   if ((member.guild && member.id === member.guild.ownerId) || ownerCombo) return 'owner';
   if (roles.has(ADMIN_ROLE_ID)) return 'admin';
   if (roles.has(MOD_ROLE_ID)) return 'mod';
   return null;
 }
-// ACTOR authority tier - who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server
+// ACTOR authority tier — who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server
 // owner < bot owner. The bot owner is supreme BY USER ID (role-independent → keeps access even role-stripped).
 // OWNER tier requires BOTH the OWNER role AND the Administrator permission (safeguard; see memberTier).
 // Note "admin" = the ADMINS-★ role, NOT the Administrator permission.
@@ -64,23 +64,23 @@ const PAGES = [
   { emoji: '📊', name: 'Overview', tier: 'mod', blurb: 'status at a glance' },
   { emoji: '🛡️', name: 'Moderation', tier: 'mod', blurb: 'corner · verify · release a member' },
   { emoji: '⛓️', name: 'Corner', tier: 'mod', blurb: "who's timed-out + release them" },
-  { emoji: '⚠️', name: 'Strikes', tier: 'mod', blurb: 'everyone with active strikes - click to remove one' },
+  { emoji: '⚠️', name: 'Strikes', tier: 'mod', blurb: 'everyone with active strikes, click to remove one' },
   { emoji: '⚖️', name: 'Conflicts', tier: 'mod', blurb: 'fix members who have both roles' },
   { emoji: '🔒', name: 'Anon Tools', tier: 'mod', blurb: 'confessions · reports · modmail · whistleblow · suggestions' },
-  { emoji: '👁️', name: 'Watchlist', tier: 'admin', blurb: 'unban · watchlist · flagged terms - needs Admin' },
-  { emoji: '🔨', name: 'Actions', tier: 'admin', blurb: 'run the bot now · ban - needs Admin' },
-  { emoji: '🏅', name: 'Promotions', tier: 'admin', blurb: 'open promotion votes - trial→mod / mod→admin (multi-select)' },
-  { emoji: '⚙️', name: 'Settings', tier: 'admin', blurb: 'turn helpers on/off - needs Admin' },
-  { emoji: '⚠️', name: 'Danger', tier: 'owner', blurb: 'removal policy - needs Owner' },
+  { emoji: '👁️', name: 'Watchlist', tier: 'admin', blurb: 'unban · watchlist · flagged terms (needs Admin)' },
+  { emoji: '🔨', name: 'Actions', tier: 'admin', blurb: 'run the bot now · ban (needs Admin)' },
+  { emoji: '🏅', name: 'Promotions', tier: 'admin', blurb: 'open promotion votes: trial→mod / mod→admin (multi-select)' },
+  { emoji: '⚙️', name: 'Settings', tier: 'admin', blurb: 'turn helpers on/off (needs Admin)' },
+  { emoji: '⚠️', name: 'Danger', tier: 'owner', blurb: 'removal policy (needs Owner)' },
 ];
 const pageIdx = (name) => PAGES.findIndex(p => p.name === name);   // reorder-safe page lookup
 const watchlist = require('./watchlist');
 const features = require('./features');
 
-// Instant-ban reason categories - used to write the ban's audit-log reason AND (in appeals.js) to
+// Instant-ban reason categories — used to write the ban's audit-log reason AND (in appeals.js) to
 // recognize which bans the "more limited" ban-appeal path must refuse outright.
 const CATEGORY_LABEL = { false_verification: 'False verification / not eligible', verification_bypass: 'Verification bypass / misrepresenting identity', ban_evasion: 'Ban evasion (alt account)', grooming: 'Confirmed grooming of a minor', other: 'Other' };
-// Per-category emoji for the ban-reason select - keyed by the same values as CATEGORY_LABEL so the dropdown
+// Per-category emoji for the ban-reason select — keyed by the same values as CATEGORY_LABEL so the dropdown
 // derives its labels from that single const (change a label there → the select updates too).
 const CATEGORY_EMOJI = { false_verification: '🚫', verification_bypass: '🎭', ban_evasion: '👤', grooming: '⚠️', other: '❓' };
 
@@ -112,7 +112,7 @@ function corneredMap() { try { return D.state.listCornered() || {}; } catch { re
 
 // A member's label for a dashboard ROSTER line that sits next to a per-member button. Every such button is
 // labelled `…${id.slice(-4)}` (Discord button labels can't be mentions), so pair this with `memberTag(id)` and
-// the two line up - you can tell which "Manage …8228" button belongs to whom. Uses the bot's cached display
+// the two line up — you can tell which "Manage …8228" button belongs to whom. Uses the bot's cached display
 // name (markdown-sanitised) so it renders even where an embed mention would show a raw <@id> for uncached
 // members; falls back to a clickable mention when the name isn't cached.
 function memberLabel(id) {
@@ -128,7 +128,7 @@ const memberTag = id => `\`…${String(id).slice(-4)}\``;   // matches the per-m
 function navRow(page) {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId('fops_nav')
-      .setPlaceholder(`${PAGES[page].emoji} ${PAGES[page].name} - jump to a page…`)
+      .setPlaceholder(`${PAGES[page].emoji} ${PAGES[page].name} · jump to a page…`)
       .addOptions(PAGES.map((p, i) => ({
         label: p.name, value: String(i), emoji: p.emoji, default: i === page,
         description: p.blurb.slice(0, 100),
@@ -149,7 +149,7 @@ function navRowPersonal(page, tier) {
     .map(({ p, i }) => ({ label: p.name, value: String(i), emoji: p.emoji, default: i === page, description: p.blurb.slice(0, 100) }));
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId('fops_pnav')
-      .setPlaceholder(`${PAGES[page].emoji} ${PAGES[page].name} - jump to a page…`).addOptions(opts));
+      .setPlaceholder(`${PAGES[page].emoji} ${PAGES[page].name} · jump to a page…`).addOptions(opts));
 }
 // Render a page for the personal panel: same content as the shared pages, but with the tier-filtered
 // nav swapped in (it's always the last component) and marked ephemeral.
@@ -165,21 +165,21 @@ async function openPersonalPanel(interaction) {
   if (!tier) return interaction.reply({ content: 'This panel is for the mod team.', flags: MessageFlags.Ephemeral });
   return interaction.reply(await buildPersonal(0, tier));
 }
-// Read-only dashboard for trial mods: the live Overview status, with NO action components - genuinely
+// Read-only dashboard for trial mods: the live Overview status, with NO action components — genuinely
 // look-but-don't-touch (they can't act, because there are no buttons/menus to act with). Routed from
 // /panel in index.js when the caller is a trial mod but not mod+.
 async function openReadOnly(interaction) {
   const p = await buildOverview();
-  const cmds = new EmbedBuilder().setColor(0x1abc9c).setTitle('🔰 Trial Mod - what you can do')
+  const cmds = new EmbedBuilder().setColor(0x1abc9c).setTitle('🔰 Trial Mod: what you can do')
     .setDescription(
-      '`/verify @member` - verify a waiting member (or hit the ✅ **Verify** button in their thread)\n' +
-      '`/pending` - flip through everyone waiting to be verified\n' +
-      '`/corner @member` - time a member out - **you must pick a rule OR give a reason, max 1 hour**\n' +
-      '`/uncorner @member` - release someone from the corner\n' +
-      '`/panel` - open this read-only dashboard\n\n' +
-      '_You’ll get pinged when someone needs verifying. Ban / strike / watchlist stay mod-only - those unlock when you’re promoted._')
-    .setFooter({ text: 'Trial Mod - restricted training tier.' });
-  return interaction.reply({ content: `${p.content}\n_(read-only - trial mod view)_`, embeds: [p.embeds[0], cmds], flags: MessageFlags.Ephemeral });
+      '`/verify @member`: verify a waiting member (or hit the ✅ **Verify** button in their thread)\n' +
+      '`/pending`: flip through everyone waiting to be verified\n' +
+      '`/corner @member`: time a member out. **You must pick a rule OR give a reason, max 1 hour**\n' +
+      '`/uncorner @member`: release someone from the corner\n' +
+      '`/panel`: open this read-only dashboard\n\n' +
+      '_You’ll get pinged when someone needs verifying. Ban / strike / watchlist stay mod-only; those unlock when you’re promoted._')
+    .setFooter({ text: 'Trial Mod: restricted training tier.' });
+  return interaction.reply({ content: `${p.content}\n_(read-only, trial mod view)_`, embeds: [p.embeds[0], cmds], flags: MessageFlags.Ephemeral });
 }
 
 // --- pages ------------------------------------------------------------------------------------------
@@ -188,9 +188,9 @@ async function buildOverview() {
   const c = D.config;
   const embed = new EmbedBuilder().setColor(0x5865f2).setDescription(
     '**Status right now.** Use the **dropdown below** to act. 📖 A full **command reference** is pinned at the top of this channel.\n\n' +
-    `**🧵 Waiting to be verified:** ${pending} - opened a thread, need a mod to check them.\n` +
-    `**⛓️ In the corner:** ${Object.keys(cornered).length} - timed-out (roles removed, locked to the corner).\n` +
-    `**🧹 Auto-removal:** ${c.dryRun ? '🟡 **TEST MODE** - *not* removing anyone' : '🟢 **ON** - removing for real'} · warns after **${c.warnDays}d**, removes after **${c.kickDays}d**.\n` +
+    `**🧵 Waiting to be verified:** ${pending} (opened a thread, need a mod to check them).\n` +
+    `**⛓️ In the corner:** ${Object.keys(cornered).length} (timed-out: roles removed, locked to the corner).\n` +
+    `**🧹 Auto-removal:** ${c.dryRun ? '🟡 **TEST MODE**, *not* removing anyone' : '🟢 **ON**, removing for real'} · warns after **${c.warnDays}d**, removes after **${c.kickDays}d**.\n` +
     `**🔔 Helpers:** mod-nudges ${c.featureNudge ? 'on' : 'off'} · double-role flag ${c.conflictPing ? 'on' : 'off'} · weekly self-fix ${c.reactResolveEnabled ? 'on' : 'off'} · daily recap ${c.digestEnabled ? `${c.digestHour}:00` : 'off'}.`)
     .setFooter({ text: 'Anything marked 🔒 needs a higher role (Admin or Owner). Full command list is the pinned reference above.' }).setTimestamp(new Date());
   const row = new ActionRowBuilder().addComponents(
@@ -230,10 +230,10 @@ function buildModeration() {
   const embed = new EmbedBuilder().setColor(0x4ec5c1).setDescription(
     '**Easiest way:** pick a member from the **dropdown** below, then choose Corner / Verify / Uncorner / Ban. ' +
     'No typing needed.\n_(Prefer typing? The buttons under it still take a username or ID.)_\n\n' +
-    '⛓️ **Corner** - times them out: removes their roles and locks them to the corner channel until you release them.\n' +
-    '✅ **Verify** - gives the **Verified** role and removes **Unverified**.\n' +
-    '🔓 **Uncorner** - lets them out early and gives their roles back.\n' +
-    '⛓️ **Corner several…** - pick up to 10 members and corner them all for the same duration.')
+    '⛓️ **Corner**: times them out: removes their roles and locks them to the corner channel until you release them.\n' +
+    '✅ **Verify**: gives the **Verified** role and removes **Unverified**.\n' +
+    '🔓 **Uncorner**: lets them out early and gives their roles back.\n' +
+    '⛓️ **Corner several…**: pick up to 10 members and corner them all for the same duration.')
     .setFooter({ text: 'Any mod can use these. The full corner list is on the ⛓️ Corner page.' });
   const pick = new ActionRowBuilder().addComponents(
     new UserSelectMenuBuilder().setCustomId('fops_modpick').setPlaceholder('🎯 pick a member to act on…').setMaxValues(1));
@@ -254,7 +254,7 @@ async function buildCorner() {
   for (const id of ids.slice(0, 20)) {
     const rec = cornered[id] || {};
     const rel = rec.releaseAt ? `<t:${Math.floor(rec.releaseAt / 1000)}:R>` : 'indefinite';
-    lines.push(`• ${memberLabel(id)} ${memberTag(id)} - release ${rel}`);
+    lines.push(`• ${memberLabel(id)} ${memberTag(id)} · release ${rel}`);
     row.addComponents(new ButtonBuilder().setCustomId(`corner_rel:${id}:0`).setEmoji('🔓').setLabel(`Release …${id.slice(-4)}`).setStyle(ButtonStyle.Success));
     if (row.components.length === 5) { rows.push(row); row = new ActionRowBuilder(); }
   }
@@ -276,7 +276,7 @@ async function buildStrikes() {
   let row = new ActionRowBuilder();
   const cap = D.strike ? D.strike.BAN_THRESHOLD : 10;
   for (const m of members.slice(0, 20)) {
-    lines.push(`• ${memberLabel(m.memberId)} ${memberTag(m.memberId)} - **${D.strike ? D.strike.format(m.units) : m.units}/${cap} units** (${m.count} strike${m.count > 1 ? 's' : ''})`);
+    lines.push(`• ${memberLabel(m.memberId)} ${memberTag(m.memberId)} · **${D.strike ? D.strike.format(m.units) : m.units}/${cap} units** (${m.count} strike${m.count > 1 ? 's' : ''})`);
     row.addComponents(new ButtonBuilder().setCustomId(`fops_pick_strikeremove:${m.memberId}`).setEmoji('🎯').setLabel(`Manage …${m.memberId.slice(-4)}`).setStyle(ButtonStyle.Danger));
     if (row.components.length === 5) { rows.push(row); row = new ActionRowBuilder(); }
   }
@@ -304,13 +304,13 @@ function buildConflicts() {
 }
 
 function buildActions() {
-  const modapps = require('./modapps');   // lazy - modapps requires opspanel (avoid the circular at load)
+  const modapps = require('./modapps');   // lazy — modapps requires opspanel (avoid the circular at load)
   const appsOpen = modapps.applicationsOpen();
   const embed = new EmbedBuilder().setColor(0xff453a).setDescription(
     '**⭐ Needs Admin.** (Mods can read this page, but the buttons will show 🔒.)\n\n' +
-    '🧹 **Run housekeeping now** - the bot normally tidies up once an hour; this makes it run **right now**: warn or remove overdue unverified members, delete dead verification threads, and flag anyone with both roles. ⚠️ It can **actually remove people**, unless Test Mode is on (see the ⚠️ Danger page).\n' +
-    '🔨 **Ban a member** - permanently removes them and blocks them from rejoining. Can\'t be undone here.\n' +
-    `📋 **Mod applications** - currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime.`)
+    '🧹 **Run housekeeping now**: the bot normally tidies up once an hour; this makes it run **right now**: warn or remove overdue unverified members, delete dead verification threads, and flag anyone with both roles. ⚠️ It can **actually remove people**, unless Test Mode is on (see the ⚠️ Danger page).\n' +
+    '🔨 **Ban a member**: permanently removes them and blocks them from rejoining. Can\'t be undone here.\n' +
+    `📋 **Mod applications**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime.`)
     .setFooter({ text: copy.guards.needsAdmin });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_sweep').setEmoji('🧹').setLabel('Run housekeeping now').setStyle(ButtonStyle.Secondary),
@@ -322,12 +322,12 @@ function buildActions() {
 function buildSettings() {
   const embed = new EmbedBuilder().setColor(0xe7ac4e).setDescription(
     '**⭐ Needs Admin.** Turn the bot\'s helper features on or off. Changes apply **immediately** and stay after a restart. ' +
-    'Each button shows its current state - click to flip it. (The actual *removal policy* lives on the ⚠️ Danger page.)\n\n' +
-    '🔔 **Nudge** - ping mods when a verification thread has been waiting too long.\n' +
-    '⚖️ **Conflict-ping** - automatically flag members who somehow have both roles.\n' +
-    '✅ **React-resolve** - post a weekly message those members can react to, to fix themselves.\n' +
-    '🗒️ **Digest** - a once-a-day recap of everything the bot did.\n' +
-    '🧵 **Orphan-reap** - delete verification threads whose owner already left the server.')
+    'Each button shows its current state; click to flip it. (The actual *removal policy* lives on the ⚠️ Danger page.)\n\n' +
+    '🔔 **Nudge**: ping mods when a verification thread has been waiting too long.\n' +
+    '⚖️ **Conflict-ping**: automatically flag members who somehow have both roles.\n' +
+    '✅ **React-resolve**: post a weekly message those members can react to, to fix themselves.\n' +
+    '🗒️ **Digest**: a once-a-day recap of everything the bot did.\n' +
+    '🧵 **Orphan-reap**: delete verification threads whose owner already left the server.')
     .setFooter({ text: copy.guards.needsAdmin });
   const row1 = new ActionRowBuilder().addComponents(
     toggleBtn('featureNudge', 'Nudge'), toggleBtn('conflictPing', 'Conflict-ping'),
@@ -341,14 +341,14 @@ function buildDanger() {
   const c = D.config;
   const dryOn = !!c.dryRun;
   const embed = new EmbedBuilder().setColor(dryOn ? 0xff9f0a : 0xff453a).setDescription(
-    '**👑 Owner only.** This controls **whether and when the bot removes people** - the highest-stakes settings on the bot. Admins and mods can see it but can\'t change it.\n\n' +
-    `**Right now:** ${dryOn ? '🟡 **TEST MODE** - the bot only *pretends* to remove members. Safe.' : '🟢 **LIVE** - the bot **actually removes** unverified members.'}\n\n` +
-    '🟡/🟢 **Test Mode** - the master safety switch. Keep it ON while testing; turning it OFF makes real removals begin.\n' +
-    '🧹 **Reaping** - the whole warn-then-remove system, on or off.\n' +
-    '👢 **Stale-kick** - ON: overdue members get removed. OFF: their thread is cleaned up but they stay in the server.\n' +
-    '⏱️ **Timings** - how many days before a warning, before removal, and how often the bot checks.\n\n' +
+    '**👑 Owner only.** This controls **whether and when the bot removes people**, the highest-stakes settings on the bot. Admins and mods can see it but can\'t change it.\n\n' +
+    `**Right now:** ${dryOn ? '🟡 **TEST MODE**: the bot only *pretends* to remove members. Safe.' : '🟢 **LIVE**: the bot **actually removes** unverified members.'}\n\n` +
+    '🟡/🟢 **Test Mode**: the master safety switch. Keep it ON while testing; turning it OFF makes real removals begin.\n' +
+    '🧹 **Reaping**: the whole warn-then-remove system, on or off.\n' +
+    '👢 **Stale-kick**: ON: overdue members get removed. OFF: their thread is cleaned up but they stay in the server.\n' +
+    '⏱️ **Timings**: how many days before a warning, before removal, and how often the bot checks.\n\n' +
     `**Current timings:** warns after **${c.warnDays}d** · removes after **${c.kickDays}d** · checks every **${c.sweepIntervalMin}m**.`)
-    .setFooter({ text: 'Owner only - this is the removal policy.' });
+    .setFooter({ text: 'Owner only. This is the removal policy.' });
   const dryBtn = new ButtonBuilder().setCustomId('fops_toggle:dryRun')
     .setLabel(dryOn ? 'Turn OFF Test Mode → go LIVE' : 'Turn ON Test Mode (safe)').setEmoji(dryOn ? '🟢' : '🟡')
     .setStyle(dryOn ? ButtonStyle.Danger : ButtonStyle.Secondary);
@@ -366,15 +366,15 @@ function buildWatchlist() {
   const pending = watchlist.loadPending();
   const fw = D.freshwatch ? D.freshwatch.status() : { mode: c.smartWatchFreshMode || 'off', hours: c.smartWatchFreshHours || 0, percentile: c.smartWatchFreshPercentile || 1, influxActive: false };
   const freshLine = fw.mode === 'auto'
-    ? `**auto** - tags the newest **~${fw.percentile}%** of members as ⚠ brand-new (self-calibrates to growth${fw.influxActive ? '; 📈 **influx active → tightened**' : ''}). A mod heads-up only - the AI never sees account age.`
+    ? `**auto**: tags the newest **~${fw.percentile}%** of members as ⚠ brand-new (self-calibrates to growth${fw.influxActive ? '; 📈 **influx active → tightened**' : ''}). A mod heads-up only; the AI never sees account age.`
     : fw.mode === 'manual'
-      ? `**manual** - tags accounts that joined **< ${fw.hours}h ago**. A mod heads-up only - the AI never sees account age.`
-      : '**off** - no new-account note.';
+      ? `**manual**: tags accounts that joined **< ${fw.hours}h ago**. A mod heads-up only; the AI never sees account age.`
+      : '**off**: no new-account note.';
   const embed = new EmbedBuilder().setColor(0x5865F2).setDescription(
     '**⭐ Needs Admin.** Two monitors:\n' +
-    '• **Strict watchlist** - a flagged member posts a **strict term** → alert in **mod-announcements** with **Strike / Corner / Dismiss** buttons (+ mod ping).\n' +
-    "• **Loose watch-log** - *anyone except staff* posts a **loose term** → quiet report in **#watch-log** (buttons, no ping).\n" +
-    "• **Welfare** - a distress term (e.g. `i want to die`, `sh`) → soft **check-in** report in #watch-log (no ban button).\n" +
+    '• **Strict watchlist**: a flagged member posts a **strict term** → alert in **mod-announcements** with **Strike / Corner / Dismiss** buttons (+ mod ping).\n' +
+    "• **Loose watch-log**: *anyone except staff* posts a **loose term** → quiet report in **#watch-log** (buttons, no ping).\n" +
+    "• **Welfare**: a distress term (e.g. `i want to die`, `sh`) → soft **check-in** report in #watch-log (no ban button).\n" +
     "All reports keep a **saved copy + mirrored attachments**, so deleting the message can't hide it.\n\n" +
     '👁️ **Watchlist** add/remove · 🔓 **Unban** (opt. re-watchlist on rejoin) · 🏷️ **Terms** for each list.\n' +
     `🌱 **New-account flag:** ${freshLine}\n` +
@@ -406,7 +406,7 @@ function termModal(customId, title) {
 }
 
 // Promotions page: open promotion VOTES for one OR MANY candidates at once, via role-filtered multi-selects
-// (each dropdown lists ONLY the eligible role - trial mods for trial→mod, actual mods for mod→admin). This is
+// (each dropdown lists ONLY the eligible role — trial mods for trial→mod, actual mods for mod→admin). This is
 // the dashboard entry to the same promote.start vote flow as /promote-trial and /promote-mod.
 async function buildPromotions() {
   const guild = D.client.guilds.cache.get(D.config.guildId) || D.client.guilds.cache.first();
@@ -425,8 +425,8 @@ async function buildPromotions() {
       .setMinValues(1).setMaxValues(Math.min(mods.length, 25)).addOptions(mods.slice(0, 25).map(opt))));
   const embed = new EmbedBuilder().setColor(0xE1A200)
     .setDescription('Open a promotion **vote** for one or more people at once. Each list shows **only the eligible role**.\n\n'
-      + `• **Trial Mod → Mod** - ${trials.length} trial mod(s). Vote posts in **mod-announcements**.\n`
-      + `• **Mod → Admin** - ${mods.length} mod(s). Vote posts in **admin-discussion** (Admin only).\n\n`
+      + `• **Trial Mod → Mod**: ${trials.length} trial mod(s). Vote posts in **mod-announcements**.\n`
+      + `• **Mod → Admin**: ${mods.length} mod(s). Vote posts in **admin-discussion** (Admin only).\n\n`
       + (trials.length || mods.length ? '_Select the people, and a promotion vote opens for each. No one is promoted until the vote is confirmed._' : '_No eligible candidates right now._'))
     .setFooter({ text: 'Promotions = votes, not instant. Trial→Mod: any mod. Mod→Admin: Admin+.' });
   rows.push(navRow(pageIdx('Promotions')));
@@ -449,43 +449,43 @@ async function buildPage(page) {
 }
 
 // --- lifecycle --------------------------------------------------------------------------------------
-// Static staff command reference - the "what every command does" list, moved off the Overview page into
+// Static staff command reference — the "what every command does" list, moved off the Overview page into
 // its own pinned message so the live panel stays lean as the toolkit grows. Includes the tier breakdown
 // (who can do what). Staff-only by virtue of living in the mod-only #mod-dashboard channel.
 function commandRefEmbed() {
-  return new EmbedBuilder().setColor(0x2b2d31).setTitle('📖 FUBU Ops - Staff Command Reference')
-    .setDescription('Everything the staff toolkit can do. The **live dashboard** - status + point-and-click actions - is the other pinned message in this channel.')
+  return new EmbedBuilder().setColor(0x2b2d31).setTitle('📖 FUBU Ops · Staff Command Reference')
+    .setDescription('Everything the staff toolkit can do. The **live dashboard** (status + point-and-click actions) is the other pinned message in this channel.')
     .addFields(
       { name: '🛡️ Moderation', value:
-        `\`/corner @member [${copy.corner.unitsDot}]\` - time-out: strips roles + locks them to the corner (blank = until released)\n` +
-        '`/uncorner @member [time]` - release now, or schedule a release later\n' +
-        '`/cornered` - list who’s in the corner, each with a release button\n' +
-        '`/strike view·add·remove·clear @member` - raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
+        `\`/corner @member [${copy.corner.unitsDot}]\`: time-out: strips roles + locks them to the corner (blank = until released)\n` +
+        '`/uncorner @member [time]`: release now, or schedule a release later\n' +
+        '`/cornered`: list who’s in the corner, each with a release button\n' +
+        '`/strike view·add·remove·clear @member`: raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
       { name: '👁️ Watchlist & safety', value:
-        '`/watchlist add·remove·list @member` - put/lift the **Watchlist** role (their messages get flagged to mods)\n' +
-        '`/watchlist-terms add·remove·list` - edit flagged words · scopes: **strict** / **loose** / **welfare**\n' +
-        '`/watchlist-suggest [hours]` - scan recent chat and recommend new flagged terms\n' +
-        '**Right-click a message → “Report to watchlist”** - file a deletion-proof report\n' +
-        '`/unban <user-id> [watchlist]` - unban by ID (admin); can re-flag them if they rejoin' },
+        '`/watchlist add·remove·list @member`: put/lift the **Watchlist** role (their messages get flagged to mods)\n' +
+        '`/watchlist-terms add·remove·list`: edit flagged words · scopes: **strict** / **loose** / **welfare**\n' +
+        '`/watchlist-suggest [hours]`: scan recent chat and recommend new flagged terms\n' +
+        '**Right-click a message → “Report to watchlist”**: file a deletion-proof report\n' +
+        '`/unban <user-id> [watchlist]`: unban by ID (admin); can re-flag them if they rejoin' },
       { name: '🔒 Anonymous tools & Send-to-corner', value:
-        '`/confess` `/report` `/modmail` `/whistleblow` `/suggest` - anonymous reporting + feedback (members can use them in any chat channel)\n' +
-        '**Right-click a message → “Send to corner”** - jail the author + copy that message into the corner\n' +
-        '**Right-click a message → “Strike”** - strike the author for that message (auto-replies on it)\n' +
+        '`/confess` `/report` `/modmail` `/whistleblow` `/suggest`: anonymous reporting + feedback (members can use them in any chat channel)\n' +
+        '**Right-click a message → “Send to corner”**: jail the author + copy that message into the corner\n' +
+        '**Right-click a message → “Strike”**: strike the author for that message (auto-replies on it)\n' +
         '_Who-can-reveal, limits + live counts are on the **🔒 Anon Tools** page._' },
       { name: '🧰 Other', value:
-        '`/verify @member` · `/pending` - verify members / flip through the ones waiting\n' +
-        '`/panel` - open this dashboard privately (only you see it)\n' +
+        '`/verify @member` · `/pending`: verify members / flip through the ones waiting\n' +
+        '`/panel`: open this dashboard privately (only you see it)\n' +
         '_Also: watch-log reports carry **⚠️ Strike / 🗑️ Dismiss** buttons, and the 🛡️ Moderation page lets you pick a member from a dropdown and act with no typing._' },
       { name: '👥 Staff & mod-team', value:
-        '`/staff` - how many of each tier we have (unique, deduped by highest)\n' +
-        '`/promote-trial @member` - open a promotion vote in mod-announcements (mods vote 👍/👎, **owner** confirms → adds Mod, drops Trial)\n' +
-        '`/demote-trial @member` - remove someone’s **Trial Mod** role (**owner**)\n' +
+        '`/staff`: how many of each tier we have (unique, deduped by highest)\n' +
+        '`/promote-trial @member`: open a promotion vote in mod-announcements (mods vote 👍/👎, **owner** confirms → adds Mod, drops Trial)\n' +
+        '`/demote-trial @member`: remove someone’s **Trial Mod** role (**owner**)\n' +
         '_Trial mods can **verify** + **corner** (rule + reason, ≤1h) + a read-only `/panel`; ban/strike/watchlist unlock at full Mod._' },
       { name: '👥 Who can do what', value:
-        '**🟢 Mods (MODS-✰)** - day-to-day: corner, strike, watchlist, verify, and all the review/anon tools.\n' +
-        '**🔵 Admins (ADMINS-★)** - everything mods can, **plus** ban/unban, running the bot on-demand, and helper settings.\n' +
-        '**🟣 Owner** - everything, **plus** removal policy (⚠️ Danger page), mod-application decisions, and feature toggles.' })
-    .setFooter({ text: '🔒 = needs a higher role. This is the reference - use the dashboard to actually do things.' });
+        '**🟢 Mods (MODS-✰)**: day-to-day: corner, strike, watchlist, verify, and all the review/anon tools.\n' +
+        '**🔵 Admins (ADMINS-★)**: everything mods can, **plus** ban/unban, running the bot on-demand, and helper settings.\n' +
+        '**🟣 Owner**: everything, **plus** removal policy (⚠️ Danger page), mod-application decisions, and feature toggles.' })
+    .setFooter({ text: '🔒 = needs a higher role. This is the reference; use the dashboard to actually do things.' });
 }
 async function ensureCommandRef(client, channelId) {
   try {
@@ -548,11 +548,11 @@ function isPanelInteraction(i) {
 
 // --- interactions ---------------------------------------------------------------------------------
 // Member picker: a native Discord UserSelect (shows real names/avatars from the server to pick from,
-// not a typed guess) - replaces the old "type a username/ID" modal for every action below.
+// not a typed guess) — replaces the old "type a username/ID" modal for every action below.
 function pickerRow(customId, placeholder) {
   return new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setMaxValues(1));
 }
-// Follow-up modal AFTER a member's been picked - only for the extra field(s) an action still needs
+// Follow-up modal AFTER a member's been picked — only for the extra field(s) an action still needs
 // (the target member is already known, carried in the customId, so no "who" field here).
 function followupModal(customId, title, fields) {
   const m = new ModalBuilder().setCustomId(customId).setTitle(title);
@@ -565,7 +565,7 @@ const LABEL = { mod: '✰ Mod', admin: '⭐ Admin', owner: '👑 Owner' };
 async function handlePanel(interaction) {
   const id = interaction.customId;
   const tier = tierOf(interaction);
-  const roleTier = isBotOwner(interaction) ? 'botowner' : memberTier(interaction.member);   // role-only (ADMINS-★, not the Admin perm) - but the bot owner passes by user id even role-stripped
+  const roleTier = isBotOwner(interaction) ? 'botowner' : memberTier(interaction.member);   // role-only (ADMINS-★, not the Admin perm) — but the bot owner passes by user id even role-stripped
   if (!tier) return interaction.reply({ content: 'This dashboard is for the mod team.', flags: MessageFlags.Ephemeral });
   // Gate helper for pre-defer (reply) responses.
   const denyReply = needed => interaction.reply({ content: `🔒 That's **${LABEL[needed]}+** only. You're ${LABEL[tier]}.`, flags: MessageFlags.Ephemeral });
@@ -599,18 +599,18 @@ async function handlePanel(interaction) {
       new ButtonBuilder().setCustomId(`fops_pick_strikeremove:${uid}`).setEmoji('🎯').setLabel('Manage a strike…').setStyle(ButtonStyle.Secondary).setDisabled(units <= 0),
       new ButtonBuilder().setCustomId(`fops_do_strikeclear:${uid}`).setEmoji('🧹').setLabel('Clear strikes').setStyle(ButtonStyle.Secondary).setDisabled(units <= 0));
     const unitsDisplay = D.strike ? D.strike.format(units) : units;
-    return interaction.reply({ content: `🎯 Selected <@${uid}> (\`${member.user.tag}\`) - currently **${unitsDisplay}/${cap} units**. Pick an action. _(Corner here is indefinite; for a timed corner use the Corner button (asks duration) or \`/corner\`. "Give a strike…" picks a rule/reason/weight/timeout, same as \`/strike add\`; "Strike +1" is a quick no-reason 1-unit shortcut.)_`, components: [actions, strikes], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    return interaction.reply({ content: `🎯 Selected <@${uid}> (\`${member.user.tag}\`), currently **${unitsDisplay}/${cap} units**. Pick an action. _(Corner here is indefinite; for a timed corner use the Corner button (asks duration) or \`/corner\`. "Give a strike…" picks a rule/reason/weight/timeout, same as \`/strike add\`; "Strike +1" is a quick no-reason 1-unit shortcut.)_`, components: [actions, strikes], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
-  // "Give a strike…" - hands off to the SAME rule-picker → reason+weight-modal → addStrike flow the
+  // "Give a strike…" — hands off to the SAME rule-picker → reason+weight-modal → addStrike flow the
   // watch-log/right-click Strike buttons already use (strike_rule_pick:/strike_reason: handlers in
-  // index.js). This customId is NOT fops_-prefixed, so it falls through to those top-level handlers -
+  // index.js). This customId is NOT fops_-prefixed, so it falls through to those top-level handlers —
   // nothing else to wire here, the dashboard is just a second entry point into the existing flow.
   if (id.startsWith('fops_pick_strikegive:')) {
     const uid = id.split(':')[1];
     if (!D.strike?.ruleRow) return interaction.reply({ content: 'Strike-giving isn’t wired up.', flags: MessageFlags.Ephemeral });
     return interaction.reply({ content: copy.common.whichRule, components: [D.strike.ruleRow(uid)], flags: MessageFlags.Ephemeral });
   }
-  // Pick exactly which strike to remove (not just the most recent) - a StringSelect of the member's
+  // Pick exactly which strike to remove (not just the most recent) — a StringSelect of the member's
   // active strikes, human-readable labels via D.strike.label (reuses strikes.js's entryLabel).
   if (id.startsWith('fops_pick_strikeremove:')) {
     const uid = id.split(':')[1];
@@ -620,7 +620,7 @@ async function handlePanel(interaction) {
     if (!entries.length) return interaction.reply({ content: `<@${uid}> has no active strikes.`, flags: MessageFlags.Ephemeral });
     const menu = new StringSelectMenuBuilder().setCustomId(`fops_strike_manage:${uid}`).setPlaceholder('Which strike?')
       .addOptions(entries.slice(0, 25).map(e => ({ label: D.strike.label(e).slice(0, 100), value: e.id })));
-    return interaction.reply({ content: `Manage a strike on <@${uid}> - pick which one:`, components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    return interaction.reply({ content: `Manage a strike on <@${uid}>. Pick which one:`, components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   // Picked a specific strike → offer Remove OR re-weight it (partial leniency / correction). Each button
   // carries the target weight (0 = remove); the strike's CURRENT weight button is disabled so it's obvious.
@@ -630,12 +630,12 @@ async function handlePanel(interaction) {
     if (!member) return interaction.update({ content: copy.common.noMemberInServer, components: [] });
     const strikeId = interaction.values[0];
     const entry = (D.strike.entries(member) || []).find(e => e.id === strikeId);
-    if (!entry) return interaction.update({ content: 'That strike is gone - it may already have been changed.', components: [] });
+    if (!entry) return interaction.update({ content: 'That strike is gone. It may already have been changed.', components: [] });
     const cur = entry.weight;
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`fops_strike_setw:${uid}:${strikeId}:0`).setEmoji('🗑️').setLabel('Remove').setStyle(ButtonStyle.Danger),
       ...[1, 2, 3].map(w => new ButtonBuilder().setCustomId(`fops_strike_setw:${uid}:${strikeId}:${w}`).setLabel(`${w} unit${w > 1 ? 's' : ''}`).setStyle(ButtonStyle.Secondary).setDisabled(cur === w)));
-    return interaction.update({ content: `Strike \`${strikeId}\` on <@${uid}> - currently **${D.strike.format(cur)} unit${cur === 1 ? '' : 's'}**.\nRemove it, or set a new weight:`, components: [row] });
+    return interaction.update({ content: `Strike \`${strikeId}\` on <@${uid}>, currently **${D.strike.format(cur)} unit${cur === 1 ? '' : 's'}**.\nRemove it, or set a new weight:`, components: [row] });
   }
   if (id.startsWith('fops_strike_setw:') && interaction.isButton?.()) {
     const [, uid, strikeId, wStr] = id.split(':');
@@ -645,9 +645,9 @@ async function handlePanel(interaction) {
     const r = w <= 0
       ? await D.strike.removeById(interaction.guild, member, strikeId, interaction.user.tag)
       : await D.strike.setWeight(interaction.guild, member, strikeId, w, interaction.user.tag);
-    if (!r.ok) return interaction.update({ content: 'Couldn’t find that strike anymore - it may already have been changed.', components: [] });
+    if (!r.ok) return interaction.update({ content: 'Couldn’t find that strike anymore. It may already have been changed.', components: [] });
     const what = w <= 0 ? `Removed strike \`${strikeId}\`` : `Set strike \`${strikeId}\` to **${w} unit${w > 1 ? 's' : ''}**`;
-    return interaction.update({ content: `✅ ${what} on <@${uid}> - now **${D.strike.format(r.totalUnits)}/${D.strike.BAN_THRESHOLD} units** (${r.tier}).`, components: [] });
+    return interaction.update({ content: `✅ ${what} on <@${uid}>, now **${D.strike.format(r.totalUnits)}/${D.strike.BAN_THRESHOLD} units** (${r.tier}).`, components: [] });
   }
   // Promotions page: open a promotion VOTE for each selected candidate (multi). fops_promote:<trial|mod>.
   if (id.startsWith('fops_promote:') && interaction.isStringSelectMenu?.()) {
@@ -658,25 +658,25 @@ async function handlePanel(interaction) {
     const results = [];
     for (const uid of interaction.values) {
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
-      if (!member) { results.push(`❌ <@${uid}> - no longer in the server`); continue; }
+      if (!member) { results.push(`❌ <@${uid}>: no longer in the server`); continue; }
       const r = await D.promoteStart(interaction.guild, member, interaction.user.id, kind);
-      results.push(r.ok ? `✅ <@${uid}> - vote opened` : `⚠️ <@${uid}> - ${r.msg}`);
+      results.push(r.ok ? `✅ <@${uid}>: vote opened` : `⚠️ <@${uid}>: ${r.msg}`);
     }
     const label = kind === 'mod' ? 'Mod → Admin' : 'Trial Mod → Mod';
-    return interaction.editReply({ content: `🏅 **${label}** - opened ${results.length} promotion vote(s):\n${results.join('\n')}`, allowedMentions: { parse: [] } });
+    return interaction.editReply({ content: `🏅 **${label}**: opened ${results.length} promotion vote(s):\n${results.join('\n')}`, allowedMentions: { parse: [] } });
   }
-  // Single-purpose pickers (fops_pick_*) - a member was just chosen via UserSelect for one specific
+  // Single-purpose pickers (fops_pick_*) — a member was just chosen via UserSelect for one specific
   // action opened by the buttons below. corner/ban still need one more field, so they show a short
   // follow-up modal (customId carries the uid); everything else executes straight away.
   if (id === 'fops_pick_corner') {
     const uid = interaction.values[0];
-    return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner - duration',
-      [{ id: 'dur', label: `Duration (${copy.corner.units} - blank = indefinite)` }]));
+    return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner: duration',
+      [{ id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` }]));
   }
   if (id === 'fops_pick_cornermulti') {
     _cornerMultiStash.set(interaction.user.id, { ids: interaction.values, at: Date.now() });
-    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s) - duration`,
-      [{ id: 'dur', label: `Duration (${copy.corner.units} - blank = indefinite)` }]));
+    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s): duration`,
+      [{ id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` }]));
   }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
@@ -689,7 +689,7 @@ async function handlePanel(interaction) {
     if (!meets(tier, 'admin')) return denyReply('admin');
     const uid = id.split(':')[1];
     const category = interaction.values[0];
-    return interaction.showModal(followupModal(`fops_banmodal2:${uid}:${category}`, `Ban - ${CATEGORY_LABEL[category]}`, [{ id: 'reason', label: 'Additional detail (optional)' }]));
+    return interaction.showModal(followupModal(`fops_banmodal2:${uid}:${category}`, `Ban: ${CATEGORY_LABEL[category]}`, [{ id: 'reason', label: 'Additional detail (optional)' }]));
   }
   if (id === 'fops_pick_verify') {
     const uid = interaction.values[0];
@@ -704,7 +704,7 @@ async function handlePanel(interaction) {
     const uid = interaction.values[0];
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const r = await D.corner.uncorner(interaction.guild, uid, D.state);
-    return interaction.editReply(r.ok ? `🔓 Released <@${uid}> - restored ${r.restored} role(s).` : `Failed: ${r.error}`);
+    return interaction.editReply(r.ok ? `🔓 Released <@${uid}>, restored ${r.restored} role(s).` : `Failed: ${r.error}`);
   }
   if (id === 'fops_pick_wladd' || id === 'fops_pick_wlremove') {
     if (!meets(roleTier, 'admin')) return denyReply('admin');
@@ -720,7 +720,7 @@ async function handlePanel(interaction) {
   if (id === 'fops_pick_unban') {
     if (!meets(roleTier, 'admin')) return denyReply('admin');
     const uid = interaction.values[0];
-    return interaction.showModal(followupModal(`fops_unbanmodal2:${uid}`, 'Unban - confirm',
+    return interaction.showModal(followupModal(`fops_unbanmodal2:${uid}`, 'Unban: confirm',
       [{ id: 'watchlist', label: 'Watchlist on rejoin? (yes/no)', placeholder: 'no' }]));
   }
   if (id.startsWith('fops_do_')) {
@@ -732,7 +732,7 @@ async function handlePanel(interaction) {
     if (act === 'corner') {
       const r = await D.corner.corner(interaction.guild, member, null, D.state, interaction.user.id);
       if (r.ok && D.announceCorner) await D.announceCorner(interaction.guild, uid, null, interaction.user.id, null);
-      return interaction.editReply(r.ok ? `⛓️ Cornered <@${uid}> indefinitely - stripped ${r.stripped} role(s). Release from the ⛓️ Corner page when ready.` : `Failed: ${r.error}`);
+      return interaction.editReply(r.ok ? `⛓️ Cornered <@${uid}> indefinitely, stripped ${r.stripped} role(s). Release from the ⛓️ Corner page when ready.` : `Failed: ${r.error}`);
     }
     if (act === 'verify') {
       await member.roles.add(D.config.verifiedRoleId, `Verified via dashboard picker by ${interaction.user.tag}`).catch(() => {});
@@ -741,7 +741,7 @@ async function handlePanel(interaction) {
     }
     if (act === 'uncorner') {
       const r = await D.corner.uncorner(interaction.guild, uid, D.state);
-      return interaction.editReply(r.ok ? `🔓 Released <@${uid}> - restored ${r.restored} role(s).` : `Failed: ${r.error}`);
+      return interaction.editReply(r.ok ? `🔓 Released <@${uid}>, restored ${r.restored} role(s).` : `Failed: ${r.error}`);
     }
     if (act === 'ban') {
       if (!meets(tier, 'admin')) return interaction.editReply('🔒 Banning is **admin+** only.');
@@ -749,7 +749,7 @@ async function handlePanel(interaction) {
         return interaction.editReply(copy.guards.refuseBanStaff);
       try {
         await member.ban({ reason: `Banned via dashboard by ${interaction.user.tag}` });
-        if (D.logAction) await D.logAction(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `<@${uid}> (${member.user.tag}) - via dashboard - by <@${interaction.user.id}>.` });
+        if (D.logAction) await D.logAction(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `<@${uid}> (${member.user.tag}) — via dashboard — by <@${interaction.user.id}>.` });
         return interaction.editReply(`🔨 Banned <@${uid}> (\`${member.user.tag}\`).`);
       } catch (e) { return interaction.editReply(`❌ Ban failed: ${e.message}`); }
     }
@@ -758,19 +758,19 @@ async function handlePanel(interaction) {
       const cap = D.strike.BAN_THRESHOLD;
       if (act === 'strikeup') {
         const r = await D.strike.up(interaction.guild, member, interaction.user.tag);
-        return interaction.editReply(`⚠️ Gave <@${uid}> a 1-unit strike - now **${D.strike.format(r.totalUnits)}/${cap} units**.${r.crossedBan ? ' 🔨 **Crossed the ban threshold** - use the Ban button if staff confirms.' : ''}`);
+        return interaction.editReply(`⚠️ Gave <@${uid}> a 1-unit strike, now **${D.strike.format(r.totalUnits)}/${cap} units**.${r.crossedBan ? ' 🔨 **Crossed the ban threshold.** Use the Ban button if staff confirms.' : ''}`);
       }
       if (act === 'strikedown') {
         const r = await D.strike.down(interaction.guild, member, interaction.user.tag);
         if (!r.ok) return interaction.editReply(`<@${uid}> has no active strikes to undo.`);
-        return interaction.editReply(`➖ Undid <@${uid}>’s most recent strike - now **${D.strike.format(r.totalUnits)}/${cap} units**${r.totalUnits === 0 ? ' - clean again 💗' : ''}.`);
+        return interaction.editReply(`➖ Undid <@${uid}>’s most recent strike, now **${D.strike.format(r.totalUnits)}/${cap} units**${r.totalUnits === 0 ? ', clean again 💗' : ''}.`);
       }
       if (act === 'strikeclear') { const r = await D.strike.clear(interaction.guild, member, interaction.user.tag); return interaction.editReply(r.cleared ? `🧹 Cleared all strikes on <@${uid}> (removed ${r.cleared}).` : `<@${uid}> had no strikes.`); }
     }
     return interaction.editReply('Unknown action.');
   }
 
-  // Picker openers - gate BEFORE showing the picker. Each replies with a UserSelect; picking triggers
+  // Picker openers — gate BEFORE showing the picker. Each replies with a UserSelect; picking triggers
   // fops_pick_* below (either straight to the action, or a short follow-up modal for extra fields).
   if (id === 'fops_corner') return interaction.reply({ content: 'Pick who to corner:', components: [pickerRow('fops_pick_corner', 'Pick a member to corner…')], flags: MessageFlags.Ephemeral });
   if (id === 'fops_corner_multi') {
@@ -791,7 +791,7 @@ async function handlePanel(interaction) {
     return interaction.showModal(m);
   }
 
-  // Watchlist pickers - edits need the ADMINS-★ ROLE (roleTier, not the Admin perm). Gate before showing.
+  // Watchlist pickers — edits need the ADMINS-★ ROLE (roleTier, not the Admin perm). Gate before showing.
   if (id === 'fops_wl_add') return meets(roleTier, 'admin') ? interaction.reply({ content: 'Pick who to add to the Watchlist:', components: [pickerRow('fops_pick_wladd', 'Pick a member…')], flags: MessageFlags.Ephemeral }) : denyReply('admin');
   if (id === 'fops_wl_remove') return meets(roleTier, 'admin') ? interaction.reply({ content: 'Pick who to remove from the Watchlist:', components: [pickerRow('fops_pick_wlremove', 'Pick a member…')], flags: MessageFlags.Ephemeral }) : denyReply('admin');
   if (id === 'fops_wl_unban') {
@@ -833,7 +833,7 @@ async function handlePanel(interaction) {
       if (!meets(tier, need)) return deny(need);
       const next = !D.config[key];
       persistOverride({ [key]: next });
-      await interaction.editReply(`⚙️ **${key}** → ${next ? 'ON' : 'OFF'}${key === 'dryRun' && !next ? ' - ⚠️ reaping is now **LIVE** (members will be kicked).' : ''}`);
+      await interaction.editReply(`⚙️ **${key}** → ${next ? 'ON' : 'OFF'}${key === 'dryRun' && !next ? '. ⚠️ Reaping is now **LIVE** (members will be kicked).' : ''}`);
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_modapps_toggle') {
@@ -873,7 +873,7 @@ async function handlePanel(interaction) {
       if (![warn, kick, sweep].every(Number.isFinite) || warn < 0 || sweep < 1) return interaction.editReply('Values must be numbers (sweep ≥ 1).');
       if (warn >= kick) return interaction.editReply(`Warn (${warn}d) must be less than kick (${kick}d).`);
       persistOverride({ warnDays: warn, kickDays: kick, sweepIntervalMin: sweep });
-      await interaction.editReply(`⏱️ Timings updated - warn ${warn}d → kick ${kick}d · sweep ${sweep}m.`);
+      await interaction.editReply(`⏱️ Timings updated: warn ${warn}d → kick ${kick}d · sweep ${sweep}m.`);
       return refreshPanel(interaction.client);
     }
 
@@ -887,16 +887,16 @@ async function handlePanel(interaction) {
       const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id);
       if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
       if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null);
-      await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'} - stripped ${r.stripped} role(s).`);
+      await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'}, stripped ${r.stripped} role(s).`);
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_cornermulti_dur') {
       const stash = _cornerMultiStash.get(interaction.user.id);
       _cornerMultiStash.delete(interaction.user.id);
-      if (!stash || !stash.ids?.length) return interaction.editReply('That selection expired - pick the members again.');
+      if (!stash || !stash.ids?.length) return interaction.editReply('That selection expired. Pick the members again.');
       const dur = (interaction.fields.getTextInputValue('dur') || '').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
-      if (dur && !ms) return interaction.editReply('Bad duration - use `30m`, `2h`, `3d`, `30s`.');
+      if (dur && !ms) return interaction.editReply('Bad duration. Use `30m`, `2h`, `3d`, `30s`.');
       const members = [];
       for (const uid of stash.ids) { const m = await interaction.guild.members.fetch(uid).catch(() => null); if (m) members.push(m); }
       const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[tierOf(interaction)] || 0;
@@ -915,9 +915,9 @@ async function handlePanel(interaction) {
       if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
         return interaction.editReply(copy.guards.refuseBanStaff);
       const detail = (interaction.fields.getTextInputValue('reason') || '').trim();
-      const reason = `${CATEGORY_LABEL[category] || 'Other'}${detail ? ` - ${detail}` : ''} (via dashboard by ${interaction.user.tag})`;
+      const reason = `${CATEGORY_LABEL[category] || 'Other'}${detail ? `: ${detail}` : ''} (via dashboard by ${interaction.user.tag})`;
       await member.ban({ reason });
-      return interaction.editReply(`🔨 Banned <@${member.id}> (\`${member.user.tag}\`) - **${CATEGORY_LABEL[category] || 'Other'}**.`);
+      return interaction.editReply(`🔨 Banned <@${member.id}> (\`${member.user.tag}\`): **${CATEGORY_LABEL[category] || 'Other'}**.`);
     }
 
     if (id === 'fops_sweep') {
@@ -930,7 +930,7 @@ async function handlePanel(interaction) {
     }
     if (id === 'fops_conflicts_scan') {
       const unv = D.config.unverifiedRoleId, ver = D.config.verifiedRoleId;
-      if (!unv) return interaction.editReply('No unverified role configured - nothing to check.');
+      if (!unv) return interaction.editReply('No unverified role configured, nothing to check.');
       const members = await interaction.guild.members.fetch();
       const dual = [...members.filter(m => m.roles.cache.has(ver) && m.roles.cache.has(unv)).values()];
       if (!dual.length) return interaction.editReply('✅ No role conflicts.');
@@ -940,7 +940,7 @@ async function handlePanel(interaction) {
           new ButtonBuilder().setCustomId(`conflict_rm:${m.id}:unver`).setLabel(`${m.user.tag}: keep Verified`.slice(0, 80)).setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`conflict_rm:${m.id}:ver`).setLabel('keep Unverified').setStyle(ButtonStyle.Secondary)));
       }
-      const extra = dual.length > 4 ? `\n…and ${dual.length - 4} more - a sweep flags the rest to the conflict channel.` : '';
+      const extra = dual.length > 4 ? `\n…and ${dual.length - 4} more. A sweep flags the rest to the conflict channel.` : '';
       return interaction.editReply({ content: `⚖️ **${dual.length}** role conflict(s):\n${dual.slice(0, 10).map(m => `• <@${m.id}> (\`${m.user.tag}\`)`).join('\n')}${extra}`, components: rows });
     }
 

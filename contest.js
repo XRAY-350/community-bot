@@ -1,23 +1,23 @@
-// contest.js - monthly community art contests (Drawing / Photography / Writing) for FUBU.
+// contest.js — monthly community art contests (Drawing / Photography / Writing) for FUBU.
 //
 // Designed with the event organizer (superami) in #📋┆organizer-chat, 2026-07-30/31. Her model:
 //   • one dedicated channel per contest, under the 🎉 ᴇᴠᴇɴᴛs category
 //   • members post ONE entry per theme; everyone can view, post, and vote by reacting 🩷
-//   • the channel is for entries + voting ONLY - no chatting
+//   • the channel is for entries + voting ONLY — no chatting
 //   • a monthly theme; whoever gets the most 🩷 wins a role (+ the owner may gift Nitro)
-//   • anonymous entries allowed (she offered to repost DMs by hand - automated here via /contest-submit)
+//   • anonymous entries allowed (she offered to repost DMs by hand — automated here via /contest-submit)
 //
 // This module automates all of that:
-//   /contest setup   - create the 3 channels + the 🏆 Contest Winner role, post the rules, snapshot perms
-//   /contest start   - open a new monthly round with a theme (fresh announcement in each channel)
-//   /contest status  - theme, per-channel entry counts, current 🩷 leader
-//   /contest end     - tally 🩷, crown winners, assign the role, ping the owner for the Nitro gift
-//   /contest-submit  - a member posts an entry ANONYMOUSLY (bot reposts, name hidden)
-//   onMessage()      - enforces "entries + voting only": one entry/person, auto-🩷, deletes chatter/dupes
-//   register()       - a daily-ish tick that auto-ends the round on the 1st of the month
+//   /contest setup   — create the 3 channels + the 🏆 Contest Winner role, post the rules, snapshot perms
+//   /contest start   — open a new monthly round with a theme (fresh announcement in each channel)
+//   /contest status  — theme, per-channel entry counts, current 🩷 leader
+//   /contest end     — tally 🩷, crown winners, assign the role, ping the owner for the Nitro gift
+//   /contest-submit  — a member posts an entry ANONYMOUSLY (bot reposts, name hidden)
+//   onMessage()      — enforces "entries + voting only": one entry/person, auto-🩷, deletes chatter/dupes
+//   register()       — a daily-ish tick that auto-ends the round on the 1st of the month
 //
 // State lives in one JSON file (self-contained, same pattern as ownerlog/permguard), NOT the shared
-// state.js - a contest round is its own concern with its own lifecycle.
+// state.js — a contest round is its own concern with its own lifecycle.
 const fs = require('fs');
 const { EmbedBuilder, ChannelType, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,
   ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
@@ -156,13 +156,13 @@ async function setup(guild) {
     const ch = await ensureChannel(guild, contest, cfg);
     made.push({ contest, ch, created: !before || before !== ch.id });
   }
-  // Post the rules now only if there's no active round - an open round's announcement is owned by
+  // Post the rules now only if there's no active round — an open round's announcement is owned by
   // /contest start (re-posting here would just duplicate it).
   const roundActive = !!(cfg.round && cfg.round.active);
   if (!roundActive) for (const m of made) await postRules(m.ch, m.contest, null);
   saveCfg(cfg);
   // NOTE: we deliberately do NOT auto-resnapshot permguard here. New channels are "unmanaged" by the
-  // drift guard (it leaves them alone - no reversion risk), and re-baselining the WHOLE server's
+  // drift guard (it leaves them alone — no reversion risk), and re-baselining the WHOLE server's
   // permission manifest as a side effect of contest setup would be too broad. To bring these channels
   // under the drift guard, the owner runs `/permguard resnapshot` deliberately (surfaced in the reply).
   await ownerlog.log(guild, { emoji: '🎨', title: 'Contest system set up', color: GOLD,
@@ -221,7 +221,7 @@ async function tallyChannel(guild, key, cfg) {
 }
 
 // Staff-only de-anonymized view of the current round: each active contest with its entries and the REAL
-// submitter id (even anonymous ones), for awarding rewards. Public anonymity is untouched - this is a
+// submitter id (even anonymous ones), for awarding rewards. Public anonymity is untouched — this is a
 // private lookup for organizers.
 async function revealEntries(guild) {
   const cfg = loadCfg();
@@ -374,7 +374,7 @@ async function onMessage(msg) {
       await notify(msg.author, `Your message in **${contest.label} Contest** was removed. That channel is only for posting entries and voting 🩷. ${contest.kind === 'image' ? 'Please post your entry as an image.' : 'Please post your written entry.'} For chatting, use the event chat!`);
       return { deleted: true };
     }
-    // valid entry - enforce one per person
+    // valid entry — enforce one per person
     if (entries[msg.author.id]) {
       if (staff) return { deleted: false };
       await msg.delete().catch(() => {});
@@ -449,7 +449,7 @@ function register(client) {
       if (cfg.lastEndedMonth === ymKey(now)) return;      // already ended this month
       const guild = client.guilds.cache.first() || await client.guilds.fetch(config.guildId).catch(() => null);
       if (!guild) return;
-      console.log('[contest] month rolled over - auto-ending the open round');
+      console.log('[contest] month rolled over — auto-ending the open round');
       await endRound(guild, { auto: true });
     } catch (e) { console.error('[contest] tick:', e.message); }
   };
@@ -459,7 +459,7 @@ function register(client) {
 }
 
 // ---- event organizer dashboard (private, ephemeral /panel-style) ---------------------------------
-// A per-caller ephemeral control panel - same idea as the mod /panel, scoped to contests. Anyone with
+// A per-caller ephemeral control panel — same idea as the mod /panel, scoped to contests. Anyone with
 // the Event Organizer role (or staff) can open it. Ephemeral = private + no shared pinned message to
 // maintain, so each refresh just re-renders the caller's own message.
 const EPH = 1 << 6;   // MessageFlags.Ephemeral, without importing the enum here

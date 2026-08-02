@@ -1,4 +1,4 @@
-// promote.js - staff promotion votes. Two kinds, same shape:
+// promote.js — staff promotion votes. Two kinds, same shape:
 //   • trial → Mod: /promote-trial opens a post in #mod-announcements (@Mod ping); mods vote advisory 👍/👎,
 //     OWNER confirms → adds the Mod role (auto-nester then strips Trial Mod).
 //   • Mod → Admin: /promote-mod opens a post in #admin-discussion (no admin-announcements) (@Admin ping);
@@ -34,7 +34,7 @@ function embed(rec, resolution, byId) {
       { name: 'Nominated by', value: `<@${rec.byId}>`, inline: true },
       { name: 'Staff vote (anon)', value: `👍 ${rec.up?.length || 0} · 👎 ${rec.down?.length || 0}`, inline: true });
   if (resolution) e.addFields({ name: resolution === 'promoted' ? '✅ Promoted by' : '⛔ Rejected by', value: `<@${byId}>`, inline: true });
-  e.setFooter({ text: '👍/👎 is anonymous + advisory - the owner makes the final call.' });
+  e.setFooter({ text: '👍/👎 is anonymous + advisory. The owner makes the final call.' });
   return e;
 }
 
@@ -56,7 +56,7 @@ async function start(guild, candidate, byId, config, kind = 'trial') {
   const pingRole = config[k.pingKey];
   const rec = { candidateId: candidate.id, byId, up: [], down: [], status: 'open', kind };
   const msg = await ch.send({
-    content: `${pingRole ? `<@&${pingRole}> ` : ''}- promotion vote: should **${candidate.user.username}** become ${k.toLabel === 'Admin' ? 'an' : 'a full'} **${k.toLabel}**?`,
+    content: `${pingRole ? `<@&${pingRole}> ` : ''}Promotion vote: should **${candidate.user.username}** become ${k.toLabel === 'Admin' ? 'an' : 'a full'} **${k.toLabel}**?`,
     embeds: [embed(rec)], components: [voteRow(0, 0, false), decideRow(false)],
     allowedMentions: { roles: pingRole ? [pingRole] : [] },
   });
@@ -88,7 +88,7 @@ async function resolve(interaction, confirmed, config) {
     promoted = await member.roles.add(config[k.addKey], `Promoted to ${k.toLabel} by ${interaction.user.tag}`).then(() => true).catch(() => false);
   await interaction.update({ embeds: [embed(rec, rec.status, interaction.user.id)], components: [voteRow(rec.up.length, rec.down.length, true), decideRow(true, confirmed)] });
   await ownerlog.log(interaction.guild, { emoji: confirmed ? '🏅' : '⛔', title: `Promotion ${confirmed ? 'confirmed' : 'rejected'}`, color: confirmed ? 0x57F287 : 0xED4245,
-    detail: `<@${rec.candidateId}> - ${k.fromLabel} → ${k.toLabel} - by <@${interaction.user.id}>.` });
+    detail: `<@${rec.candidateId}> — ${k.fromLabel} → ${k.toLabel} — by <@${interaction.user.id}>.` });
   return interaction.followUp({ content: confirmed
     ? (promoted ? `✅ Promoted <@${rec.candidateId}> to **${k.toLabel}**${k.note}.` : `✅ Confirmed, but couldn’t add the ${k.toLabel} role (check role hierarchy).`)
     : '⛔ Promotion rejected. Nothing changed.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});

@@ -1,14 +1,14 @@
-// whistleblow.js - Phase 2 of the anon pipe: the whistleblower lane, DM-DELIVERED.
+// whistleblow.js — Phase 2 of the anon pipe: the whistleblower lane, DM-DELIVERED.
 // A channel can't be hidden from anyone holding Discord's Administrator permission, and several FUBU
-// staff do - so a "private" oversight channel would leak to them. The only truly-private delivery on a
+// staff do — so a "private" oversight channel would leak to them. The only truly-private delivery on a
 // server where others have Administrator is a bot DM (no one can read another user's DMs). So a
-// whistleblow is DMed straight to the person(s) the sender entrusts - never posted in any channel.
+// whistleblow is DMed straight to the person(s) the sender entrusts — never posted in any channel.
 //
 // The sender chooses, per report, WHO it goes to and whether they can ever be unmasked:
 //   you        → DM to the head admin only; he can unseal on cause
 //   her        → DM to the server owner only; she can unseal on cause
 //   both       → DM to both; either can unseal on cause
-//   anonymous  → DM to both, but NO identity is stored - heard, never unmaskable
+//   anonymous  → DM to both, but NO identity is stored — heard, never unmaskable
 // Unsealing reveals the author to the entrusted holder (ephemerally) and is recorded on the report.
 // For `anonymous`, nothing identifying is ever written to disk (verified). Cooldown is in-memory only.
 const fs = require('fs');
@@ -32,7 +32,7 @@ const loadState = () => _load(STATE_FILE, { counter: 0, posts: {} });
 const saveState = s => _save(STATE_FILE, s);
 function isConfigured() { const c = loadConfig(); return !!(c.you && c.her); }
 
-const CHOICES = { you: 'Head admin only', her: 'Server owner only', both: 'Head admin + owner', anonymous: 'Anonymous - no one can unmask' };
+const CHOICES = { you: 'Head admin only', her: 'Server owner only', both: 'Head admin + owner', anonymous: 'Anonymous: no one can unmask' };
 function recipientsFor(choice, c) { return choice === 'you' ? [c.you] : choice === 'her' ? [c.her] : [c.you, c.her]; }
 function allowedUnsealers(choice, c) { return choice === 'you' ? [c.you] : choice === 'her' ? [c.her] : choice === 'both' ? [c.you, c.her] : []; }
 
@@ -52,8 +52,8 @@ function reportEmbed(num, text, choice, unsealedBy) {
   const e = new EmbedBuilder().setColor(unsealedBy ? 0xE67E22 : 0x9B59B6).setTitle(`🕊️ Whistleblow #${num}`).setDescription(text)
     .addFields({ name: 'Sender chose', value: CHOICES[choice] || choice, inline: true });
   e.setFooter({ text: choice === 'anonymous'
-    ? 'Anonymous - no identity was stored. This can never be unmasked.'
-    : 'Sealed. Unseal only on cause (threats / doxxing / targeted harassment) - it will be logged.' });
+    ? 'Anonymous. No identity was stored. This can never be unmasked.'
+    : 'Sealed. Unseal only on cause (threats / doxxing / targeted harassment). It will be logged.' });
   if (unsealedBy) e.addFields({ name: '🔓 Unsealed by', value: `<@${unsealedBy}>`, inline: true });
   return e;
 }
@@ -99,7 +99,7 @@ async function submit(guild, member, text, choice) {
   return { ok: true, num, choice, delivered: delivered.length };
 }
 
-// ---- unseal (on cause) - button lives in the recipient's DM -----------------------------------------
+// ---- unseal (on cause) — button lives in the recipient's DM -----------------------------------------
 async function unseal(interaction) {
   const c = loadConfig();
   const num = interaction.customId.split(':')[1];

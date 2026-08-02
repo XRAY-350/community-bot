@@ -1,4 +1,4 @@
-// config.js - read + validate configuration from the environment (systemd EnvironmentFile).
+// config.js — read + validate configuration from the environment (systemd EnvironmentFile).
 // Nothing secret is hardcoded; the token lives only in the env file. Fails fast with a clear
 // message if a required value is missing, so a misconfigured deploy never silently no-ops.
 
@@ -43,12 +43,12 @@ const config = {
   // Assigning this role to a member is the "they've been verified" signal.
   verifiedRoleId: req('VERIFIED_ROLE_ID'),
   rolesChannelId: opt('ROLES_CHANNEL_ID', '1500589790750572555'),  // 🎓┆ʀᴏʟᴇs - bot-owned self-assign pickers
-  // Category for member-facing, thread-based moderation tools (ban/strike appeals) - same home as the
+  // Category for member-facing, thread-based moderation tools (ban/strike appeals) — same home as the
   // mod-apps applicant channel, which the owner already confirmed is a fine spot for this shape of thing.
   appealsCategoryId: opt('APPEALS_CATEGORY_ID', '1531845194134196254'),  // 💭 ᴄᴏɴꜰᴇssɪᴏɴs
 
   // Optional. If set, a thread counts as "pending" (eligible for nudge/stale) only when its
-  // owner still holds this Unverified role - a precise signal that skips people who've left or
+  // owner still holds this Unverified role — a precise signal that skips people who've left or
   // aren't in the verification flow. If unset, "pending" falls back to "owner lacks Verified".
   unverifiedRoleId: opt('UNVERIFIED_ROLE_ID', ''),
 
@@ -57,16 +57,16 @@ const config = {
   cornerChannelId: opt('CORNER_CHANNEL_ID', '1529552895262068846'),
   cornerLogChannelId: opt('CORNER_LOG_CHANNEL_ID', '1531004789025013982'),  // public read-only audit log
   cornerVcId: opt('CORNER_VC_ID', '1531113277776724189'),  // corner voice channel: public see, cornered+mods join+talk
-  // Repeat-cornering-for-the-same-rule alert threshold (NOT auto-strike - just tells staff to consider
+  // Repeat-cornering-for-the-same-rule alert threshold (NOT auto-strike — just tells staff to consider
   // converting to a Strike, with a one-click button). Deliberately tunable: the enforcement-model spec
   // doesn't finalize an exact number, so this is a clearly-labeled default, not a guess baked into logic.
   cornerRepeatAlertThreshold: Number(opt('CORNER_REPEAT_ALERT_THRESHOLD', '3')) || 3,
   // Default duration for a message-flagged Corner (right-click "Send to corner" / the optional-reason
-  // modal) - this is "casual, temporary" per the rules, so it should NOT default to indefinite. Timed,
+  // modal) — this is "casual, temporary" per the rules, so it should NOT default to indefinite. Timed,
   // tunable; staff can still /uncorner early or extend via the corner announcement's buttons.
   cornerDefaultDurationMs: Number(opt('CORNER_DEFAULT_DURATION_MS', String(15 * 60 * 1000))) || 15 * 60 * 1000,
   // How long after a DENIED strike appeal before that same strike can be re-appealed. Not specified by
-  // the enforcement-model spec - tunable, not a silent guess baked into logic.
+  // the enforcement-model spec — tunable, not a silent guess baked into logic.
   strikeAppealCooldownDays: Number(opt('STRIKE_APPEAL_COOLDOWN_DAYS', '7')) || 7,
   // Auto-corner (Rule 9, Right Channel Right Conversation): opening a thread in a general/chat category
   // gets the member a quick timed Corner + the thread deleted. Scoped by CATEGORY (not a hardcoded
@@ -100,7 +100,7 @@ const config = {
   modRoleId: opt('MOD_ROLE_ID', ''),
   adminRoleId: opt('ADMIN_ROLE_ID', '1516179051105226833'),                      // ADMINS-★
   adminDiscussionChannelId: opt('ADMIN_DISCUSSION_CHANNEL_ID', '1530793201751953508'), // 👤┆ᴀᴅᴍɪɴ-ᴅɪsᴄᴜssɪᴏɴ (no admin-announcements, so promotions post here)
-  // Trial Mod - a restricted training tier: may VERIFY, view the dashboard read-only, and CORNER (rule +
+  // Trial Mod — a restricted training tier: may VERIFY, view the dashboard read-only, and CORNER (rule +
   // reason required, ≤ 1h). Everything else stays mod+. Kept here so every gate can see it without reading
   // the modapps config file (same id as .fubu_modapps.json trialModRoleId).
   trialModRoleId: opt('TRIAL_MOD_ROLE_ID', '1532037321740779860'),
@@ -127,7 +127,7 @@ const config = {
   mdniChannelId: opt('MDNI_CHANNEL_ID', '1531720395357687868'),              // 🔞┆ᴍᴅɴɪ (the gated 18+ channel)
   minorAgeRoleId: opt('MINOR_AGE_ROLE_ID', '1516185172213628989'),           // ✰ • 16-17
   adultAgeRoleIds: opt('ADULT_AGE_ROLE_IDS', '1516185300492222618,1516185358415433739,1516209186839466113').split(',').map(s => s.trim()).filter(Boolean), // 18-21 / 21-25 / 25-30+
-  // Mod-dashboard channel - its non-pinned messages get tidied weekly (the pinned panel stays).
+  // Mod-dashboard channel — its non-pinned messages get tidied weekly (the pinned panel stays).
   dashboardChannelId: opt('DASHBOARD_CHANNEL_ID', '1531087673760944331'),
 
   // Channel where the pre-kick warning is @mentioned to unverified members who have NO thread.
@@ -141,7 +141,7 @@ const config = {
   conflictRepingHours: num('CONFLICT_REPING_HOURS', 24), // don't re-flag the same member more often
   conflictMaxPerSweep: num('CONFLICT_MAX_PER_SWEEP', 25), // cap flags per sweep so the channel isn't flooded
 
-  // Daily digest - a 24h recap of every job (posted to the mod-conflict channel) as an embed.
+  // Daily digest — a 24h recap of every job (posted to the mod-conflict channel) as an embed.
   digestEnabled: bool('DIGEST_ENABLED', true),
   digestHour: num('DIGEST_HOUR', 9), // local server-time hour (0-23) to post the daily digest
 
@@ -153,7 +153,7 @@ const config = {
   reactEmoji: opt('REACT_EMOJI', '✅'),
   reactPingRole: bool('REACT_PING_ROLE', true), // ping the Unverified role so members re-see it
 
-  // Feature toggles - all three ship on by default (owner chose "all three").
+  // Feature toggles — all three ship on by default (owner chose "all three").
   featureNudge: bool('FEATURE_NUDGE', true),
   featureStale: bool('FEATURE_STALE', true),
 
@@ -161,11 +161,11 @@ const config = {
   // before deleting their thread. Safety valve: set false to delete the stale thread but not kick.
   staleKick: bool('STALE_KICK', true),
 
-  // Delete threads whose owner has LEFT the server (orphaned - nobody to verify or kick).
+  // Delete threads whose owner has LEFT the server (orphaned — nobody to verify or kick).
   reapOrphans: bool('REAP_ORPHANS', true),
 
   // Delete ALL threads created in the unverified-chat channel, regardless of status or owner
-  // (no threads are allowed there - it's a chat channel, not a thread channel).
+  // (no threads are allowed there — it's a chat channel, not a thread channel).
   purgeWarnThreads: bool('PURGE_WARN_CHANNEL_THREADS', true),
 
   // Nudge timing: flag a pending (unverified) thread once it is older than N hours,
@@ -177,8 +177,8 @@ const config = {
   nudgeRequireImage: bool('NUDGE_REQUIRE_IMAGE', true),
 
   // Reap timing, measured from when a member RECEIVED the Unverified role (unverifiedSince):
-  //   WARN_DAYS - warn (with @mention) this many days after becoming unverified.
-  //   KICK_DAYS - kick this many days after becoming unverified. Must be > WARN_DAYS.
+  //   WARN_DAYS — warn (with @mention) this many days after becoming unverified.
+  //   KICK_DAYS — kick this many days after becoming unverified. Must be > WARN_DAYS.
   warnDays: num('WARN_DAYS', 6),
   kickDays: num('KICK_DAYS', 7),
   // For members already unverified with no recorded date, reconstruct the clock: use their JOIN
@@ -191,18 +191,18 @@ const config = {
   // Smart-watch LLM judge (feature 'smartWatch'). LIVE=false → SHADOW mode: the judge annotates flags +
   // logs what it WOULD suppress, but suppresses nothing (safe first run). Flip LIVE=true only after the
   // shadow log shows it's accurate. suppressThreshold: only auto-suppress a benign verdict at/above this
-  // confidence (and never for child-safety/threat/doxxing - enforced in smartwatch.js).
+  // confidence (and never for child-safety/threat/doxxing — enforced in smartwatch.js).
   smartWatchLive: bool('SMARTWATCH_LIVE', false),
   smartWatchSuppressThreshold: num('SMARTWATCH_SUPPRESS_THRESHOLD', 0.85),
   // Smart-watch LAB (feature 'smartWatchLab'): a private, admin-only evaluation channel. When set (and the
   // feature is on) the judge runs on an EXPANDED term set and posts its would-hide/would-surface verdict
-  // there for admins to grade - and the public watch-log reverts to plain keyword flags (no AI). Dormant
+  // there for admins to grade — and the public watch-log reverts to plain keyword flags (no AI). Dormant
   // until an id is given. The expanded terms only feed the lab (see watchlist.js lab lists).
   smartWatchLabChannelId: opt('SMARTWATCH_LAB_CHANNEL_ID', ''),
   // Fresh-account flag (dashboard-tunable, Watchlist page): mark a watch/lab flag with "⚠ brand-new account"
-  // as a HUMAN heads-up - deliberately NOT fed to the AI judge (which judges the message, not tenure).
+  // as a HUMAN heads-up — deliberately NOT fed to the AI judge (which judges the message, not tenure).
   //   mode 'auto'   → self-calibrating: flag only accounts in the newest N% of the server, so the threshold
-  //                   tightens during a growth spike and loosens as growth slows - no number to babysit.
+  //                   tightens during a growth spike and loosens as growth slows — no number to babysit.
   //   mode 'manual' → flag accounts that joined within smartWatchFreshHours hours (a fixed override).
   //   mode 'off'    → no note.
   smartWatchFreshMode: opt('SMARTWATCH_FRESH_MODE', 'auto'),

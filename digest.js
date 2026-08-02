@@ -1,4 +1,4 @@
-// digest.js - a once-a-day embed recap of every job the bot ran in the last 24h, posted to the
+// digest.js — a once-a-day embed recap of every job the bot ran in the last 24h, posted to the
 // mod-conflict channel. Conflict resolution is tracked across sweeps (received / resolved / remaining).
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
@@ -64,7 +64,7 @@ async function maybePost(state, channel) {
   if (!channel) { console.error('[digest] no channel configured to post the digest'); return false; }
   const daily = state.daily();
   try {
-    await channel.send({ content: '## 📋 FUBU Verify - Daily Digest', embeds: [buildEmbed(daily)], components: buildDigestButtons() });
+    await channel.send({ content: '## 📋 FUBU Verify: Daily Digest', embeds: [buildEmbed(daily)], components: buildDigestButtons() });
     console.log(`[digest] posted (kicked=${daily.kicked} delVerified=${daily.delVerified} delLeft=${daily.delLeft} purged=${daily.purged} warned=${daily.warned} conflictsResolved=${daily.conflictsResolved})`);
     state.resetDaily();
     state.setMeta('lastDigestDate', localDateStr(new Date()));
