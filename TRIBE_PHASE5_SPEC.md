@@ -97,13 +97,53 @@ Design when we get to this step: what a muster actually asks members to do, what
 prompt? auto-generated? contest-adjacent?), and how participation is measured/paid out. Do this AFTER the
 economy + builder + nominate flow are live, since it's the smallest, most flexible piece.
 
-## 9. Valith revamp (LOCKED to happen, content TBD)
-Owner wants Valith rebuilt using the new guided builder once it exists (name/colors/leader title/rank names/
-motto/land purpose all re-set through the new flow rather than hand-edited). **Still need from the owner:**
-Valith's intended identity (keep name? new colors/motto/leader title/rank names?) before actually rebuilding it.
-Don't rebuild it blind — ask when this step comes up.
+## 9. Valith revamp (LOCKED to happen — MOVED TO BUILD ORDER #1, owner: "we should do it first")
+**Current-state audit (done 2026-08-02):** Valith was only ever adopted via `/tribe-admin register`, never
+fully built. It has: name "The Tribe Of Valith" / short "Valith", emoji ⚔️, color `#311414`, a role + leader
+role, a hall channel, and ranks Initiate/Watcher/Sentinel/Vanguard (identical to Cobalt Vigil's — leftover
+default from before personalization existed). It has **no motto, no leaderTitle (defaults "Chief"), no throne
+channel, no voice channel, no category** — it's missing real land entirely, unlike Cobalt Vigil. Current
+leader-role holder is `brew.d` (515565313098776600) — already confirmed ADMINS-★, so the head requirement is
+already satisfied, no reassignment needed.
+**DONE 2026-08-02.** Owner's answers: keep the current name/emoji/color, give Valith its own rank names
+(distinct from Cobalt Vigil), custom leader title. Proposed and executed (no objection):
+- Name/theme: unchanged — "The Tribe Of Valith" / "Valith", ⚔️, `#311414`.
+- Leader title: **Warlord**.
+- Rank names: **Sellsword → Blade → Reaver → Warbringer** (r0→r3, no collision with Warlord).
+- Motto: left blank — settable anytime via `/tribe motto` (existing feature), not re-asked.
 
-## 10. Guided (non-inline) tribe builder — build order item #1
+Built via a one-off standalone script (`/home/ubuntu/apps/fubu-verify-bot/.valith-revamp-tmp.js`, deleted after
+running — do NOT require `index.js` for one-off scripts, it unconditionally `client.login()`s at the bottom
+and isn't guarded, so a second require would double-login). The script: created Valith's category
+(`1533559899240534168`, "⚔️ ᴠᴀʟɪᴛʜ"), throne (`1533559900419133502`), and voice channel
+(`1533559901270442134`), each using Valith's EXISTING role (`1529572527129755738`) and leader role
+(`1531593278665789550`) — no new roles created. Moved the pre-existing hall channel (`1529586412381409462`,
+was named "our-land" sitting in an unrelated shared category) into the new land and renamed it to match the
+framework pattern ("⚔️┆ʜᴀʟʟ"). Renamed the 4 rank roles to match. Updated tribe state (`leaderTitle`,
+`categoryId`, `throneId`, `vcId`, rank names via `tribes.setRankNames`). Blessed every touched channel into
+permguard. State file ownership restored to `ubuntu:ubuntu` after (script ran as root since the bot token env
+file `/home/ubuntu/.fubu_verify_env` is root-only 600, read by systemd before it drops to the `ubuntu` user for
+the live service — a plain `sudo -u ubuntu` can't source it directly).
+
+## 9a. Staff oversight of tribe land (DONE 2026-08-02, owner: "allow admins and mods to see all tribes not
+just the ones they're a part of. trial mods can stay restricted")
+ADMINS-★ and MODS-✰ now get baked-in access to EVERY tribe's private land (category + throne + hall + voice),
+not just tribes they personally belong to — parity with that tribe's own leader role on each channel (view +
+post + manage-messages on text, view + connect + speak + mute/move on voice). **Trial mods are deliberately
+excluded** — they fall through to the ordinary `@everyone` deny, same as any non-member, so they stay
+restricted exactly as before.
+- **Future tribes:** baked into `buildTribe()` in `index.js` — a `staffAllow(perms)` helper adds
+  `opspanel.ADMIN_ROLE_ID` + `opspanel.MOD_ROLE_ID` overwrites alongside the existing leader-role overwrite on
+  every channel `buildTribe()` creates. Live for any `/tribe-admin create` from now on (bot restarted to load
+  it).
+- **Existing tribes:** retrofitted by the same one-off script as the Valith revamp (§9) — applied directly to
+  Cobalt Vigil's 4 existing channels and baked into Valith's newly-built land from the start. Every touched
+  channel re-blessed into permguard so this isn't flagged as drift.
+- If a THIRD tribe is later `register`-adopted (not `create`-built) rather than `create`-built, this same
+  retrofit step needs to be repeated by hand for its existing channels — `register` doesn't touch permission
+  overwrites at all, it just adopts an existing role/channel by id.
+
+## 10. Guided (non-inline) tribe builder — build order item #2
 Owner: "given all of these details the command should probably not be inline." `/tribe-admin create` currently
 takes ~8 inline options and is about to need per-channel name+purpose on top — too much for one slash command.
 New shape: `/tribe-admin create` takes ONLY `leader` inline (must resolve to an ADMINS-★ holder — validate
@@ -112,15 +152,17 @@ follow-up step (select menus / buttons) for colors + style, then a step to name 
 starter channels (throne/hall/voice, or fewer if the owner wants), ending on a **Build** confirm button that
 calls the existing `buildTribe()`. Member-nominate (§7) gets a similar small modal (who + why).
 
-## Build order (current plan, do NOT skip ahead without checking in)
-1. Guided non-inline tribe builder (§10) — IN PROGRESS NEXT
-2. Nominate → approve → accept flow (§7)
-3. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4)
-4. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
-5. Pin the member action guide in each tribe's throne channel (owner: "we also need this pinned in the throne
+## Build order (REORDERED 2026-08-02, owner: "we should do it first" re: Valith — do NOT skip ahead without checking in)
+1. ~~Valith revamp (§9)~~ — DONE 2026-08-02.
+2. ~~Staff oversight of all tribe land (§9a)~~ — DONE 2026-08-02 (came in as an owner request mid-Valith-build,
+   folded into the same session since it touched the same `buildTribe()` code path).
+3. Guided non-inline tribe builder (§10) — CURRENT NEXT STEP
+4. Nominate → approve → accept flow (§7)
+5. Treasury / Glory meters + weekly crown cron (§6) + Offerings (§4)
+6. The shop / `/tribe expand` (§3, §5) including Stronghold Tier (§3a)
+7. Pin the member action guide in each tribe's throne channel (owner: "we also need this pinned in the throne
    so all members know what they can do" — separate from the shop UI, a static reference post)
-6. Valith revamp (§9) — ask owner for Valith's identity first
-7. Rituals (§8) — design pass, then build
+8. Rituals (§8) — design pass, then build
 
 ## Decisions still genuinely open (ask, don't guess)
 - Rally-ping-as-perk: owner said "nsh" which was read as a soft no and NOT included in the shop. If that

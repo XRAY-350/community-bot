@@ -73,20 +73,27 @@ async function buildTribe(guild, opts, config) {
   const corner = config.cornerRoleId;
   const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
   const leaderAllow = leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel] }] : [];
+  // Admins (ADMINS-★) and mods (MODS-✰) can see + moderate every tribe's land, not just ones they belong
+  // to — oversight, not membership. Trial mods deliberately excluded (owner: "trial mods can stay restricted").
+  const staffIds = [opspanel.ADMIN_ROLE_ID, opspanel.MOD_ROLE_ID].filter(Boolean);
+  const staffAllow = perms => staffIds.map(id => ({ id, allow: perms }));
   const cat = await guild.channels.create({ name: `${emoji} ${small ? toSmallCaps(opts.shortName || opts.name) : (opts.shortName || opts.name)}`, type: ChannelType.GuildCategory, reason: 'Tribe land',
-    permissionOverwrites: [{ id: guild.id, deny: [P.ViewChannel] }, { id: role.id, allow: [P.ViewChannel] }, ...leaderAllow, ...deny] });
+    permissionOverwrites: [{ id: guild.id, deny: [P.ViewChannel] }, { id: role.id, allow: [P.ViewChannel] }, ...leaderAllow, ...staffAllow([P.ViewChannel]), ...deny] });
   const throne = await guild.channels.create({ name: chName('throne'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions], deny: [P.SendMessages, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePrivateThreads] },
-    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []), ...deny] });
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
+    ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
   const hall = await guild.channels.create({ name: chName('hall'), type: ChannelType.GuildText, parent: cat.id, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AddReactions, P.EmbedLinks, P.AttachFiles, P.UseExternalEmojis, P.UseExternalStickers, P.MentionEveryone] },
-    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []), ...deny] });
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
+    ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
   const vc = await guild.channels.create({ name: chName('voice'), type: ChannelType.GuildVoice, parent: cat.id, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.Stream, P.UseVAD, P.MentionEveryone] },
-    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []), ...deny] });
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers] }] : []),
+    ...staffAllow([P.ViewChannel, P.Connect, P.Speak, P.MuteMembers, P.MoveMembers]), ...deny] });
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
   const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color,
     pointsName: (opts.pointsName || 'points').slice(0, 20),
