@@ -237,7 +237,13 @@ async function releaseCornerAndAnnounce(guild, uid) {
     if (cornerCh) await cornerCh.send(cornerTimeServedMessage(uid)).catch(e => console.error(`[corner] time-served announce: ${e.message}`));
   } catch { /* announce best-effort */ }
   await logCorner(guild, { emoji: '⛓️‍💥', title: 'TIME SERVED', color: CORNER_GREEN,
-    desc: `<@${uid}>'s sentence ended — auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(r.servedMs)}` });
+    desc: `<@${uid}>'s sentence ended — auto-released, roles restored.\n**By:** the Corner (automatic)${servedSuffix(r.servedMs)}${missedRolesNote(r.missed)}` });
+}
+// A note for the corner-log when some stored roles couldn't be auto-restored (deleted, above the bot's
+// role, or bot-managed), so a mod can fix it by hand instead of the member silently missing roles.
+function missedRolesNote(missed) {
+  if (!missed || !missed.length) return '';
+  return `\n⚠️ **${missed.length} role(s) couldn't be auto-restored** (deleted, above my role, or managed): ${missed.map(id => `<@&${id}>`).join(', ')} — add them back manually if still needed.`;
 }
 
 // Corner a LIST of members in one action — shared by /corner's `also`, the dashboard multi-pick, and the
@@ -309,8 +315,8 @@ async function handleCornerButton(interaction) {
       if (ch) await ch.send(cornerReleasedMessage(userId));
     } catch (e) { console.error(`[corner-btn] announce failed: ${e.message}`); }
     await logCorner(guild, { emoji: '🔓', title: 'RELEASED', color: CORNER_GREEN,
-      desc: `<@${userId}> was released — roles restored.\n**By:** <@${interaction.user.id}>${served}` });
-    return interaction.editReply(`✅ Released <@${userId}> — restored **${r.restored}** role(s)${served}.`);
+      desc: `<@${userId}> was released — roles restored.\n**By:** <@${interaction.user.id}>${served}${missedRolesNote(r.missed)}` });
+    return interaction.editReply(`✅ Released <@${userId}> — restored **${r.restored}** role(s)${r.missed && r.missed.length ? ` · ⚠️ ${r.missed.length} couldn't be restored (see log)` : ''}${served}.`);
   }
   const rec = state.getCornered(userId);
   if (!rec) return interaction.editReply(`<@${userId}> is not in the corner.`);
@@ -633,6 +639,13 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
+      new SlashCommandBuilder().setName('stats').setDescription('A member’s moderation record — corners & strikes over a period')
+        .addUserOption(o => o.setName('user').setDescription('Whose record to pull').setRequired(true))
+        .addStringOption(o => o.setName('period').setDescription('How far back to count (default: 30 days)').setRequired(false)
+          .addChoices({ name: 'Last 7 days', value: '7' }, { name: 'Last 30 days', value: '30' }, { name: 'Last 90 days', value: '90' }, { name: 'All time', value: 'all' }))
+        .addStringOption(o => o.setName('visibility').setDescription('Show to just you (default) or everyone').setRequired(false)
+          .addChoices({ name: 'Private (only you)', value: 'private' }, { name: 'Public (everyone)', value: 'public' }))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods+ can pull a record
       new SlashCommandBuilder().setName('pending').setDescription('Browse open verify threads (paginated)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods verify, so they need /pending too
       // No Discord-level perm gate: trial mods (who lack Manage Roles) need to reach it too. The handler
@@ -2286,6 +2299,47 @@ client.on('interactionCreate', async (interaction) => {
     try { return await handleCorneredList(interaction); }
     catch (e) { console.error(`[cornered] ${e.message}`); return; }
   }
+  if (name === 'stats') {
+    try {
+      const user = interaction.options.getUser('user');
+      const periodOpt = interaction.options.getString('period') || '30';
+      const ephemeral = (interaction.options.getString('visibility') || 'private') !== 'public';
+      const now = Date.now();
+      const cutoff = periodOpt === 'all' ? 0 : now - Number(periodOpt) * 86400000;
+      const periodLabel = periodOpt === 'all' ? 'all time' : `the last ${periodOpt} days`;
+      // Corner history (logCornerHistory: cornerLog[id] = [{ruleIndex, at}]) + strike ledger.
+      const cornerAll = (state.getMeta('cornerLog') || {})[user.id] || [];
+      const cornerInPeriod = cornerAll.filter(e => e.at >= cutoff);
+      const strikeAll = (state.getMeta('strikes') || {})[user.id] || [];
+      const strikeInPeriod = strikeAll.filter(e => e.at >= cutoff);
+      const activeStrikes = strikeAll.filter(e => e.active);
+      const activeUnits = strikes.totalUnits(state, user.id);
+      const tier = strikes.tierName(activeUnits);
+      const corneredRec = state.getCornered(user.id);
+      // Most-cited rule across both strikes and corners in the window.
+      const ruleCounts = {};
+      for (const e of [...strikeInPeriod, ...cornerInPeriod]) if (e.ruleIndex) ruleCounts[e.ruleIndex] = (ruleCounts[e.ruleIndex] || 0) + 1;
+      const topRule = Object.entries(ruleCounts).sort((a, b) => b[1] - a[1])[0];
+      const topRuleStr = topRule ? `Rule ${topRule[0]}${rules.byIndex(Number(topRule[0]))?.title ? `: ${rules.byIndex(Number(topRule[0])).title}` : ''} — cited **${topRule[1]}×**` : '—';
+      const fmtCorner = e => `⛓️ <t:${Math.floor(e.at / 1000)}:R>${e.ruleIndex ? ` · Rule ${e.ruleIndex}` : ''}`;
+      const fmtStrike = e => `${e.active ? '⚠️' : '✔️'} <t:${Math.floor(e.at / 1000)}:R> · ${strikes.formatUnits(e.weight)}u${e.ruleIndex ? ` · Rule ${e.ruleIndex}` : (e.reason ? ` · ${e.reason.slice(0, 40)}` : '')}`;
+      const recentCorners = cornerInPeriod.slice(-5).reverse().map(fmtCorner).join('\n') || '_none_';
+      const recentStrikes = strikeInPeriod.slice(-5).reverse().map(fmtStrike).join('\n') || '_none_';
+      const embed = new EmbedBuilder()
+        .setColor(activeUnits > 0 || corneredRec ? CORNER_RED : 0x57F287)
+        .setAuthor({ name: `${user.tag} — moderation record`, iconURL: user.displayAvatarURL() })
+        .setDescription(`Record for <@${user.id}> over **${periodLabel}**.${corneredRec ? `\n\n🚫 **Currently in the corner**${corneredRec.releaseAt ? ` — releases ${relPhrase(corneredRec.releaseAt)}` : ' (indefinite)'}.` : ''}`)
+        .addFields(
+          { name: '⛓️ Corners', value: `**${cornerInPeriod.length}** in ${periodLabel}\n**${cornerAll.length}** all-time`, inline: true },
+          { name: '⚠️ Strikes', value: `**${strikeInPeriod.length}** received in ${periodLabel}\n**${strikeAll.length}** all-time\n**${activeStrikes.length} active** — ${strikes.formatUnits(activeUnits)} units (${tier})`, inline: true },
+          { name: '🎯 Most-cited rule', value: topRuleStr, inline: false },
+          { name: 'Recent corners', value: recentCorners.slice(0, 1024), inline: true },
+          { name: 'Recent strikes', value: recentStrikes.slice(0, 1024), inline: true },
+        )
+        .setFooter({ text: `Pulled by ${interaction.user.tag}` }).setTimestamp();
+      return interaction.reply({ content: `Record for <@${user.id}>`, embeds: [embed], flags: ephemeral ? MessageFlags.Ephemeral : undefined, allowedMentions: { parse: [] } });
+    } catch (e) { console.error(`[stats] ${e.message}`); return interaction.reply({ content: 'Could not pull that record.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+  }
   if (name === 'pending') {
     if (!modClicked(interaction) && !isTrialMod(interaction)) return interaction.reply({ content: 'Only staff can use this.', flags: MessageFlags.Ephemeral });
     try { return await interaction.reply({ ...(await renderPending(0)), flags: MessageFlags.Ephemeral }); }
@@ -2980,8 +3034,8 @@ client.on('interactionCreate', async (interaction) => {
         if (cornerCh) await cornerCh.send(cornerReleasedMessage(user.id));
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       await logCorner(guild, { emoji: '🔓', title: 'RELEASED', color: CORNER_GREEN,
-        desc: `<@${user.id}> was released — roles restored.\n**By:** <@${interaction.user.id}>${served}` });
-      return interaction.editReply(`✅ Released ${user} from the corner. Restored **${r.restored}** role(s)${served}.`);
+        desc: `<@${user.id}> was released — roles restored.\n**By:** <@${interaction.user.id}>${served}${missedRolesNote(r.missed)}` });
+      return interaction.editReply(`✅ Released ${user} from the corner. Restored **${r.restored}** role(s)${r.missed && r.missed.length ? ` · ⚠️ ${r.missed.length} couldn't be restored (see log)` : ''}${served}.`);
     }
   } catch (err) {
     console.error(`[corner] command error: ${err.message}`);

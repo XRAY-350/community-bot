@@ -21,7 +21,7 @@ const REGISTRY = [
   { key: 'panel',       audience: 'staff',  built: true,  commands: ['panel', 'staff'] },
   { key: 'features',    audience: 'core',   built: true,  commands: ['features'] }, // owner-only feature toggle command
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
-  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered'], contexts: ['Send to corner'] },
+  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike'], contexts: ['Strike'] },
   { key: 'watchlist',   audience: 'staff',  built: true,  commands: ['watchlist', 'watchlist-terms', 'watchlist-suggest', 'unban'], contexts: ['Report to watchlist'] },
   { key: 'suggestions', audience: 'member', built: true,  commands: ['suggest', 'suggest-setup'],

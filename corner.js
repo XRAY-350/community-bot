@@ -195,6 +195,13 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   if (byId && byId === member.id) {
     return { ok: false, error: "you can't corner yourself." };
   }
+  // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
+  // use PUT semantics computed off the LOCAL cache — a stale/partial member (e.g. from a message event,
+  // or roles changed since it was last fetched) would (a) store an incomplete snapshot AND (b) silently
+  // WIPE any role that's on Discord but missing from the cache (it's not in the PUT, so it's removed) —
+  // and since it was never snapshotted, it's lost forever on release. This is the root of "came back
+  // from the corner missing some roles". Fetching fresh here closes that whole class.
+  try { member = await member.fetch(true); } catch (e) { console.error('[corner] member refresh before strip:', e.message); }
   const existing = state.getCornered(member.id);
   if (existing) {
     // Already cornered — just update the release time (don't re-strip).
@@ -248,7 +255,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
 async function uncorner(guild, userId, state, reason = 'Released from the corner') {
   const rec = state.getCornered(userId);
   const servedMs = rec && rec.at ? Date.now() - rec.at : null;   // how long they were in the corner
-  const member = await guild.members.fetch(userId).catch(() => null);
+  const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null);
   if (!member) { clearTimer(userId); state.clearCornered(userId); return { ok: true, left: true, servedMs }; }
   // Same as corner: role edits fail on a timed-out member — lift the timeout, restore roles, put it back.
   let restoreTimeoutUntil = null;
@@ -260,20 +267,39 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
     if (restoreTimeoutUntil && restoreTimeoutUntil > Date.now())
       await member.timeout(restoreTimeoutUntil - Date.now(), 'restoring timeout after release').catch(() => {});
   };
+  const missed = [];   // stored roles we could NOT put back (deleted / above the bot / add failed)
   try {
     await member.roles.remove(config.cornerRoleId, reason).catch(() => {});
     if (rec && Array.isArray(rec.roles) && rec.roles.length) {
-      const valid = rec.roles.filter(id => guild.roles.cache.has(id)); // skip roles deleted since
-      if (valid.length) await member.roles.add(valid, reason);
+      const me = await guild.members.fetchMe();
+      const botTop = me.roles.highest.position;
+      // Only try roles that still exist, sit below the bot's top role, and aren't bot-managed — anything
+      // else can't be added and would make Discord reject the WHOLE bulk add, costing them every role.
+      const restorable = [], skip = [];
+      for (const id of rec.roles) {
+        const r = guild.roles.cache.get(id);
+        (r && !r.managed && r.position < botTop ? restorable : skip).push(id);
+      }
+      missed.push(...skip);
+      if (restorable.length) {
+        try {
+          await member.roles.add(restorable, reason);
+        } catch (bulkErr) {
+          // One unexpected bad role shouldn't cost them the rest — fall back to per-role adds.
+          for (const id of restorable) { await member.roles.add(id, reason).catch(() => missed.push(id)); }
+          console.error(`[uncorner] ${userId}: bulk restore failed (${bulkErr.message}); fell back to per-role.`);
+        }
+      }
     }
   } catch (err) {
     await restoreTimeout();
     return { ok: false, error: err.message };
   }
+  if (missed.length) console.error(`[uncorner] ${userId}: ${missed.length} stored role(s) could not be restored: ${missed.join(', ')}`);
   await restoreTimeout(); // keep any active timeout after release
   clearTimer(userId);
   state.clearCornered(userId);
-  return { ok: true, restored: rec && rec.roles ? rec.roles.length : 0, servedMs };
+  return { ok: true, restored: rec && rec.roles ? rec.roles.length - missed.length : 0, missed, servedMs };
 }
 
 // Release everyone whose timed corner has expired. Returns the list of released user ids (so the
