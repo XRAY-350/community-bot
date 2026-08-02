@@ -17,6 +17,7 @@ const { buildVerifyPanel, handleVerifyButton, isVerifyButton } = require('./veri
 const { activeThreads } = require('./threads');
 const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
+const wordfilter = require('./wordfilter');
 const suggest = require('./suggest');
 const suggestions = require('./suggestions');
 const confessions = require('./confessions');
@@ -639,6 +640,14 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
+      new SlashCommandBuilder().setName('wordfilter').setDescription('Auto-delete messages containing a word/phrase for a period going forward')
+        .addSubcommand(s => s.setName('add').setDescription('Start auto-deleting messages that contain a word/phrase')
+          .addStringOption(o => o.setName('word').setDescription('The word or phrase to auto-delete').setRequired(true))
+          .addStringOption(o => o.setName('duration').setDescription('How long — e.g. 30m, 2h, 3d (blank = until you remove it)').setRequired(false)))
+        .addSubcommand(s => s.setName('list').setDescription('Show the active word filters'))
+        .addSubcommand(s => s.setName('remove').setDescription('Stop an active word filter early')
+          .addStringOption(o => o.setName('word').setDescription('The filtered word/phrase to stop').setRequired(true)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
       new SlashCommandBuilder().setName('stats').setDescription('A member’s moderation record — corners & strikes over a period')
         .addUserOption(o => o.setName('user').setDescription('Whose record to pull').setRequired(true))
         .addStringOption(o => o.setName('period').setDescription('How far back to count (default: 30 days)').setRequired(false)
@@ -803,8 +812,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('features').setDescription('View or toggle bot features (Owner only)')
         .addSubcommand(s => s.setName('list').setDescription('Show every feature and whether it’s on'))
         .addSubcommand(s => s.setName('toggle').setDescription('Turn a feature on or off')
-          .addStringOption(o => o.setName('feature').setDescription('Which feature').setRequired(true)
-            .addChoices(...features.REGISTRY.map(r => ({ name: r.key, value: r.key }))))
+          .addStringOption(o => o.setName('feature').setDescription('Which feature').setRequired(true).setAutocomplete(true))   // autocomplete, not choices: Discord caps choices at 25 and the registry outgrew it
           .addBooleanOption(o => o.setName('on').setDescription('On or off').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('permguard').setDescription('Permission-drift guard (Owner only)')
@@ -1780,6 +1788,12 @@ client.on('messageCreate', async (msg) => {
     if (!msg.content) return;
     const member = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
     if (!member) return;
+    // Temporary word filter: staff arm a word/phrase to be auto-deleted for a period. Applies to
+    // everyone EXCEPT staff (so mods can still discuss the term). Deleting ends the scan for this message.
+    if (features.enabled('wordFilter') && !opspanel.memberTier(member)) {
+      const hit = wordfilter.check(state, msg.content);
+      if (hit) { await msg.delete().catch(e => console.error('[wordfilter] delete:', e.message)); return; }
+    }
     // LAB pass (independent, private admin channel) — runs BEFORE the production routing so the watchlist
     // strict early-return below doesn't skip it. Staff excluded, same population as loose. Own try/catch so
     // an AI hiccup never blocks the real keyword flags that follow.
@@ -1845,6 +1859,16 @@ client.on('interactionCreate', async (interaction) => {
         // crossed the ban threshold (not appealable this way — see strikeAppeals.js's submit()).
         return interaction.respond(strikes.autocompleteChoices(state, interaction.user.id, { query: focused, excludeCrossedBan: true }));
       } catch (e) { console.error('[appeal-strike] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
+    }
+    if (interaction.commandName === 'features') {
+      try {
+        const focused = (interaction.options.getFocused() || '').toLowerCase();
+        const choices = features.REGISTRY
+          .filter(r => !focused || r.key.toLowerCase().includes(focused))
+          .slice(0, 25)
+          .map(r => ({ name: `${r.key}${features.enabled(r.key) ? ' (on)' : ' (off)'}`.slice(0, 100), value: r.key }));
+        return interaction.respond(choices);
+      } catch (e) { console.error('[features] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
     // Role-filtered member pickers: only list members who actually hold the applicable role, so the
     // list in the command matches the dropdowns (class fix). promote-trial/demote-trial → trial mods;
@@ -2316,6 +2340,18 @@ client.on('interactionCreate', async (interaction) => {
       const activeUnits = strikes.totalUnits(state, user.id);
       const tier = strikes.tierName(activeUnits);
       const corneredRec = state.getCornered(user.id);
+      // Time sentenced (sum of set corner durations; indefinite corners have no fixed sentence) and time
+      // served (actual time in the corner, recorded on release; the ongoing corner is counted live).
+      let sentencedMs = 0, servedMs = 0, indefinite = 0, matchedActive = false;
+      for (const e of cornerInPeriod) {
+        if (e.durationMs) sentencedMs += e.durationMs; else indefinite++;
+        const isActive = corneredRec && corneredRec.at && Math.abs((e.at || 0) - corneredRec.at) < 5000;   // tolerate legacy ms drift between the record and history entry
+        if (isActive) { servedMs += (now - corneredRec.at); matchedActive = true; }   // ongoing corner: live elapsed
+        else if (e.servedMs != null) servedMs += e.servedMs;                            // released corners: exact time recorded on release
+        else if (e.durationMs) servedMs += e.durationMs;                                // older corner that predates served-tracking: use its sentence as the best proxy
+      }
+      // Currently cornered but no history entry matched (legacy record): still count the ongoing time.
+      if (corneredRec && corneredRec.at && !matchedActive && corneredRec.at >= cutoff) servedMs += (now - corneredRec.at);
       // Most-cited rule across both strikes and corners in the window.
       const ruleCounts = {};
       for (const e of [...strikeInPeriod, ...cornerInPeriod]) if (e.ruleIndex) ruleCounts[e.ruleIndex] = (ruleCounts[e.ruleIndex] || 0) + 1;
@@ -2332,6 +2368,7 @@ client.on('interactionCreate', async (interaction) => {
         .addFields(
           { name: '⛓️ Corners', value: `**${cornerInPeriod.length}** in ${periodLabel}\n**${cornerAll.length}** all-time`, inline: true },
           { name: '⚠️ Strikes', value: `**${strikeInPeriod.length}** received in ${periodLabel}\n**${strikeAll.length}** all-time\n**${activeStrikes.length} active** — ${strikes.formatUnits(activeUnits)} units (${tier})`, inline: true },
+          { name: '⏱️ Corner time', value: `Sentenced: **${sentencedMs ? humanDur(sentencedMs) : '—'}**${indefinite ? ` _(+${indefinite} open-ended)_` : ''}\nServed (all corners): **${servedMs ? humanDur(servedMs) : '—'}**${corneredRec ? ' _(incl. ongoing)_' : ''}`, inline: true },
           { name: '🎯 Most-cited rule', value: topRuleStr, inline: false },
           { name: 'Recent corners', value: recentCorners.slice(0, 1024), inline: true },
           { name: 'Recent strikes', value: recentStrikes.slice(0, 1024), inline: true },
@@ -2339,6 +2376,36 @@ client.on('interactionCreate', async (interaction) => {
         .setFooter({ text: `Pulled by ${interaction.user.tag}` }).setTimestamp();
       return interaction.reply({ content: `Record for <@${user.id}>`, embeds: [embed], flags: ephemeral ? MessageFlags.Ephemeral : undefined, allowedMentions: { parse: [] } });
     } catch (e) { console.error(`[stats] ${e.message}`); return interaction.reply({ content: 'Could not pull that record.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+  }
+  if (name === 'wordfilter') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can manage word filters.', flags: MessageFlags.Ephemeral });
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'add') {
+      const word = (interaction.options.getString('word') || '').trim();
+      const durStr = (interaction.options.getString('duration') || '').trim();
+      let durationMs = null;
+      if (durStr) { durationMs = corner.parseDuration(durStr); if (!durationMs) return interaction.reply({ content: 'Bad duration — use e.g. `30m`, `2h`, `3d` (or leave it blank for no expiry).', flags: MessageFlags.Ephemeral }); }
+      const r = wordfilter.add(state, word, durationMs, interaction.user.id);
+      if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
+      const until = r.filter.expiresAt ? `until <t:${Math.floor(r.filter.expiresAt / 1000)}:f> (<t:${Math.floor(r.filter.expiresAt / 1000)}:R>)` : 'until removed (no expiry)';
+      await logCorner(interaction.guild, { emoji: '🧹', title: r.updated ? 'WORD FILTER UPDATED' : 'WORD FILTER ADDED', color: CORNER_AMBER,
+        desc: `Auto-deleting messages containing \`${word}\` ${until}.\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+      return interaction.reply({ content: `🧹 ${r.updated ? 'Updated' : 'Now auto-deleting'} messages containing \`${word}\` ${until}. (Staff are exempt.)`, flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'list') {
+      const list = wordfilter.active(state);
+      if (!list.length) return interaction.reply({ content: 'No active word filters.', flags: MessageFlags.Ephemeral });
+      const lines = list.map(f => `• \`${f.word}\` — ${f.expiresAt ? `expires <t:${Math.floor(f.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${f.count || 0}** · by <@${f.byId}>`);
+      return interaction.reply({ content: `🧹 **Active word filters:**\n${lines.join('\n')}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'remove') {
+      const word = (interaction.options.getString('word') || '').trim();
+      const r = wordfilter.remove(state, word);
+      if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
+      await logCorner(interaction.guild, { emoji: '🧹', title: 'WORD FILTER REMOVED', color: CORNER_GREEN,
+        desc: `Stopped auto-deleting \`${r.removed.word}\` (deleted **${r.removed.count || 0}** message(s) while active).\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+      return interaction.reply({ content: `✅ Stopped the filter for \`${r.removed.word}\` — it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
+    }
   }
   if (name === 'pending') {
     if (!modClicked(interaction) && !isTrialMod(interaction)) return interaction.reply({ content: 'Only staff can use this.', flags: MessageFlags.Ephemeral });

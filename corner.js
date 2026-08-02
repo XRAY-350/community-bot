@@ -173,10 +173,13 @@ function rolesToStrip(guild, member) {
 // crosses a threshold — never auto-escalates to a Strike; a human always converts. Covers both halves
 // of the escalation rule: repeating while still cornered (the "already cornered" branch below) and
 // separate trips over time (a fresh corner after a prior release).
-function logCornerHistory(state, memberId, ruleIndex) {
+function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Date.now()) {
   const all = state.getMeta('cornerLog') || {};
   const list = all[memberId] || [];
-  list.push({ ruleIndex: ruleIndex || null, at: Date.now() });
+  // durationMs = the sentence length (null = indefinite); servedMs is filled in on release (uncorner).
+  // `at` is passed from corner() so it MATCHES the active record's start time, letting uncorner attribute
+  // served time to the right entry.
+  list.push({ ruleIndex: ruleIndex || null, at, durationMs: durationMs || null, servedMs: null });
   all[memberId] = list;
   state.setMeta('cornerLog', all);
   if (!ruleIndex) return 1;
@@ -207,7 +210,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
     // Already cornered — just update the release time (don't re-strip).
     state.setCornered(member.id, { ...existing, releaseAt: durationMs ? now + durationMs : null, by: byId });
     armTimer(guild, member.id, durationMs ? now + durationMs : null);   // re-arm on a re-corner / duration change
-    const repeatCount = logCornerHistory(state, member.id, ruleIndex);
+    const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
   }
   // Guard: the bot can't touch roles positioned at/above its OWN highest role — trying would fail with a
@@ -255,6 +258,16 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
 async function uncorner(guild, userId, state, reason = 'Released from the corner') {
   const rec = state.getCornered(userId);
   const servedMs = rec && rec.at ? Date.now() - rec.at : null;   // how long they were in the corner
+  // Record served time back onto the matching corner-history entry (same start timestamp) so /stats can
+  // total "time served" over a period. Best-effort; covers the member-left path too since it runs first.
+  if (rec && rec.at && servedMs != null) {
+    const all = state.getMeta('cornerLog') || {};
+    const list = all[userId];
+    if (Array.isArray(list)) {
+      const entry = [...list].reverse().find(e => e.at === rec.at);
+      if (entry && entry.servedMs == null) { entry.servedMs = servedMs; state.setMeta('cornerLog', all); }
+    }
+  }
   const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null);
   if (!member) { clearTimer(userId); state.clearCornered(userId); return { ok: true, left: true, servedMs }; }
   // Same as corner: role edits fail on a timed-out member — lift the timeout, restore roles, put it back.

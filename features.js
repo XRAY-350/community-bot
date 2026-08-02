@@ -23,6 +23,7 @@ const REGISTRY = [
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
   { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike'], contexts: ['Strike'] },
+  { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
   { key: 'watchlist',   audience: 'staff',  built: true,  commands: ['watchlist', 'watchlist-terms', 'watchlist-suggest', 'unban'], contexts: ['Report to watchlist'] },
   { key: 'suggestions', audience: 'member', built: true,  commands: ['suggest', 'suggest-setup'],
     help: { name: '💡 `/suggest` — pitch an idea', value: 'Have an idea to make the server better? `/suggest` posts it for the community to vote 👍/👎, and staff review the ones people like. One clear idea per suggestion works best.' } },
