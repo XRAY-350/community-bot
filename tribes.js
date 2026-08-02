@@ -77,6 +77,27 @@ function addTides(key, userId, n = 1) {
   save(s); return t.tides[userId];
 }
 function getTides(key, userId) { const t = get(key); return ((t && t.tides) || {})[userId] || 0; }
+
+// "Veterans" = anyone who has EVER been in a tribe. Loyalty model: your first tribe is a free self-join,
+// but once you've been in one you can't self-join again — a new tribe must accept you (request/invite).
+// Marked whenever any tribe role is added (guildMemberUpdate) — permanent history, survives release.
+function markVeteran(userId) { const s = load(); if (!s.veterans) s.veterans = {}; if (!s.veterans[userId]) { s.veterans[userId] = Date.now(); save(s); } }
+function isVeteran(userId) { return !!(load().veterans || {})[userId]; }
+
+// Authoritative tribe membership — the SOURCE OF TRUTH for who is legitimately in a tribe. Set ONLY by
+// sanctioned flows (picker first-join / invite / request-approve / banish). The guildMemberUpdate guard
+// reverts any manual role add/strip that disagrees with this. Joining also stamps veteran + join-time.
+function setMembership(key, userId, isMember) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return;
+  if (!t.members) t.members = {};
+  if (isMember) {
+    t.members[userId] = true;
+    if (!s.veterans) s.veterans = {}; if (!s.veterans[userId]) s.veterans[userId] = Date.now();
+    if (!t.joinedAt) t.joinedAt = {}; if (!t.joinedAt[userId]) t.joinedAt[userId] = Date.now();
+  } else { delete t.members[userId]; }
+  save(s);
+}
+function isAuthorized(key, userId) { return !!((get(key) || {}).members || {})[userId]; }
 function topTides(key, n = 15) {
   const tides = (get(key) || {}).tides || {};
   return Object.entries(tides).sort((a, b) => b[1] - a[1]).slice(0, n).map(([userId, points]) => ({ userId, points }));
@@ -116,4 +137,5 @@ function standings(guild) {
 
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER,
-  addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex, STATE_FILE };
+  addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
+  markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE };

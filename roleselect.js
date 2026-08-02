@@ -124,6 +124,21 @@ function sectionBlock(key) {
   return { content: heading, components: chunk(items, 5).map(c => toggleRow('roleselect_toggle', c)) };
 }
 
+// The Tribes block — a descriptive section + a pledge dropdown. The loyalty rules (first tribe free,
+// then release + acceptance) are enforced in the roleselect_tribe handler, not here. Null if no tribes.
+function tribeBlock() {
+  const tribes = require('./tribes');
+  const list = tribes.all();
+  if (!list.length) return null;
+  const lines = list.map(t => `> ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.motto ? ` — *${t.motto}*` : ''}`);
+  const content = '## 🏴 Tribes\n'
+    + 'Pledge your allegiance. Your **first** tribe is a free choice — but once you join, you can’t leave or switch on your own: a **Warden must release you**, and after that any new tribe must **accept you** (`/request-role` or a Warden invite).\n\n'
+    + lines.join('\n');
+  const menu = new StringSelectMenuBuilder().setCustomId('roleselect_tribe').setPlaceholder('Pledge to a tribe…')
+    .addOptions(list.slice(0, 25).map(t => ({ label: `${t.emoji || '🏴'} ${t.shortName || t.name}`.slice(0, 100), value: t.key, description: (t.motto || 'A tribe of the server').slice(0, 100) })));
+  return { content, components: [new ActionRowBuilder().addComponents(menu)] };
+}
+
 // Fixed 16-slot layout — index N always means the same thing, so a section's heading never moves even
 // when other sections gain/lose roles. Keep this in sync with SECTION_BLOCK_INDEX above.
 function buildBlocks() {
@@ -144,7 +159,27 @@ function buildBlocks() {
     sectionBlock('misc'),
     { files: dividerAttachment() },
     { content: copy.roleselect.colorHeading, components: [colorSelectRow()] },
-  ];
+    { files: dividerAttachment() },
+    tribeBlock(),
+  ].filter(Boolean);
+}
+
+// Append the Tribes block to an ALREADY-BUILT #roles (the picker is idempotent-built, so a full rebuild
+// would skip). Posts a divider + the block and tracks the new message IDs. Skips if already appended.
+async function appendTribeBlock(guild, channelId) {
+  const ch = await guild.channels.fetch(channelId).catch(() => null);
+  if (!ch) return { ok: false, error: 'roles channel not found' };
+  const block = tribeBlock();
+  if (!block) return { ok: false, error: 'no tribes registered' };
+  const st = _load();
+  // idempotency: bail if a roleselect_tribe menu is already posted in the channel
+  const existing = await ch.messages.fetch({ limit: 50 }).catch(() => null);
+  if (existing && [...existing.values()].some(m => m.components?.some(r => r.components?.some(c => c.customId === 'roleselect_tribe'))))
+    return { ok: true, alreadyPosted: true };
+  const div = dividerAttachment();
+  if (div.length) { const dm = await ch.send({ files: div }); (st.messageIds ||= []).push(dm.id); await new Promise(r => setTimeout(r, 500)); }
+  const m = await ch.send(block); (st.messageIds ||= []).push(m.id); _save(st);
+  return { ok: true, id: m.id };
 }
 
 // Delete every existing message in #roles (the old plain-text + Carl-bot-reaction system) and post the
@@ -197,6 +232,6 @@ async function rebuildFromIndex(guild, channelId, fromIndex) {
 }
 
 module.exports = {
-  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex,
+  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex, appendTribeBlock,
   loadSections, addRoleToSection, removeRoleFromSection, SECTION_ORDER, SECTION_TITLE, SECTION_BLOCK_INDEX,
 };

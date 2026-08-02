@@ -1384,6 +1384,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));   // block minor STAFF from the 18+ channel
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
+    await enforceTribeMembership(newMember).catch(e => console.error('[tribe-guard]', e.message));   // revert manual tribe-role tampering
     if (!config.unverifiedRoleId || !oldMember || oldMember.partial) return;
     const hadU = oldMember.roles.cache.has(config.unverifiedRoleId);
     const hasU = newMember.roles.cache.has(config.unverifiedRoleId);
@@ -1904,6 +1905,20 @@ async function applyTribeRank(guild, tribe, member, rankIndex, reason, announce 
     }
   } catch (e) { console.error('[tribe-rank] apply:', e.message); }
 }
+// Membership guard: the ONLY legitimate ways in/out of a tribe are the #roles picker (first join),
+// /request-role approval, /tribe invite, and /tribe banish — each updates authoritative membership
+// (tribes.setMembership). Any MANUAL role add or strip disagrees with it and is reverted here. One
+// corrective action per fire; after it, authorized === hasRole so subsequent fires no-op (no loop).
+async function enforceTribeMembership(member) {
+  if (member.user.bot) return;
+  for (const t of tribes.all()) {
+    const authorized = tribes.isAuthorized(t.key, member.id);
+    const hasRole = member.roles.cache.has(t.roleId);
+    if (authorized === hasRole) continue;
+    if (authorized && !hasRole) await member.roles.add(t.roleId, 'Tribe guard: manual strip reverted — release is via /tribe banish').catch(() => {});
+    else await member.roles.remove(t.roleId, 'Tribe guard: manual add reverted — join via #roles / request / invite').catch(() => {});
+  }
+}
 // Auto-promote (never demote) a member to the highest rank their tenure + Tides have earned.
 async function maybePromoteTribeRank(guild, tribeKey, member) {
   const tribe = tribes.get(tribeKey); if (!tribe || !(tribe.ranks || []).length) return;
@@ -2197,6 +2212,22 @@ client.on('interactionCreate', async (interaction) => {
   // same group. Age additionally refuses outright once Verified (registration lock; index.js's
   // enforceRegistrationLock is the backstop either way, but this avoids the confusing "applied then
   // silently reverted" experience).
+  // #roles Tribes picker — loyalty model: first tribe is a free self-join; after that you can't self-join
+  // (must be accepted) and can't switch/leave (a Warden must banish you first).
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'roleselect_tribe') {
+    const tribe = tribes.get(interaction.values[0]);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    const member = interaction.member;
+    const current = tribes.memberTribe(member);
+    if (current) return interaction.reply({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t leave or switch on your own — a **Warden must release you** first (\`/tribe banish\`).`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (tribes.isVeteran(member.id)) return interaction.reply({ content: `You’ve pledged to a tribe before, so you can’t just self-join — **${tribe.shortName || tribe.name}** has to **accept** you. Use \`/request-role\` to petition, or ask a Warden to invite you.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
+    const ok = await member.roles.add(tribe.roleId, 'First tribe — self-join via #roles').then(() => true).catch(() => false);
+    if (!ok) { tribes.setMembership(tribe.key, member.id, false); return interaction.editReply('Couldn’t add the tribe role — tell an admin.'); }
+    if (tribe.hallId) { const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
+    return interaction.editReply(`${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}** — welcome. This is your allegiance now; a Warden must release you before you could ever join another.`);
+  }
   if (interaction.isStringSelectMenu?.() && (interaction.customId === 'roleselect_age' || interaction.customId === 'roleselect_color')) {
     const isAge = interaction.customId === 'roleselect_age';
     if (isAge && config.verifiedRoleId && interaction.member.roles.cache.has(config.verifiedRoleId)) {
@@ -2373,6 +2404,12 @@ client.on('interactionCreate', async (interaction) => {
       }
       if (id.startsWith('rolereq_')) {
         if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can approve/deny role requests.', flags: MessageFlags.Ephemeral });
+        // If APPROVING a tribe-role request, update authoritative membership FIRST so the guard honors it.
+        if (id.startsWith('rolereq_ok:')) {
+          const [, reqUid, reqRoleId, reqAct] = interaction.customId.split(':');
+          const reqTribe = tribes.getByRole(reqRoleId);
+          if (reqTribe) tribes.setMembership(reqTribe.key, reqUid, reqAct !== 'remove');
+        }
         return await rolereq.handleButton(interaction);
       }
       if (id.startsWith('appeal_')) {
@@ -3188,8 +3225,9 @@ client.on('interactionCreate', async (interaction) => {
         const other = tribes.memberTribe(target);
         if (other && other.key !== tribe.key) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}** — a member can only be in one tribe. Banish them there first.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        tribes.setMembership(tribe.key, target.id, true);   // authorize BEFORE adding so the guard honors it
         const ok = await target.roles.add(tribe.roleId, `Tribe invite by ${interaction.user.tag}`).then(() => true).catch(() => false);
-        if (!ok) return interaction.editReply('Couldn’t add the tribe role — make sure my role sits above it.');
+        if (!ok) { tribes.setMembership(tribe.key, target.id, false); return interaction.editReply('Couldn’t add the tribe role — make sure my role sits above it.'); }
         if (tribe.hallId) {
           const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null);
           if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new member joins ${tribe.shortName || tribe.name}\n-# welcomed by <@${interaction.user.id}>\n> <@${target.id}>, the tribe stands with you.`, allowedMentions: { users: [target.id] } }).catch(() => {});
@@ -3201,8 +3239,9 @@ client.on('interactionCreate', async (interaction) => {
         if (!target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         if (tribe.leaderRoleId && target.roles.cache.has(tribe.leaderRoleId)) return interaction.reply({ content: 'You can’t banish the tribe’s leader.', flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        tribes.setMembership(tribe.key, target.id, false);   // de-authorize BEFORE removing so the guard honors it
         const ok = await target.roles.remove(tribe.roleId, `Tribe banish by ${interaction.user.tag}`).then(() => true).catch(() => false);
-        return interaction.editReply(ok ? `✅ Removed <@${target.id}> from **${tribe.shortName || tribe.name}**.` : 'Couldn’t remove the role — check my role position.');
+        return interaction.editReply(ok ? `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` : 'Couldn’t remove the role — check my role position.');
       }
       if (sub === 'announce') {
         if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });
