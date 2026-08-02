@@ -2381,10 +2381,39 @@ client.on('interactionCreate', async (interaction) => {
     const r = await strikeAppeals.submit(interaction.guild, interaction.member, state, interaction.values[0], null);
     return interaction.editReply(r.ok ? `⚖️ Opened your strike appeal in <#${r.threadId}>. Head there to explain it to staff.` : `❌ ${r.msg}`);
   }
-  // Public member hub buttons (from /dashboard and the pinned panel) — all ephemeral, per clicker.
-  if (interaction.isButton?.() && interaction.customId === 'pubdash_status') return interaction.reply({ ...pubdash.statusView(interaction.member, state), flags: MessageFlags.Ephemeral });
-  if (interaction.isButton?.() && interaction.customId === 'pubdash_info') return interaction.reply({ ...pubdash.infoView(), flags: MessageFlags.Ephemeral });
-  if (interaction.isButton?.() && interaction.customId === 'pubdash_features') return interaction.reply({ ...pubdash.featuresView(), flags: MessageFlags.Ephemeral });
+  // Public member hub (from /dashboard and the pinned panel). Action buttons DO the thing: open a modal
+  // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.
+  if (interaction.isButton?.() && interaction.customId.startsWith('pub')) {
+    const cid = interaction.customId;
+    const verifiedGate = () => config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId);
+    if (cid === 'pubdash_status') return interaction.reply({ ...pubdash.statusView(interaction.member, state), flags: MessageFlags.Ephemeral });
+    if (cid === 'pubdash_info') return interaction.reply({ ...pubdash.infoView(), flags: MessageFlags.Ephemeral });
+    if (cid === 'pubact_tribe') return interaction.reply({ ...pubdash.tribeView(interaction.member), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (cid === 'pubact_appeal') {   // reuse the strike-appeal flow: show the picker of appealable strikes
+      if (!features.enabled('strikeAppeals')) return interaction.reply({ content: 'Strike appeals are not available right now.', flags: MessageFlags.Ephemeral });
+      const choices = strikes.autocompleteChoices(state, interaction.user.id, { excludeCrossedBan: true });
+      if (!choices.length) return interaction.reply({ content: 'You have no active strikes that can be appealed.', flags: MessageFlags.Ephemeral });
+      const menu = new StringSelectMenuBuilder().setCustomId('strikeappeal_pick').setPlaceholder('Which strike do you want to appeal?')
+        .addOptions(choices.slice(0, 25).map(c => ({ label: c.name.slice(0, 100), value: c.value })));
+      return interaction.reply({ content: '⚖️ Pick the strike you want to appeal. I will open a private thread with staff.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    // the text-modal actions
+    const modals = { pubact_confess: pubdash.confessModal, pubact_suggest: pubdash.suggestModal, pubact_modmail: pubdash.modmailModal, pubact_report: pubdash.reportModal };
+    if (modals[cid]) {
+      if (verifiedGate()) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
+      return interaction.showModal(modals[cid]());
+    }
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('pubmodal_')) {
+    const text = interaction.fields.getTextInputValue('text');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      if (interaction.customId === 'pubmodal_confess') { const r = await confessions.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Posted **Confession #${r.num}** anonymously.` : `❌ ${r.msg}`); }
+      if (interaction.customId === 'pubmodal_suggest') { const r = await suggestions.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Posted **Suggestion #${r.num}** in <#${r.threadId}>.` : `❌ ${r.msg}`); }
+      if (interaction.customId === 'pubmodal_modmail') { const r = await modmail.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Sent **Modmail #${r.num}** to the mod team.` : `❌ ${r.msg}`); }
+      if (interaction.customId === 'pubmodal_report') { const r = await reports.submit(interaction.guild, interaction.member, null, text); return interaction.editReply(r.ok ? `✅ Sent **Report #${r.num}** to staff anonymously.` : `❌ ${r.msg}`); }
+    } catch (e) { console.error('[pubdash modal]', e.message); return interaction.editReply('Could not do that. Try the slash command instead.').catch(() => {}); }
+  }
   if (interaction.isButton?.()) {
     const id = interaction.customId || '';
     try {
@@ -3196,12 +3225,12 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
   }
   if (name === 'dashboard') {
-    return interaction.reply({ ...pubdash.hubPanel(), flags: MessageFlags.Ephemeral });
+    return interaction.reply({ ...pubdash.hubPanel(interaction.guild.id), flags: MessageFlags.Ephemeral });
   }
   if (name === 'dashboard-setup') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can post the hub panel.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const sent = await interaction.channel.send(pubdash.hubPanel()).catch(() => null);
+    const sent = await interaction.channel.send(pubdash.hubPanel(interaction.guild.id)).catch(() => null);
     if (!sent) return interaction.editReply('Could not post here. Check my permissions in this channel.');
     await sent.pin().catch(() => {});
     return interaction.editReply('Posted and pinned the member hub in this channel.');
