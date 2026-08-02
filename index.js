@@ -394,6 +394,7 @@ const getConflictChannel = () => conflictChannel;
 
 // Inject the bot's own logic into the tier-gated ops dashboard so it reuses corner/sweep/state/etc.
 opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch, cornerMany, announceCorner,
+  promoteStart: (guild, member, byId, kind) => promote.start(guild, member, byId, config, kind),
   getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel,
   logAction: ownerlog.log,
   strike: {

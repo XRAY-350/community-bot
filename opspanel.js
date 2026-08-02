@@ -69,6 +69,7 @@ const PAGES = [
   { emoji: '🔒', name: 'Anon Tools', tier: 'mod', blurb: 'confessions · reports · modmail · whistleblow · suggestions' },
   { emoji: '👁️', name: 'Watchlist', tier: 'admin', blurb: 'unban · watchlist · flagged terms — needs Admin' },
   { emoji: '🔨', name: 'Actions', tier: 'admin', blurb: 'run the bot now · ban — needs Admin' },
+  { emoji: '🏅', name: 'Promotions', tier: 'admin', blurb: 'open promotion votes — trial→mod / mod→admin (multi-select)' },
   { emoji: '⚙️', name: 'Settings', tier: 'admin', blurb: 'turn helpers on/off — needs Admin' },
   { emoji: '⚠️', name: 'Danger', tier: 'owner', blurb: 'removal policy — needs Owner' },
 ];
@@ -404,6 +405,34 @@ function termModal(customId, title) {
   return m;
 }
 
+// Promotions page: open promotion VOTES for one OR MANY candidates at once, via role-filtered multi-selects
+// (each dropdown lists ONLY the eligible role — trial mods for trial→mod, actual mods for mod→admin). This is
+// the dashboard entry to the same promote.start vote flow as /promote-trial and /promote-mod.
+async function buildPromotions() {
+  const guild = D.client.guilds.cache.get(D.config.guildId) || D.client.guilds.cache.first();
+  await guild.members.fetch().catch(() => {});
+  const trialRole = D.config.trialModRoleId && guild.roles.cache.get(D.config.trialModRoleId);
+  const modRole = D.config.modRoleId && guild.roles.cache.get(D.config.modRoleId);
+  const trials = trialRole ? [...trialRole.members.values()] : [];
+  const mods = modRole ? [...modRole.members.values()].filter(m => memberTier(m) === 'mod') : [];   // actual mods, not admins (who also hold the mod role via nesting)
+  const opt = m => ({ label: m.displayName.replace(/[*_`~|<>@]/g, '').slice(0, 100) || m.id, value: m.id, description: m.user.username.slice(0, 100) });
+  const rows = [];
+  if (trials.length) rows.push(new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId('fops_promote:trial').setPlaceholder(`⬆️ Promote Trial Mod(s) → Mod (${trials.length})`)
+      .setMinValues(1).setMaxValues(Math.min(trials.length, 25)).addOptions(trials.slice(0, 25).map(opt))));
+  if (mods.length) rows.push(new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId('fops_promote:mod').setPlaceholder(`⬆️ Promote Mod(s) → Admin (${mods.length})`)
+      .setMinValues(1).setMaxValues(Math.min(mods.length, 25)).addOptions(mods.slice(0, 25).map(opt))));
+  const embed = new EmbedBuilder().setColor(0xE1A200)
+    .setDescription('Open a promotion **vote** for one or more people at once. Each list shows **only the eligible role**.\n\n'
+      + `• **Trial Mod → Mod** — ${trials.length} trial mod(s). Vote posts in **mod-announcements**.\n`
+      + `• **Mod → Admin** — ${mods.length} mod(s). Vote posts in **admin-discussion** (Admin only).\n\n`
+      + (trials.length || mods.length ? '_Select the people, and a promotion vote opens for each. No one is promoted until the vote is confirmed._' : '_No eligible candidates right now._'))
+    .setFooter({ text: 'Promotions = votes, not instant. Trial→Mod: any mod. Mod→Admin: Admin+.' });
+  rows.push(navRow(pageIdx('Promotions')));
+  return { content: '## 🏅 FUBU Ops · Promotions', embeds: [embed], components: rows };
+}
+
 async function buildPage(page) {
   const name = PAGES[page] && PAGES[page].name;   // name-based so the array can be reordered freely
   if (name === 'Moderation') return buildModeration();
@@ -413,6 +442,7 @@ async function buildPage(page) {
   if (name === 'Anon Tools') return buildAnonTools();
   if (name === 'Watchlist') return buildWatchlist();
   if (name === 'Actions') return buildActions();
+  if (name === 'Promotions') return await buildPromotions();
   if (name === 'Settings') return buildSettings();
   if (name === 'Danger') return buildDanger();
   return await buildOverview();
@@ -618,6 +648,22 @@ async function handlePanel(interaction) {
     if (!r.ok) return interaction.update({ content: 'Couldn’t find that strike anymore — it may already have been changed.', components: [] });
     const what = w <= 0 ? `Removed strike \`${strikeId}\`` : `Set strike \`${strikeId}\` to **${w} unit${w > 1 ? 's' : ''}**`;
     return interaction.update({ content: `✅ ${what} on <@${uid}> — now **${D.strike.format(r.totalUnits)}/${D.strike.BAN_THRESHOLD} units** (${r.tier}).`, components: [] });
+  }
+  // Promotions page: open a promotion VOTE for each selected candidate (multi). fops_promote:<trial|mod>.
+  if (id.startsWith('fops_promote:') && interaction.isStringSelectMenu?.()) {
+    const kind = id.split(':')[1];   // 'trial' (→Mod) or 'mod' (→Admin)
+    if (kind === 'mod' && !meets(tier, 'admin')) return denyReply('admin');   // mod→admin votes are Admin+
+    if (!D.promoteStart) return interaction.reply({ content: 'Promotions aren’t wired up.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const results = [];
+    for (const uid of interaction.values) {
+      const member = await interaction.guild.members.fetch(uid).catch(() => null);
+      if (!member) { results.push(`❌ <@${uid}> — no longer in the server`); continue; }
+      const r = await D.promoteStart(interaction.guild, member, interaction.user.id, kind);
+      results.push(r.ok ? `✅ <@${uid}> — vote opened` : `⚠️ <@${uid}> — ${r.msg}`);
+    }
+    const label = kind === 'mod' ? 'Mod → Admin' : 'Trial Mod → Mod';
+    return interaction.editReply({ content: `🏅 **${label}** — opened ${results.length} promotion vote(s):\n${results.join('\n')}`, allowedMentions: { parse: [] } });
   }
   // Single-purpose pickers (fops_pick_*) — a member was just chosen via UserSelect for one specific
   // action opened by the buttons below. corner/ban still need one more field, so they show a short
