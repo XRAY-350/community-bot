@@ -220,6 +220,21 @@ async function tallyChannel(guild, key, cfg) {
   return out;
 }
 
+// Staff-only de-anonymized view of the current round: each active contest with its entries and the REAL
+// submitter id (even anonymous ones), for awarding rewards. Public anonymity is untouched — this is a
+// private lookup for organizers.
+async function revealEntries(guild) {
+  const cfg = loadCfg();
+  if (!cfg.round) return { round: null, contests: [] };
+  const contests = [];
+  for (const key of (cfg.round.contests || [])) {
+    const c = byKey(key); const channelId = cfg.channels[key];
+    if (!c || !channelId) continue;
+    contests.push({ key, label: c.label, emoji: c.emoji, channelId, entries: await tallyChannel(guild, key, cfg) });
+  }
+  return { round: { theme: cfg.round.theme }, contests };
+}
+
 // ---- status --------------------------------------------------------------------------------------
 async function status(guild) {
   const cfg = loadCfg();
@@ -549,6 +564,6 @@ async function handleEventPanel(interaction) {
 
 module.exports = {
   CONTESTS, VOTE_EMOJI, isContestChannel, contestKeyForChannel,
-  setup, start, status, endRound, submit, onMessage, onMessageDelete, register, loadCfg,
+  setup, start, status, endRound, submit, onMessage, onMessageDelete, register, loadCfg, revealEntries,
   openEventPanel, isEventPanelInteraction, handleEventPanel, isEventOrganizer, buildEventPanel, rulesEmbed,
 };

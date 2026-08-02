@@ -936,6 +936,7 @@ client.once('ready', async () => {
               { name: 'Drawing + Photography', value: 'drawing,photography' })))
         .addSubcommand(s => s.setName('status').setDescription('Show the current theme, entry counts and 🩷 leaders'))
         .addSubcommand(s => s.setName('end').setDescription('Close the round now — tally 🩷, crown winners, assign the role'))
+        .addSubcommand(s => s.setName('reveal').setDescription('See the real submitter of every entry, incl. anonymous (private — for awarding)'))
         .addSubcommand(s => s.setName('panel').setDescription('Open the event organizer dashboard (buttons)'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageEvents),
       new SlashCommandBuilder().setName('contest-submit').setDescription('Enter this month\'s contest anonymously (your name stays hidden)')
@@ -2623,6 +2624,23 @@ client.on('interactionCreate', async (interaction) => {
           return `• ${c.label}: ${v.winners.map(w => w.anonymous ? 'anon' : `<@${w.memberId}>`).join(' & ')} — ${v.votes} 🩷`;
         }).join('\n');
         return interaction.editReply(`🏁 Round closed, winners crowned + role assigned. Results also posted to <#1529981479331827722>.\n${lines}`);
+      }
+      if (sub === 'reveal') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const data = await contest.revealEntries(interaction.guild);
+        if (!data.round) return interaction.editReply('No active contest round to reveal.');
+        const blocks = [`## 🕵️ Contest entries — real submitters\n-# ${data.round.theme} · private · public anonymity untouched`];
+        for (const c of data.contests) {
+          if (!c.entries.length) { blocks.push(`### ${c.emoji} ${c.label}\n> _no entries_`); continue; }
+          const lines = [];
+          for (const e of c.entries) {
+            const m = await interaction.guild.members.fetch(e.memberId).catch(() => null);
+            const nm = m ? m.displayName : (await client.users.fetch(e.memberId).catch(() => null))?.username || e.memberId;
+            lines.push(`> ${e.anonymous ? '🕶️' : '👤'} **${nm}** (<@${e.memberId}>) — ${e.votes} 🩷${e.anonymous ? ' · _anon_' : ''} · [entry](https://discord.com/channels/${interaction.guild.id}/${c.channelId}/${e.messageId})`);
+          }
+          blocks.push(`### ${c.emoji} ${c.label} (${c.entries.length})\n${lines.join('\n')}`);
+        }
+        return interaction.editReply({ content: blocks.join('\n').slice(0, 1950), allowedMentions: { parse: [] } });
       }
     } catch (e) {
       console.error('[contest]', e.message);
