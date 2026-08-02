@@ -58,7 +58,7 @@ function statusView(member, state) {
   const level = LEVELS.find(([, id]) => member.roles.cache.has(id));
   const tribe = tribes.myTribe(member);
   const rankIdx = tribe ? tribes.currentRankIndex(member, tribe) : -1;
-  const rankName = !tribe ? null : tribes.isLeader(member, tribe) ? 'Warden' : (rankIdx >= 0 && tribe.ranks && tribe.ranks[rankIdx]) ? tribe.ranks[rankIdx].name : null;
+  const rankName = !tribe ? null : tribes.isLeader(member, tribe) ? tribes.leaderTitle(tribe) : (rankIdx >= 0 && tribe.ranks && tribe.ranks[rankIdx]) ? tribe.ranks[rankIdx].name : null;
   const units = strikes.totalUnits(state, member.id);
   const perks = [];
   if (level) {
@@ -85,7 +85,7 @@ function tribeView(member) {
   if (!tribe) return { content: 'You are not in a tribe yet. Head to the #roles channel and pledge to one.' };
   const memberCount = member.guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
   const rankIdx = tribes.currentRankIndex(member, tribe);
-  const rankName = tribes.isLeader(member, tribe) ? '👑 Warden' : (rankIdx >= 0 && tribe.ranks && tribe.ranks[rankIdx]) ? tribe.ranks[rankIdx].name : 'unranked';
+  const rankName = tribes.isLeader(member, tribe) ? `👑 ${tribes.leaderTitle(tribe)}` : (rankIdx >= 0 && tribe.ranks && tribe.ranks[rankIdx]) ? tribe.ranks[rankIdx].name : 'unranked';
   const pts = tribe.pointsName || 'points';
   const mine = tribes.getTides(tribe.key, member.id);
   const embed = new EmbedBuilder().setColor(tribe.color || HUB_COLOR).setTitle(`${tribe.emoji || '🏴'} ${tribe.name}`)

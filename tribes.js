@@ -63,11 +63,12 @@ function setMotto(key, motto) { return update(key, { motto: String(motto || '').
 // Default rank ladder — the per-tribe rank ROLES are created from this; each tribe stores its own copy
 // in tribe.ranks (so names/thresholds are tunable per tribe). Ordered lowest→highest. Rank 0 = on join.
 const RANK_LADDER = [
-  { key: 'initiate', name: 'Initiate', days: 0, tides: 0 },
-  { key: 'watcher', name: 'Watcher', days: 1, tides: 50 },
-  { key: 'sentinel', name: 'Sentinel', days: 5, tides: 250 },
-  { key: 'vanguard', name: 'Vanguard', days: 14, tides: 750 },
+  { key: 'r0', name: 'Initiate', days: 0, tides: 0 },
+  { key: 'r1', name: 'Member', days: 1, tides: 50 },
+  { key: 'r2', name: 'Veteran', days: 5, tides: 250 },
+  { key: 'r3', name: 'Elder', days: 14, tides: 750 },
 ];
+const DEFAULT_LEADER_TITLE = 'Chief';
 
 // ---- Tides (activity points) + tenure ----
 function addTides(key, userId, n = 1) {
@@ -135,7 +136,17 @@ function standings(guild) {
     .sort((a, b) => (b.points || 0) - (a.points || 0) || b.memberCount - a.memberCount);
 }
 
+// The label a tribe uses for its head. Personalized per tribe (tribe.leaderTitle); falls back to the default.
+function leaderTitle(tribe) { return (tribe && tribe.leaderTitle) || DEFAULT_LEADER_TITLE; }
+// Rename a tribe's rank rungs in state (Discord role renames happen in the command handler). names is an
+// array aligned to tribe.ranks by position; blank/undefined entries keep the existing name.
+function setRankNames(key, names) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !Array.isArray(t.ranks)) return null;
+  t.ranks.forEach((r, i) => { if (names[i] && String(names[i]).trim()) r.name = String(names[i]).trim().slice(0, 40); });
+  save(s); return t.ranks;
+}
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
-  addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER,
+  addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE };

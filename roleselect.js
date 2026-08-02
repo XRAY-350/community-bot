@@ -132,7 +132,7 @@ function tribeBlock() {
   if (!list.length) return null;
   const lines = list.map(t => `> ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.motto ? ` · *${t.motto}*` : ''}`);
   const content = '## 🏴 Tribes\n'
-    + 'Pledge your allegiance. Your **first** tribe is a free choice, but once you join, you can’t leave or switch on your own: a **Warden must release you**, and after that any new tribe must **accept you** (`/request-role` or a Warden invite).\n\n'
+    + 'Pledge your allegiance. Your **first** tribe is a free choice, but once you join, you can’t leave or switch on your own: a tribe’s **leader must release you**, and after that any new tribe must **accept you** (`/request-role` or a leader’s invite).\n\n'
     + lines.join('\n');
   const menu = new StringSelectMenuBuilder().setCustomId('roleselect_tribe').setPlaceholder('Pledge to a tribe…')
     .addOptions(list.slice(0, 25).map(t => ({ label: `${t.emoji || '🏴'} ${t.shortName || t.name}`.slice(0, 100), value: t.key, description: (t.motto || 'A tribe of the server').slice(0, 100) })));
