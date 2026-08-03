@@ -520,3 +520,15 @@ again leave one role's colour behind. `/tribe retheme`'s `color2` option already
 Backfilled Trib live: read the leader role's actual current gradient (`primaryColor` `#c2f794` / `secondaryColor`
 ~`#8ce31f`) and pushed it onto Trib's base role and staff-rank role, plus stored `color`/`color2` on the tribe
 record so future retheme calls or a repaired staff-rank role won't fall back to the stale founding colours.
+
+## 22. Colour-entry help: link to an existing visual picker, not a custom one — 2026-08-03
+Owner: founders who don't know hex have typed literal garbage into the colour field ("some guy... just put
+random letters"), asked if we could give them "their own UI" like Rhythm. Clarified: Discord's component set
+is closed (no custom widgets, no colour-picker component exists — confirmed against the official modal-
+components docs the same session), and the owner then clarified they meant either (a) point to an EXISTING
+site rather than build/host our own, or (b) richer use of Discord's OWN components (Rhythm-style embeds +
+buttons), not something outside them. Went with (a): no infra to host or maintain, zero-signup answer.
+Added a Link button "🖍️ Pick a colour visually" → `htmlcolorcodes.com/color-picker/` (free, no signup, hex
+output front and center) to the founding wizard's status message row, AND to both bad-hex error replies
+(wizard modal submit + `/tribe retheme`) via a new shared `badHexReply()` helper — shows up right when someone
+already got it wrong, not just as a standing hint they may not notice.

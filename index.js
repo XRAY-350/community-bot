@@ -448,6 +448,12 @@ function tribeShopView(tribe, guild) {
 // and expires after 20 minutes of inactivity so an abandoned build doesn't linger forever.
 const _tribeWizards = new Map();   // adminId -> { leaderId, name, shortName, emoji, pointsName, leaderTitle, color, color2, style, channelNames, channelTopics, expires }
 const parseTribeHex = h => { const m = String(h || '').trim().replace(/^#/, ''); return /^[0-9a-fA-F]{6}$/.test(m) ? parseInt(m, 16) : null; };
+// Shared bad-hex error for every colour-entry point (wizard modal + /tribe retheme) — links straight to a
+// free, no-signup visual picker instead of just re-explaining hex, for founders who don't know what hex is.
+function badHexReply(which) {
+  const link = new ButtonBuilder().setLabel('🖍️ Pick a colour visually').setStyle(ButtonStyle.Link).setURL('https://htmlcolorcodes.com/color-picker/');
+  return { content: `Bad ${which} colour. Needs a 6-digit hex like \`#2A426A\` — pick one visually below and copy its hex code.`, components: [new ActionRowBuilder().addComponents(link)], flags: MessageFlags.Ephemeral };
+}
 function wizardGet(adminId) {
   const w = _tribeWizards.get(adminId);
   if (w && w.expires < Date.now()) { _tribeWizards.delete(adminId); return null; }
@@ -512,6 +518,11 @@ function wizardStatusMessage(adminId) {
   ];
   const identityBtn = new ButtonBuilder().setCustomId('tribewiz_identity_btn').setLabel('✏️ Identity').setStyle(ButtonStyle.Secondary);
   const colorsBtn = new ButtonBuilder().setCustomId('tribewiz_colors_btn').setLabel('🎨 Colours').setStyle(w.color != null ? ButtonStyle.Secondary : ButtonStyle.Primary);
+  // Discord has no native colour picker (modals only take text/select input, see 2026-08-03 discussion) and
+  // founders who don't know hex have typed literal garbage into the field before. No point building our own
+  // page for this, htmlcolorcodes.com already has a free, no-signup visual picker that outputs a hex code to
+  // copy straight into the Colours modal.
+  const colorHelpBtn = new ButtonBuilder().setLabel('🖍️ Pick a colour visually').setStyle(ButtonStyle.Link).setURL('https://htmlcolorcodes.com/color-picker/');
   const landBtn = new ButtonBuilder().setCustomId('tribewiz_land_btn').setLabel('🏠 Land: names & purpose').setStyle(ButtonStyle.Secondary);
   const styleSelect = new StringSelectMenuBuilder().setCustomId('tribewiz_style').setPlaceholder('Channel text style').addOptions(
     { label: 'Small-caps (server style)', value: 'small', default: w.style !== 'plain' },
@@ -521,7 +532,7 @@ function wizardStatusMessage(adminId) {
   return {
     content: `## 🏴 Founding a tribe\n${lines.join('\n')}\n-# Fill in Identity + Colours, land is optional, then Build.`,
     components: [
-      new ActionRowBuilder().addComponents(identityBtn, colorsBtn, landBtn),
+      new ActionRowBuilder().addComponents(identityBtn, colorsBtn, landBtn, colorHelpBtn),
       new ActionRowBuilder().addComponents(styleSelect),
       new ActionRowBuilder().addComponents(buildBtn, cancelBtn),
     ],
@@ -2911,10 +2922,10 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isModalSubmit?.() && interaction.customId === 'tribewiz_colors') {
     if (!wizardGet(interaction.user.id)) return interaction.reply(wizExpired());
     const color = parseTribeHex(interaction.fields.getTextInputValue('color'));
-    if (color === null) return interaction.reply({ content: 'Bad primary colour. Use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
+    if (color === null) return interaction.reply(badHexReply('primary'));
     const c2raw = interaction.fields.getTextInputValue('color2');
     const color2 = c2raw ? parseTribeHex(c2raw) : null;
-    if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
+    if (c2raw && color2 === null) return interaction.reply(badHexReply('second'));
     wizardTouch(interaction.user.id, { color, color2 });
     const msg = wizardStatusMessage(interaction.user.id);
     return interaction.message ? interaction.update(msg) : interaction.reply({ ...msg, flags: MessageFlags.Ephemeral });
@@ -4093,10 +4104,10 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can retheme the tribe.`, flags: MessageFlags.Ephemeral });
       if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check \`/tribe expand\`.`, flags: MessageFlags.Ephemeral });
       const color = parseTribeHex(interaction.options.getString('color'));
-      if (color === null) return interaction.reply({ content: 'Bad primary colour. Use a 6-digit hex like `#2A426A`.', flags: MessageFlags.Ephemeral });
+      if (color === null) return interaction.reply(badHexReply('primary'));
       const c2raw = interaction.options.getString('color2');
       const color2 = c2raw ? parseTribeHex(c2raw) : null;
-      if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
+      if (c2raw && color2 === null) return interaction.reply(badHexReply('second'));
       const role = interaction.guild.roles.cache.get(tribe.roleId);
       if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
       const newName = interaction.options.getString('name');
