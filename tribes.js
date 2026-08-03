@@ -13,6 +13,12 @@ function save(s) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)
 function all() { return Object.values(load().tribes || {}); }
 function get(key) { return (load().tribes || {})[key] || null; }
 function getByRole(roleId) { return all().find(t => t.roleId === roleId) || null; }
+
+// The Tribes Hub — a standing reference + button-panel channel (owner, 2026-08-03: "consolidate commands
+// into dashboards and panels because it's getting really long"). One channel, one message; tracked here so
+// a restart or a content refresh can find + edit it without re-creating the channel each time.
+function getHubInfo() { return load().hub || null; }
+function setHubInfo(channelId, messageId) { const s = load(); s.hub = { channelId, messageId }; save(s); }
 // Resolve a tribe from a free-text arg: exact key, or case-insensitive name/shortName contains.
 function resolve(query) {
   if (!query) return null;
@@ -332,7 +338,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
-  startLeaveRequest, getLeaveRequest, clearLeaveRequest,
+  startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,

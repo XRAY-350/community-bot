@@ -615,3 +615,33 @@ to join a NEW tribe afterward like anyone else. Added `/tribe leave` (distinct f
 `/tribe leave-request`): gated to staff tier and not-the-leader (a staff LEADER isn't the General exemption —
 that's a bigger, unbuilt "step down" problem), calls the same `releaseTribeMember()` directly, no throne post
 or approval step at all.
+
+## 28. The Tribes Hub — buttons instead of typed commands — 2026-08-03
+Owner: "I'd like to consolidate commands into dashboards and panels because it's getting really long" (also
+tied to "when commands have spaces you can't type them out fully" — Discord's own command palette gets
+awkward once a base command has this many subcommands, `/tribe` has ~15; that's inherent to Discord's client,
+not fixable in our code, but a button sidesteps it entirely). Scoped via AskUserQuestion: which no-argument
+actions get buttons first (Shop, Roster+Leaderboard, Leave, Standings, Join request — all picked), and
+whether leader-only actions needing a target (banish/invite/note/retheme) should get buttons too (owner:
+"pin them in the throne" — they already are, via the pre-existing `tribeThroneGuide()`, just refreshed with
+the new leave/join commands, see below).
+New channel **#🏴┆tribes-hub** (next to #roles, `@everyone` can view, `SendMessages` denied so it stays a
+clean single-message panel), content adapted from the original 2-part launch announcement into evergreen
+reference text (what a tribe is, how to join, ranks, treasury/glory/crown, shop, musters/challenges), plus 2
+button rows: 👑 Standings, 📋 My Roster, 🏆 My Leaderboard, 🛒 My Shop, 🪶 Join Request, 🚪 Leave.
+Every button reuses the SAME logic as its typed-command twin rather than a parallel implementation — the
+button handlers call `tribes.standings/roster/topTides`, `tribeShopView()`, and the new shared
+`submitLeaveRequest()`/`submitJoinRequest()` helpers directly. Extracted those two helpers FROM the
+`/tribe leave-request` and `/tribe join-request` command handlers specifically so the hub button and the
+typed command can't drift apart (the exact class of bug this session kept finding in retheme/banish).
+🚪 Leave is one button that does the right thing for whoever clicks it: staff (General) get the instant
+`releaseTribeMember()` path, everyone else gets the `submitLeaveRequest()` approval flow — mirrors the
+`/tribe leave` vs `/tribe leave-request` split from §27. 🪶 Join Request shows an ephemeral tribe-picker
+(String Select, reuses the same option-building as the #roles tribe picker) then calls `submitJoinRequest()`
+on selection.
+Idempotent setup: `ensureTribesHub(guild, config)` tracks `{channelId, messageId}` in `tribes.js`'s state
+(`getHubInfo/setHubInfo`) — a re-run EDITS the same message rather than re-posting (no "(edited)" concern
+raised for this one, unlike #roles). Exposed as `/tribe-admin hub-setup` (admin-gated, same as every other
+`/tribe-admin` subcommand) for re-running after a future content change. Verified live: channel created,
+message posted with correct content/components, `tribes.standings()`/`tribes.roster()` both return real data
+against the live guild.
