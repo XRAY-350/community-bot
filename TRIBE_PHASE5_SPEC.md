@@ -467,3 +467,15 @@ call (5 sites: the identity/colors/land re-edit buttons, and the initial create 
 try/catch — logs the real error AND tells the user "this is a bug, not something you did" instead of a silent,
 undiagnosable "did not respond." Scoped to the tribe wizard specifically, not a blanket refactor of every
 showModal() call in the codebase (corner/strike modals have been stable and untouched this whole session).
+
+## 19. #roles tribe picker now shows the leader(s) — 2026-08-03
+`roleselect.js`'s `tribeBlock()` was pure text from `tribes.all()` data, no live Discord role lookup. Owner
+asked for the picker line to show who currently leads each tribe. `tribeBlock()` now takes `guild` and appends
+`(led by <@id>, <@id>, ...)` per tribe by reading `guild.roles.cache.get(tribe.leaderRoleId).members` — plural
+by design, since a role can technically have more than one holder even though the framework expects exactly
+one leader. Threaded `guild` through the 5 call sites that build a tribes block (`buildBlocks`, `appendTribeBlock`,
+`refreshTribeBlock`, and both `buildBlocks()` calls inside `rebuild`/`rebuildFromIndex`), each already had `guild`
+in scope. Added `guild.members.fetch()` before each (role.members only reflects the cache, same caution as
+elsewhere in this file). Pushed live immediately via `refreshTribeBlock()` rather than waiting for the next
+tribe-creation trigger — verified the live message now reads correctly for all 4 tribes (Cobalt Vigil, Valith,
+Kayena's Cute Crabs, Trib).
