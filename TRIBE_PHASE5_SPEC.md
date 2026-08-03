@@ -430,3 +430,25 @@ re-derive staff tier at display time).
 Backfill results on existing tribes: Valith had 2 current members who are staff (ete5785, beautyinelijah) —
 both granted General immediately. Cobalt Vigil and Kayena's Cute Crabs had no staff among their existing
 members yet, so nothing to grant there (correct — not a bug, just nobody staff had joined yet).
+
+## 17. Mod tribe-founding: two real bugs found + fixed — 2026-08-03
+Owner reported: a mod gathered 3 co-signs, ran `/tribe-admin create` again as instructed, got "the application
+did not respond," and it just re-opened a fresh co-sign request from scratch. Traced via message history in
+#mod-announcements: the SAME founder hit "✅ 3 mods reached" at 01:41 UTC, then 11 hours later got a brand-new
+"wants to found a tribe" message needing 2 fresh co-signs — no tribe was ever actually created (`tribes.all()`
+still showed only the original 3). Two real bugs, both fixed:
+1. **`tribes.clearFoundingRequest()` fired BEFORE `showModal()`** in the create handler, not after actual
+   success. If the modal call ever failed, or the founder didn't finish the wizard, the founding request was
+   already gone with nothing to show for it. Moved the clear to `tribewiz_build`'s actual success path (right
+   next to `_tribeWizards.delete`) — re-running `/tribe-admin create` is now always safe to retry regardless
+   of what happened mid-wizard.
+2. **The bigger one**: the final Build-step eligibility check only ever accepted `['admin', 'owner']` tier,
+   never checking for a mod founding their own tribe. This meant a mod who legitimately gathered 3 co-signs
+   could STILL never actually complete founding a tribe — they'd sail through the whole wizard and get
+   rejected at the very last click with a confusing "no longer holds the admin role" error. This is almost
+   certainly what actually happened to the reported founder: cleared founding request (bug 1) + rejected at
+   Build (bug 2) = stuck with no path forward and no visible reason why. Fixed to mirror the exact same
+   eligibility rule used at the initial `/tribe-admin create` check (admin/owner unrestricted, OR mod tier
+   AND still the same person who started the wizard).
+Checked live state after the fix: 2 OTHER founding requests were sitting at 1/2 co-signs (unaffected, still in
+progress correctly), no currently-stuck 3-co-sign request needing manual intervention.

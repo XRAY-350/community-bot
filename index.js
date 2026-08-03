@@ -2930,7 +2930,14 @@ client.on('interactionCreate', async (interaction) => {
     const w = wizardGet(interaction.user.id);
     if (!w || !w.name || w.color == null) return interaction.reply({ content: 'Fill in at least Identity (name) and Colours before building.', flags: MessageFlags.Ephemeral });
     const leaderMember = await interaction.guild.members.fetch(w.leaderId).catch(() => null);
-    if (!leaderMember || !['admin', 'owner'].includes(opspanel.memberTier(leaderMember))) return interaction.reply({ content: 'The chosen leader no longer holds the admin role. Cancel and start over with a valid admin.', flags: MessageFlags.Ephemeral });
+    // BUG FIXED 2026-08-03: this only ever accepted admin/owner, so a mod who legitimately gathered 3
+    // co-signs would still get rejected at the final step with a confusing "no longer holds the admin role"
+    // error, having never actually been able to complete founding a tribe. Must mirror the EXACT same
+    // eligibility rule as the initial /tribe-admin create check (admin/owner unrestricted, OR mod tier
+    // founding for themselves specifically).
+    const leaderTier = leaderMember && opspanel.memberTier(leaderMember);
+    const leaderIsEligible = leaderMember && (['admin', 'owner'].includes(leaderTier) || (leaderTier === 'mod' && leaderMember.id === interaction.user.id));
+    if (!leaderIsEligible) return interaction.reply({ content: 'The chosen leader is no longer eligible (must still hold the admin role, or for a mod founding their own tribe, still be that same mod).', flags: MessageFlags.Ephemeral });
     await interaction.update({ content: '🏗️ Building the tribe...', components: [] });
     try {
       const b = await buildTribe(interaction.guild, {
@@ -2939,6 +2946,7 @@ client.on('interactionCreate', async (interaction) => {
       }, config);
       for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
       _tribeWizards.delete(interaction.user.id);
+      tribes.clearFoundingRequest(interaction.user.id);   // only clear on ACTUAL success — see the create handler's fix for why
       return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → <@${leaderMember.id}>\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard.`, allowedMentions: { parse: [] } });
     } catch (e) {
       console.error('[tribe-admin create]', e.message);
@@ -4154,9 +4162,14 @@ client.on('interactionCreate', async (interaction) => {
       if (isModSelfFound) {
         // Owner: "if a mod wants to start a tribe it must be in a group of three" — the founder needs 2 OTHER
         // mods to co-sign before the wizard unlocks. Admin-founded tribes skip this entirely.
+        // BUG FIXED 2026-08-03: this used to clearFoundingRequest() BEFORE showModal(), so if the modal call
+        // ever failed (or the founder didn't finish the wizard, e.g. got rejected by the Build-step bug
+        // above), the founding request was already gone with nothing to show for it — confirmed live: a
+        // founder hit "3 mods reached", the request vanished, and 11 hours later they had to gather 2 FRESH
+        // co-signs from scratch since /tribe-admin create just started a brand-new request. Now only cleared
+        // in tribewiz_build's actual success path, so re-running this command is always safe to retry.
         const existing = tribes.getFoundingRequest(interaction.user.id);
         if (existing && existing.cosigns.length >= 2) {
-          tribes.clearFoundingRequest(interaction.user.id);
           wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
           return interaction.showModal(tribeIdentityModal());
         }
