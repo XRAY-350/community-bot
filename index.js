@@ -1660,7 +1660,7 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('appeal-setup').setDescription('Create the ban-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('appeal-reset').setDescription('Clear a decided ban-appeal so the person can be appealed again (admin)')
-        .addStringOption(o => o.setName('user').setDescription('The banned person’s @username or user ID').setRequired(true))
+        .addStringOption(o => o.setName('user').setDescription('The banned person’s @username or user ID').setRequired(true).setAutocomplete(true))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // admin ROLE, not the Administrator perm
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
@@ -2882,6 +2882,16 @@ client.on('interactionCreate', async (interaction) => {
         const focused = interaction.options.getFocused() || '';
         return interaction.respond(strikes.autocompleteChoices(state, user.id, { query: focused }));
       } catch (e) { console.error('[strike-remove] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
+    }
+    if (interaction.commandName === 'appeal-reset') {
+      try {
+        const focused = (interaction.options.getFocused() || '').toLowerCase();
+        const choices = appeals.listDecided()
+          .filter(a => !focused || a.bannedTag.toLowerCase().includes(focused) || a.bannedId.includes(focused))
+          .slice(0, 25)
+          .map(a => ({ name: `${a.bannedTag} (${a.status})`.slice(0, 100), value: a.bannedId }));
+        return interaction.respond(choices);
+      } catch (e) { console.error('[appeal-reset] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
     if (interaction.commandName === 'appeal' && interaction.options.getSubcommand() === 'strike') {
       try {

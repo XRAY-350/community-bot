@@ -253,4 +253,10 @@ function reset(identifier) {
   return { ok: true, bannedTag: rec.bannedTag, bannedId: rec.bannedId, status: rec.status };
 }
 
-module.exports = { setup, submit, handleButton, isConfigured, loadConfig, ensureBoard, reset };
+// Decided (denied/approved) appeals — for /appeal-reset's autocomplete, so an admin picks from a real list
+// instead of having to already know/type the exact @username or ID (owner, 2026-08-03).
+function listDecided() {
+  return Object.values(loadState().appeals || {}).filter(a => a.status !== 'open');
+}
+
+module.exports = { setup, submit, handleButton, isConfigured, loadConfig, ensureBoard, reset, listDecided };
