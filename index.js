@@ -132,6 +132,19 @@ async function addCoLeader(guild, tribe, leaderRole, member) {
   await syncStaffRank(guild, member, tribe);
   return { ok: true };
 }
+// The ONE way a member actually leaves a tribe — shared by /tribe banish and an approved /tribe leave-request,
+// so both exit paths clean up the SAME state. BUG FIXED 2026-08-03: banish only ever removed the base tribe
+// role, leaving a departed member's "General" staff-rank role AND their current rank-ladder role (Initiate/
+// Member/Veteran/Elder) still attached — cosmetic (no permissions), but wrong, and would've stuck around
+// forever since nothing else ever cleans those up post-departure.
+async function releaseTribeMember(guild, tribe, member, reason) {
+  tribes.setMembership(tribe.key, member.id, false);   // de-authorize BEFORE removing so the guard honors it
+  const ok = await member.roles.remove(tribe.roleId, reason).then(() => true).catch(() => false);
+  if (!ok) return { ok: false };
+  const strip = [tribe.staffRankRoleId, ...(tribe.ranks || []).map(r => r.roleId)].filter(id => id && member.roles.cache.has(id));
+  if (strip.length) await member.roles.remove(strip, reason).catch(() => {});
+  return { ok: true };
+}
 // Posts the "do you want to join?" Accept/Decline card — shared by a leader's direct /tribe invite (owner,
 // 2026-08-03: "invite should get consent" — skips straight to this, no separate approval needed since the
 // leader inviting IS the approval) and an approved member nomination.
@@ -1341,6 +1354,7 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('short_name').setDescription('New short name for cards (optional)').setRequired(false).setMaxLength(40)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
+        .addSubcommand(s => s.setName('leave-request').setDescription('Ask your tribe’s leader to release you (regular members only)'))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
           .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
         .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
@@ -3105,6 +3119,32 @@ client.on('interactionCreate', async (interaction) => {
     tribes.clearNomination(targetId);
     return interaction.update({ content: 'Declined.', components: [] });
   }
+  // ---- /tribe leave-request: leader (or staff) Approve/Deny, posted to the throne ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribeleave_approve:')) {
+    const memberId = interaction.customId.split(':')[1];
+    const req = tribes.getLeaveRequest(memberId);
+    if (!req || req.status !== 'pending') return interaction.update({ content: 'This request is no longer active.', components: [] }).catch(() => {});
+    const tribe = tribes.get(req.tribeKey);
+    if (!tribe) { tribes.clearLeaveRequest(memberId); return interaction.update({ content: 'That tribe no longer exists.', components: [] }); }
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
+    const target = await interaction.guild.members.fetch(memberId).catch(() => null);
+    tribes.clearLeaveRequest(memberId);
+    if (!target || !target.roles.cache.has(tribe.roleId)) return interaction.update({ content: 'They’re already out of the tribe.', components: [] });
+    await interaction.deferUpdate();
+    const r = await releaseTribeMember(interaction.guild, tribe, target, `Leave request approved by ${interaction.user.tag}`);
+    return interaction.editReply({ content: r.ok ? `✅ <@${memberId}> was released from **${tribe.shortName || tribe.name}** by <@${interaction.user.id}>. They can be accepted into a new tribe now.` : 'Couldn’t remove the role. Check my role position.', components: [], allowedMentions: { parse: [] } });
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribeleave_deny:')) {
+    const memberId = interaction.customId.split(':')[1];
+    const req = tribes.getLeaveRequest(memberId);
+    if (!req || req.status !== 'pending') return interaction.update({ content: 'This request is no longer active.', components: [] }).catch(() => {});
+    const tribe = tribes.get(req.tribeKey);
+    if (tribe && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribe ? tribes.leaderTitle(tribe) : 'the leader'} or staff can decide this.`, flags: MessageFlags.Ephemeral });
+    tribes.clearLeaveRequest(memberId);
+    return interaction.update({ content: `❌ <@${memberId}>'s request to leave **${tribe ? (tribe.shortName || tribe.name) : 'the tribe'}** was denied by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } });
+  }
   // ---- The land shop: /tribe expand's Buy/Teardown buttons ----
   if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_buy:')) {
     const [, tribeKey, unlockKey] = interaction.customId.split(':');
@@ -4202,9 +4242,23 @@ client.on('interactionCreate', async (interaction) => {
         if (!target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         if (tribe.leaderRoleId && target.roles.cache.has(tribe.leaderRoleId)) return interaction.reply({ content: 'You can’t banish the tribe’s leader.', flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        tribes.setMembership(tribe.key, target.id, false);   // de-authorize BEFORE removing so the guard honors it
-        const ok = await target.roles.remove(tribe.roleId, `Tribe banish by ${interaction.user.tag}`).then(() => true).catch(() => false);
-        return interaction.editReply(ok ? `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` : 'Couldn’t remove the role. Check my role position.');
+        const r = await releaseTribeMember(interaction.guild, tribe, target, `Tribe banish by ${interaction.user.tag}`);
+        return interaction.editReply(r.ok ? `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` : 'Couldn’t remove the role. Check my role position.');
+      }
+      if (sub === 'leave-request') {
+        const mine = tribes.myTribe(interaction.member);
+        if (!mine) return interaction.reply({ content: 'You’re not in a tribe.', flags: MessageFlags.Ephemeral });
+        if (tribes.isLeader(interaction.member, mine)) return interaction.reply({ content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).', flags: MessageFlags.Ephemeral });
+        if (tribes.getLeaveRequest(interaction.user.id)) return interaction.reply({ content: `Already waiting on a response in <#${mine.throneId}>.`, flags: MessageFlags.Ephemeral });
+        tribes.startLeaveRequest(mine.key, interaction.user.id);
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`tribeleave_approve:${interaction.user.id}`).setLabel('✅ Release them').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`tribeleave_deny:${interaction.user.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
+        if (mine.throneId) {
+          const throne = await interaction.guild.channels.fetch(mine.throneId).catch(() => null);
+          if (throne) await throne.send({ content: `## 🚪 Leave request\n<@${interaction.user.id}> is asking to leave **${mine.shortName || mine.name}**.${mine.leaderRoleId ? ` <@&${mine.leaderRoleId}>` : ''}`, components: [row], allowedMentions: { users: [interaction.user.id], roles: mine.leaderRoleId ? [mine.leaderRoleId] : [] } }).catch(() => {});
+        }
+        return interaction.reply({ content: `🚪 Sent to ${tribes.leaderTitle(mine)}${mine.throneId ? ` in <#${mine.throneId}>` : ''}. You'll stay in **${mine.shortName || mine.name}** until it's approved.`, flags: MessageFlags.Ephemeral });
       }
       if (sub === 'announce') {
         if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });

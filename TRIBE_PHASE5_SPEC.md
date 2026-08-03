@@ -580,3 +580,22 @@ component interaction carries neither (DM interactions only ever have `.user`, n
 `interaction.guild || client.guilds.fetch(config.guildId)`, then `interaction.member || guild.members.fetch(targetId)`.
 `tribenom_decline` needed no change, it never touches guild/member. Verified the fallback path still posts to
 #bot-commands exactly as before when DM send fails.
+
+## 26. `/tribe leave-request` — members had no way to ask to leave — 2026-08-03
+Owner: only exit path was `/tribe banish` (leader/staff-initiated) — members had no formal way to ask to
+leave, only informally DMing/pinging their leader. Considered instant self-release vs a leader-approved
+petition — went with petition (owner's choice): keeps the loyalty design intact ("can't leave or switch on
+your own"), members get real agency instead of an unofficial workaround, and it mirrors the SAME
+consent-flow pattern already used everywhere else in this framework (nominate, invite).
+Added `tribes.startLeaveRequest/getLeaveRequest/clearLeaveRequest` (persisted, keyed by memberId, one active
+request per person — same shape as nominations). `/tribe leave-request` (regular members only, not leaders —
+a leader asking to step down is a different, unbuilt problem) posts an Approve/Deny card to the tribe's
+THRONE (not #bot-commands — this is a tribe-internal decision), pinging the leader role. Gated to
+`isLeader || staff`, same as every other leader-tool command.
+While building this, found + fixed a related bug via the same "who actually holds tribe state" lens as §20/§21:
+`/tribe banish` only ever removed the base tribe role, leaving a departed member's "General" staff-rank role
+AND their current rank-ladder role (Initiate/Member/Veteran/Elder) still attached forever — cosmetic (no
+permissions on those roles) but wrong, and nothing else would ever clean it up post-departure. Extracted a
+shared `releaseTribeMember(guild, tribe, member, reason)` that strips the base role, staff-rank role, and any
+held rank role together, de-authorizing membership first so the tribe-membership guard doesn't fight it.
+Both `/tribe banish` and the new leave-request approval now go through this one function.

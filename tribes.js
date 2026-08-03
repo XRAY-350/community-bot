@@ -179,6 +179,19 @@ function createDirectInvite(tribeKey, inviterId, targetId) {
   save(s); return s.nominations[targetId];
 }
 
+// A member's own request to LEAVE their tribe (owner, 2026-08-03: only exit path was the leader/staff-run
+// /tribe banish — members had no formal way to ask). Posted to the tribe's throne for the leader (or staff)
+// to Approve/Deny, mirroring the nominate/invite consent pattern rather than an instant self-release, which
+// would undercut the loyalty design ("can't leave or switch on your own"). Persisted, keyed by memberId —
+// one active request per person at a time.
+function startLeaveRequest(tribeKey, memberId) {
+  const s = load(); if (!s.leaveRequests) s.leaveRequests = {};
+  s.leaveRequests[memberId] = { tribeKey, memberId, status: 'pending', createdAt: Date.now() };
+  save(s); return s.leaveRequests[memberId];
+}
+function getLeaveRequest(memberId) { return (load().leaveRequests || {})[memberId] || null; }
+function clearLeaveRequest(memberId) { const s = load(); if (s.leaveRequests) delete s.leaveRequests[memberId]; save(s); }
+
 // ---- Treasury (a bank, never resets, spent by the head in the shop) + Glory (weekly flow, decides the crown
 // only, never spent) — see TRIBE_PHASE5_SPEC.md section 1 for why these are kept separate. ----
 function addTreasury(key, n) { const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0; t.treasury = (t.treasury || 0) + n; save(s); return t.treasury; }
@@ -319,6 +332,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
+  startLeaveRequest, getLeaveRequest, clearLeaveRequest,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
