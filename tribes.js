@@ -164,6 +164,14 @@ function updateNomination(targetId, patch) {
   save(s); return s.nominations[targetId];
 }
 function clearNomination(targetId) { const s = load(); if (s.nominations) delete s.nominations[targetId]; save(s); }
+// A direct /tribe invite now needs the TARGET's consent too (owner, 2026-08-03: "invite should get consent")
+// — reuses the same nomination record shape, just starting straight at 'pending_accept' since the leader
+// inviting IS the approval step (no separate head/staff sign-off needed, unlike a member's /tribe nominate).
+function createDirectInvite(tribeKey, inviterId, targetId) {
+  const s = load(); if (!s.nominations) s.nominations = {};
+  s.nominations[targetId] = { tribeKey, nominatorId: inviterId, targetId, status: 'pending_accept', approvedBy: inviterId, createdAt: Date.now() };
+  save(s); return s.nominations[targetId];
+}
 
 // ---- Treasury (a bank, never resets, spent by the head in the shop) + Glory (weekly flow, decides the crown
 // only, never spent) — see TRIBE_PHASE5_SPEC.md section 1 for why these are kept separate. ----
@@ -303,7 +311,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
-  createNomination, getNomination, updateNomination, clearNomination,
+  createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,

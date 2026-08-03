@@ -378,17 +378,33 @@ message, then the two content halves, 0.5s apart, with a whole-sequence rollback
 attempt sent, retry up to 3 times) if any message in the pass fails — so a scheduled unattended send never
 leaves a broken half-announcement live.
 
-## 15. Entrance gate — DONE 2026-08-03, general tribe feature (not Valith-specific)
+## 15. Entrance gate — DONE 2026-08-03, general tribe feature (not Valith-specific), REVISED same day
 Owner, relaying a request from Valith's leader for an entrance question to self-join: "will mean all of them
 will have to get one as well" — built as an opt-in per-tribe feature, OFF by default, not hardcoded to Valith.
 `/tribe-admin gate-set <tribe> <prompt> <option_a> <option_b> <correct>` stores `tribe.entranceGate =
-{prompt, optionA, optionB, correct}`; `gate-clear` removes it. Only applies to the FIRST-TRIBE SELF-JOIN path
-(#roles picker) — deliberately NOT applied to `/tribe invite` (the leader already vouches for that person) or
-nomination-accept (already has its own 3-step approval, a quiz on top would be redundant). When a tribe has a
-gate, picking it in #roles shows the prompt + two buttons instead of joining immediately; picking the WRONG
-answer just tells them to try again from #roles (no penalty/lockout — low-stakes and fun, not punitive).
-Correct answer proceeds through the exact same `joinTribeSelfServe()` used by ungated tribes (extracted as a
-shared helper so both paths do the identical membership-state + role-grant + hall-welcome-post logic).
+{prompt, optionA, optionB, correct}`; `gate-clear` removes it. When a tribe has a gate, the applicant sees the
+prompt + two buttons instead of joining immediately; wrong answer never locks anyone out, it just re-shows the
+question (or, on the #roles path specifically, tells them to re-pick the tribe — see below). Correct answer
+proceeds through `joinTribeSelfServe()`, one shared helper used by every join path so they all do identical
+membership-state + role-grant + hall-welcome-post logic (now takes an optional `reason` param so the Discord
+audit-log entry reads correctly per path, not always "self-join via #roles").
+**Original scoping (superseded within the hour, owner: "I agree that invite shouldn't have it but nomination
+should"):**
+- ~~Applies to self-join AND nomination-accept~~ → **gate applies to self-join (#roles) AND nomination-accept.
+  Confirmed correct** — nomination already has 3-step vetting, but the gate is the applicant's OWN final
+  step, not redundant with who vouched for them. Wrong answer at nomination-accept re-shows the SAME quiz
+  buttons in place (doesn't destroy the nomination — someone already vouched for them, losing that over one
+  miss felt punitive) — asymmetric from the self-join path's "go re-pick from #roles" wording, but each fits
+  its own UI shape (nomination is one persistent editable message; self-join starts from a dropdown).
+- **Gate does NOT apply to `/tribe invite`** — confirmed, unchanged. The leader already personally vouches for
+  that specific person, a quiz on top of a personal invite would be redundant.
+**Second, unrelated fix same message: "invite should get consent."** `/tribe invite` previously added the
+target DIRECTLY with no consent step at all — a real gap, now fixed. It reuses the nomination/accept machinery
+(`tribes.createDirectInvite()` creates a nomination record that starts straight at `pending_accept`, skipping
+the approval step since the leader inviting up front already IS the approval) and posts through the same
+`postAcceptPrompt()` helper (extracted so both the nomination-approve step and a direct invite show the
+identical Accept/Decline card in #bot-commands). The invite path stays gate-free per the point above — only
+the ACCEPT step is new, not a quiz.
 **Valith is configured**: prompt "Every applicant must choose their weapon.", Spear vs Shield, **Spear is
-correct**. Its motto is also now set: "Bound by spears, guarded against foes." (picker refreshed to show it,
-per the existing motto-change-refreshes-the-picker rule).
+correct**. Its motto is also now set: "Bound by spears, guarded against foes." (picker + throne guide both
+refreshed to reflect the new motto, the gate, and invite's new consent step).
