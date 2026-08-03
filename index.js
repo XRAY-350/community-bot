@@ -187,7 +187,8 @@ async function buildTribe(guild, opts, config) {
     catch { role = await guild.roles.create({ ...roleBase, color: opts.color }); }
   }
   if (slotRolePos != null) await role.setPosition(slotRolePos).catch(() => {});
-  const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null);
+  const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, colors: roleColors, mentionable: false, reason: `Tribe leader: ${opts.name}` })
+    .catch(() => guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null));
   if (leaderRole && slotLeaderPos != null) await leaderRole.setPosition(slotLeaderPos).catch(() => {});
   if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
   // "General" — any staff (mod/admin) who joins as a regular member sits above the whole rank ladder
@@ -237,7 +238,7 @@ async function buildTribe(guild, opts, config) {
     rankRoles.push({ ...r, roleId: rr ? rr.id : null });
   }
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
-  const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color,
+  const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color, color2: opts.color2 || null,
     pointsName: (opts.pointsName || 'points').slice(0, 20),
     leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40), ranks: rankRoles,
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, staffRankRoleId: staffRankRole ? staffRankRole.id : null,
@@ -4100,9 +4101,15 @@ client.on('interactionCreate', async (interaction) => {
       if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
       const newName = interaction.options.getString('name');
       const newShort = interaction.options.getString('short_name');
-      try { await role.edit({ colors: color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color }, ...(newName ? { name: newName } : {}) }); }
-      catch { await role.edit({ color, ...(newName ? { name: newName } : {}) }); }
-      const patch = { color };
+      const colors = color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color };
+      // A tribe's colour lives on 3 roles (base, leader, staff rank) — keep them all in lockstep so a retheme
+      // never leaves one role behind, same class of drift as owner spotted by hand on Trib (2026-08-03).
+      for (const r of [role, tribe.leaderRoleId && interaction.guild.roles.cache.get(tribe.leaderRoleId), tribe.staffRankRoleId && interaction.guild.roles.cache.get(tribe.staffRankRoleId)]) {
+        if (!r) continue;
+        try { await r.edit({ colors, ...(newName && r.id === role.id ? { name: newName } : {}) }); }
+        catch { await r.edit({ color, ...(newName && r.id === role.id ? { name: newName } : {}) }); }
+      }
+      const patch = { color, color2 };
       if (newName) patch.name = newName;
       if (newShort) patch.shortName = newShort;
       tribes.update(tribe.key, patch);

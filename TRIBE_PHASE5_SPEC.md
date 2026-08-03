@@ -502,3 +502,21 @@ Fixed `buildTribe()` to grant both going forward, and backfilled the base role f
 plus granted Trib's 2 co-signers (**562320011981619211**, **922164824094441473** — the "Triangle Nigga" nickname
 from §17's incident) full co-leadership (base role + leader role). Posted a confirmation in Trib's throne,
 refreshed the #roles picker, and Trib's line now correctly shows all 3 as leaders.
+
+## 21. Tribe colour drift: leader role wasn't kept in sync, never had gradient support — 2026-08-03
+Owner hand-recoloured Trib's **leader** role directly in Discord (a new gradient) and asked for it to reflect
+on the tribe's other roles. Checked live: `leaderRole` was created SOLID-only in `buildTribe()` (`color:
+opts.color`, no `colors:`/gradient), so it had never been able to carry a gradient at all, and `/tribe retheme`
+only ever touched the base `tribe.roleId`, never `leaderRoleId` or `staffRankRoleId` — so the 3 roles could
+silently drift apart the moment anyone (owner by hand, or retheme) recoloured just one of them. Also found
+`color2` (the gradient's second hex) was never persisted to the tribe record at all, only used transiently at
+creation then discarded.
+Fixed: `buildTribe()` now creates `leaderRole` with the same gradient `roleColors` as the base/staff-rank roles
+(falls back to solid on API rejection, matching the existing pattern). `tribes.register()` now stores `color2`.
+`/tribe retheme` now applies the same `colors` to base + leader + staff-rank roles together in one pass (loops
+over all 3, each falling back to solid individually) and persists `color2` in its patch — a retheme can never
+again leave one role's colour behind. `/tribe retheme`'s `color2` option already existed as a command param
+(this wasn't new), the actual gap was the leader role itself never honoring it.
+Backfilled Trib live: read the leader role's actual current gradient (`primaryColor` `#c2f794` / `secondaryColor`
+~`#8ce31f`) and pushed it onto Trib's base role and staff-rank role, plus stored `color`/`color2` on the tribe
+record so future retheme calls or a repaired staff-rank role won't fall back to the stale founding colours.
