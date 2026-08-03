@@ -332,6 +332,127 @@ function setEntranceGate(key, gate) { const s = load(); const t = s.tribes && s.
 function getEntranceGate(key) { return (get(key) || {}).entranceGate || null; }
 function clearEntranceGate(key) { const s = load(); const t = s.tribes && s.tribes[key]; if (t) delete t.entranceGate; save(s); }
 
+// ---- War & Alliances (Phase 6, 2026-08-03) — owner: "add war and alliances at the request of the other
+// leaders." Declaring is a real DECISION, not a click: the proposing tribe's OWN members vote (no consent
+// needed from the target), and the outcome is a probabilistic simulation, not a guaranteed stomp — a small,
+// active tribe can beat a bigger sloppy one. Power is Tides-based specifically because Tides can't be
+// manufactured on demand (rank-based power could be gamed by mass-promoting members right before a fight;
+// Tides only come from real, rate-limited hall activity — owner's own correction, 2026-08-03).
+const WAR_VOTE_MS = 24 * 60 * 60 * 1000;          // 24h vote window
+const WAR_VOTE_TURNOUT = 0.30;                    // ≥30% of current members must vote
+const WAR_COOLDOWN_MS = 72 * 60 * 60 * 1000;      // 72h before either side can war again
+const CAPTURE_LOCK_MS = WAR_COOLDOWN_MS / 2;       // 36h — captured members can't leave (any path) until this passes
+const WAR_TREASURY_RAID_PCT = 0.25;               // winner takes 25% of loser's treasury
+const WAR_GLORY_BONUS = 100;                       // flat, not stolen — Glory is a weekly flow, not a stock to raid
+const WAR_CAPTURE_PCT = 0.10;                      // winner captures ~10% of loser's regular members
+const WAR_CAPTURE_CAP = 5;                         // ...capped at 5 regardless of loser's size
+const WAR_CAPTURE_FLOOR = 3;                       // ...and never below this many members left in the loser
+
+// Tides-based combat power: everyone (including leaders/staff, who earn Tides same as anyone) contributes
+// at least 1 (bare presence) plus their real accumulated Tides. Needs `guild` to enumerate live role holders.
+function warPower(guild, tribe) {
+  const role = guild.roles.cache.get(tribe.roleId);
+  if (!role) return 0;
+  let power = 0;
+  for (const m of role.members.values()) power += 1 + getTides(tribe.key, m.id);
+  return power;
+}
+function onWarCooldown(tribe, nowMs = Date.now()) { return !!tribe.lastWarAt && (nowMs - tribe.lastWarAt) < WAR_COOLDOWN_MS; }
+function warCooldownEndsAt(tribe) { return (tribe.lastWarAt || 0) + WAR_COOLDOWN_MS; }
+
+function startWarVote(attackerKey, defenderKey, proposerId) {
+  const s = load(); if (!s.wars) s.wars = {};
+  const id = `w_${Date.now()}`;
+  s.wars[id] = { id, attackerKey, defenderKey, proposerId, status: 'voting', votes: {}, createdAt: Date.now(), voteEndsAt: Date.now() + WAR_VOTE_MS };
+  save(s); return s.wars[id];
+}
+function getWar(id) { return (load().wars || {})[id] || null; }
+function voteOnWar(id, userId, choice) {
+  const s = load(); const w = s.wars && s.wars[id]; if (!w || w.status !== 'voting') return null;
+  w.votes[userId] = choice; save(s); return w;
+}
+// "Active" = a vote in flight OR (structurally) already resolved this tick — resolution is instant once a
+// vote passes, so the only real in-flight state IS the vote window; the cooldown covers the period after.
+function activeWarVoteFor(tribeKey) {
+  return Object.values(load().wars || {}).find(w => w.status === 'voting' && w.attackerKey === tribeKey) || null;
+}
+function anyActiveWarInvolving(tribeKey) {
+  return Object.values(load().wars || {}).some(w => w.status === 'voting' && (w.attackerKey === tribeKey || w.defenderKey === tribeKey));
+}
+function expiredWarVotes(nowMs) {
+  return Object.values(load().wars || {}).filter(w => w.status === 'voting' && w.voteEndsAt <= nowMs);
+}
+function resolveWarRecord(id, patch) {
+  const s = load(); const w = s.wars && s.wars[id]; if (!w) return null;
+  Object.assign(w, patch); save(s); return w;
+}
+// Pure decision: who wins, what changes hands. Does NOT mutate anything (no treasury/glory/role changes) —
+// the caller (index.js, which has live Discord objects) applies the result, since moving captured members
+// needs real role operations this module deliberately doesn't do (see roster()/standings() for the same
+// read-only-guild precedent). Alliance power is added on BOTH sides if either has an active ally (mutual
+// defense doesn't cost the ally anything directly, it just reinforces).
+function simulateWar(guild, attacker, defender) {
+  const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
+  const powerA = warPower(guild, attacker) + (allyOf(attacker) ? warPower(guild, allyOf(attacker)) : 0);
+  const powerB = warPower(guild, defender) + (allyOf(defender) ? warPower(guild, allyOf(defender)) : 0);
+  const attackerWinChance = powerA / (powerA + powerB || 1);
+  const attackerWins = Math.random() < attackerWinChance;
+  const winner = attackerWins ? attacker : defender;
+  const loser = attackerWins ? defender : attacker;
+  const loserRole = guild.roles.cache.get(loser.roleId);
+  const loserMembers = loserRole ? [...loserRole.members.values()].filter(m => !isLeader(m, loser)) : [];
+  const maxCapturable = Math.max(0, loserMembers.length - WAR_CAPTURE_FLOOR);
+  const captureCount = Math.min(WAR_CAPTURE_CAP, maxCapturable, Math.floor(loserMembers.length * WAR_CAPTURE_PCT));
+  const shuffled = [...loserMembers].sort(() => Math.random() - 0.5);
+  const capturedIds = shuffled.slice(0, captureCount).map(m => m.id);
+  const raidAmount = Math.floor((loser.treasury || 0) * WAR_TREASURY_RAID_PCT);
+  return { winnerKey: winner.key, loserKey: loser.key, powerA, powerB, attackerWinChance, raidAmount, capturedIds };
+}
+
+function setCaptureLock(userId, untilMs) { const s = load(); if (!s.captureLocks) s.captureLocks = {}; s.captureLocks[userId] = untilMs; save(s); }
+function captureLockUntil(userId) { return (load().captureLocks || {})[userId] || 0; }
+function isCaptureLocked(userId, nowMs = Date.now()) { return captureLockUntil(userId) > nowMs; }
+
+// ---- Alliances: mutual defense (see simulateWar) + a shared treasury pool. Capped at ONE ally per tribe —
+// with 5 tribes, unlimited alliances would make the politics meaningless. Bilateral: the proposer's own
+// members vote first (same mechanic as war), then the TARGET tribe's leader/staff accept or deny — mirrors
+// every other cross-tribe consent flow in this framework (nominate/invite/join-request), rather than
+// inventing a second full membership vote on the receiving end.
+function startAllianceVote(proposerKey, targetKey, proposerId) {
+  const s = load(); if (!s.allianceVotes) s.allianceVotes = {};
+  const id = `a_${Date.now()}`;
+  s.allianceVotes[id] = { id, proposerKey, targetKey, proposerId, status: 'voting', votes: {}, createdAt: Date.now(), voteEndsAt: Date.now() + WAR_VOTE_MS };
+  save(s); return s.allianceVotes[id];
+}
+function getAllianceVote(id) { return (load().allianceVotes || {})[id] || null; }
+function voteOnAlliance(id, userId, choice) {
+  const s = load(); const v = s.allianceVotes && s.allianceVotes[id]; if (!v || v.status !== 'voting') return null;
+  v.votes[userId] = choice; save(s); return v;
+}
+function activeAllianceVoteFor(tribeKey) {
+  return Object.values(load().allianceVotes || {}).find(v => v.status === 'voting' && v.proposerKey === tribeKey) || null;
+}
+function expiredAllianceVotes(nowMs) {
+  return Object.values(load().allianceVotes || {}).filter(v => v.status === 'voting' && v.voteEndsAt <= nowMs);
+}
+function resolveAllianceVoteRecord(id, patch) {
+  const s = load(); const v = s.allianceVotes && s.allianceVotes[id]; if (!v) return null;
+  Object.assign(v, patch); save(s); return v;
+}
+function getAlly(tribeKey) { const t = get(tribeKey); return (t && t.allyKey) ? get(t.allyKey) : null; }
+function setAlly(keyA, keyB) {
+  const s = load();
+  if (s.tribes[keyA]) s.tribes[keyA].allyKey = keyB;
+  if (s.tribes[keyB]) s.tribes[keyB].allyKey = keyA;
+  save(s);
+}
+function breakAlliance(keyA, keyB) {
+  const s = load();
+  if (s.tribes[keyA] && s.tribes[keyA].allyKey === keyB) delete s.tribes[keyA].allyKey;
+  if (s.tribes[keyB] && s.tribes[keyB].allyKey === keyA) delete s.tribes[keyB].allyKey;
+  save(s);
+}
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
@@ -345,4 +466,11 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
   setChallenge, getChallenge, clearChallenge, completeChallengeForTribe,
   startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,
-  setEntranceGate, getEntranceGate, clearEntranceGate };
+  setEntranceGate, getEntranceGate, clearEntranceGate,
+  WAR_VOTE_MS, WAR_VOTE_TURNOUT, WAR_COOLDOWN_MS, CAPTURE_LOCK_MS, WAR_TREASURY_RAID_PCT, WAR_GLORY_BONUS,
+  WAR_CAPTURE_PCT, WAR_CAPTURE_CAP, WAR_CAPTURE_FLOOR,
+  warPower, onWarCooldown, warCooldownEndsAt, simulateWar,
+  startWarVote, getWar, voteOnWar, activeWarVoteFor, anyActiveWarInvolving, expiredWarVotes, resolveWarRecord,
+  setCaptureLock, captureLockUntil, isCaptureLocked,
+  startAllianceVote, getAllianceVote, voteOnAlliance, activeAllianceVoteFor, expiredAllianceVotes, resolveAllianceVoteRecord,
+  getAlly, setAlly, breakAlliance };

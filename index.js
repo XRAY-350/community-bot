@@ -145,12 +145,25 @@ async function releaseTribeMember(guild, tribe, member, reason) {
   if (strip.length) await member.roles.remove(strip, reason).catch(() => {});
   return { ok: true };
 }
+// A war capture is NOT a voluntary join — no veteran/entrance-gate/consent checks apply, the member is just
+// moved. Enters the new tribe at rank 0 (fresh start, same as any new join) and gets a capture lock so they
+// can't immediately leave-request (or staff-instant-leave) their way back out, undermining the whole point
+// of the stakes. See tribes.js's CAPTURE_LOCK_MS for the lock duration.
+async function captureMemberInto(guild, winnerTribe, member, reason) {
+  const oldTribe = tribes.myTribe(member);
+  if (oldTribe) await releaseTribeMember(guild, oldTribe, member, reason).catch(() => {});
+  tribes.setMembership(winnerTribe.key, member.id, true);
+  await member.roles.add(winnerTribe.roleId, reason).catch(() => {});
+  await syncStaffRank(guild, member, winnerTribe);
+  tribes.setCaptureLock(member.id, Date.now() + tribes.CAPTURE_LOCK_MS);
+}
 // Shared by /tribe leave-request AND the Tribes Hub's leave-request button — one implementation so the two
 // surfaces can't drift apart (see the retheme/banish drift bugs earlier this session for why that matters).
 async function submitLeaveRequest(guild, member) {
   const mine = tribes.myTribe(member);
   if (!mine) return { ok: false, content: 'You’re not in a tribe.' };
   if (tribes.isLeader(member, mine)) return { ok: false, content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).' };
+  if (tribes.isCaptureLocked(member.id)) return { ok: false, content: `You were captured in a recent war — can’t request to leave until <t:${Math.floor(tribes.captureLockUntil(member.id) / 1000)}:R>.` };
   if (tribes.getLeaveRequest(member.id)) return { ok: false, content: `Already waiting on a response in <#${mine.throneId}>.` };
   tribes.startLeaveRequest(mine.key, member.id);
   const row = new ActionRowBuilder().addComponents(
@@ -387,11 +400,15 @@ function tribeThronePanel(tribe) {
   const title = tribes.leaderTitle(tribe);
   const ranks = (tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet';
   const k = tribe.key;
+  const ally = tribes.getAlly(tribe.key);
+  const onCooldown = tribes.onWarCooldown(tribe);
   const content = `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
     + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
     + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks: ${ranks}. Ranks only ever go up.\n`
     + `-# Staff who join as members automatically hold **${tribes.staffRankTitle(tribe)}**, above the whole ladder.\n`
-    + `\n-# Row 1: everyone. Rows 2-3: ${title} or staff only.`
+    + `\n${ally ? `**Allied with ${ally.emoji || '🏴'} ${ally.shortName || ally.name}** — mutual defense in wars, treasury can be gifted between you.` : '_No current alliance._'}`
+    + (onCooldown ? `\n-# ⚔️ On war cooldown until <t:${Math.floor(tribes.warCooldownEndsAt(tribe) / 1000)}:R>.` : '')
+    + `\n-# Row 1: everyone. Rows 2-4: ${title} or staff only.`
     + (tribe.entranceGate ? `\n-# ⚔️ This tribe gates new applicants: "${tribe.entranceGate.prompt}" (also asked of nominated/invited members before they join).` : '');
   const memberRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribethrone_roster:${k}`).setEmoji('📋').setLabel('Roster').setStyle(ButtonStyle.Secondary),
@@ -408,7 +425,13 @@ function tribeThronePanel(tribe) {
     new ButtonBuilder().setCustomId(`tribethrone_announce:${k}`).setEmoji('📣').setLabel('Announce').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`tribethrone_motto:${k}`).setEmoji('✍️').setLabel('Motto').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`tribethrone_muster:${k}`).setEmoji('🪖').setLabel('Muster').setStyle(ButtonStyle.Primary));
-  return { content, components: [memberRow, leaderRow1, leaderRow2], allowedMentions: { parse: [] } };
+  const leaderRow3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribethrone_war:${k}`).setEmoji('⚔️').setLabel('Declare War').setStyle(ButtonStyle.Danger).setDisabled(onCooldown),
+    ally
+      ? new ButtonBuilder().setCustomId(`tribethrone_allybreak:${k}`).setEmoji('💔').setLabel('Break Alliance').setStyle(ButtonStyle.Secondary)
+      : new ButtonBuilder().setCustomId(`tribethrone_alliance:${k}`).setEmoji('🤝').setLabel('Propose Alliance').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`tribethrone_allygift:${k}`).setEmoji('🎁').setLabel('Gift Treasury to Ally').setStyle(ButtonStyle.Secondary).setDisabled(!ally));
+  return { content, components: [memberRow, leaderRow1, leaderRow2, leaderRow3], allowedMentions: { parse: [] } };
 }
 // Post + pin the panel in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
 // e.g. the channel already has 50 pins — all fail silently rather than blocking tribe creation on it).
@@ -447,12 +470,12 @@ function tribeHubContent() {
     + `## Rising through the ranks\n`
     + `Being active in your tribe's hall moves you up its rank ladder automatically, ranks only ever go up, never down.\n\n`
     + `## Treasury, Glory, and the Weekly Crown\n`
-    + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, staff challenges, members giving up their own points with \`/tribe offer\`).\n\n`
+    + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`).\n\n`
     + `## The Shop\n`
     + `Once a tribe hits a members-or-crowns milestone, its leader can spend the treasury on real upgrades: extra channels, external sounds, faster point-earning, and more.\n\n`
-    + `## Musters and Challenges\n`
-    + `A leader can call a **muster**, a roll-call in the hall, answer it and the tribe banks treasury + glory. Staff also post **weekly challenges** for every tribe to take a shot at.\n\n`
-    + `-# Use the buttons below instead of typing commands out. Leader-only tools (banish, invite, retheme, etc.) are listed in your tribe's own pinned throne guide.`;
+    + `## Musters\n`
+    + `A leader can call a **muster**, a roll-call in the hall, answer it and the tribe banks treasury + glory.\n\n`
+    + `-# Use the buttons below instead of typing commands out. Leader-only tools (banish, invite, retheme, etc.) are on your tribe's own throne panel.`;
 }
 function tribeHubButtons() {
   return [
@@ -553,6 +576,125 @@ async function sweepExpiredMusters(guild) {
     }
     if (ch) await ch.send({ content: summary, allowedMentions: { parse: [] } }).catch(() => {});
   }
+}
+// ---- War & Alliances (Phase 6, 2026-08-03, owner: "add war and alliances at the request of the other
+// leaders"). Declaring is a real decision: the proposing tribe's OWN members vote (24h window, ≥30% turnout,
+// simple majority) — the target gets no say in whether a war starts. See tribes.js for the state layer,
+// power formula (Tides-based, not rank-based — can't be gamed by mass-promoting people), and simulateWar().
+function voteTallyLine(votes, memberCount, verb) {
+  const yes = Object.values(votes).filter(v => v === 'yes').length;
+  const no = Object.values(votes).filter(v => v === 'no').length;
+  const turnout = Object.keys(votes).length;
+  const turnoutPct = memberCount ? Math.round((turnout / memberCount) * 100) : 0;
+  return `👍 ${yes} · 👎 ${no} — ${turnout}/${memberCount} voted (${turnoutPct}%, need ${Math.round(tribes.WAR_VOTE_TURNOUT * 100)}%+ turnout and a majority to ${verb})`;
+}
+async function postWarVote(guild, war, attacker, defender) {
+  if (!attacker.hallId) return null;
+  const hall = await guild.channels.fetch(attacker.hallId).catch(() => null);
+  if (!hall) return null;
+  const memberCount = guild.roles.cache.get(attacker.roleId)?.members.size ?? 0;
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribewar_vote:${war.id}:yes`).setEmoji('⚔️').setLabel('For war').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`tribewar_vote:${war.id}:no`).setEmoji('🕊️').setLabel('Against').setStyle(ButtonStyle.Secondary));
+  const endsAt = Math.floor(war.voteEndsAt / 1000);
+  const msg = await hall.send({ content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender.emoji || '🏴'} ${defender.shortName || defender.name}**?\nVoting ends <t:${endsAt}:R>.\n${voteTallyLine(war.votes, memberCount, 'declare war')}`, components: [row], allowedMentions: { roles: [attacker.roleId] } }).catch(() => null);
+  if (msg) tribes.resolveWarRecord(war.id, { channelId: hall.id, messageId: msg.id });
+  return msg;
+}
+// One expired vote: pass/fail on turnout+majority, then (if passed) run the simulation and apply every
+// consequence — treasury raid, glory bonus, captured members (real role moves + capture lock), cooldowns on
+// BOTH sides. A failed vote sets NO cooldown (no war actually happened, nothing to be sore about).
+async function resolveWarVoteRecord(guild, war) {
+  const attacker = tribes.get(war.attackerKey), defender = tribes.get(war.defenderKey);
+  if (!attacker || !defender) { tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() }); return; }
+  const memberCount = guild.roles.cache.get(attacker.roleId)?.members.size ?? 0;
+  const turnout = Object.keys(war.votes).length;
+  const yes = Object.values(war.votes).filter(v => v === 'yes').length, no = Object.values(war.votes).filter(v => v === 'no').length;
+  const passed = memberCount > 0 && (turnout / memberCount) >= tribes.WAR_VOTE_TURNOUT && yes > no;
+  const editOriginal = async (content) => {
+    if (!war.channelId || !war.messageId) return;
+    const ch = await guild.channels.fetch(war.channelId).catch(() => null);
+    const msg = ch && await ch.messages.fetch(war.messageId).catch(() => null);
+    if (msg) await msg.edit({ content, components: [] }).catch(() => {});
+  };
+  if (!passed) {
+    tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() });
+    await editOriginal(`## ⚔️ War vote failed\n**${attacker.shortName || attacker.name}** did not vote to war **${defender.shortName || defender.name}** (${voteTallyLine(war.votes, memberCount, 'declare war')}). Nothing happens.`);
+    return;
+  }
+  const sim = tribes.simulateWar(guild, attacker, defender);
+  const winner = tribes.get(sim.winnerKey), loser = tribes.get(sim.loserKey);
+  tribes.addTreasury(sim.winnerKey, sim.raidAmount);
+  tribes.addTreasury(sim.loserKey, -sim.raidAmount);
+  tribes.addGlory(sim.winnerKey, tribes.WAR_GLORY_BONUS);
+  const now = Date.now();
+  tribes.update(attacker.key, { lastWarAt: now });
+  tribes.update(defender.key, { lastWarAt: now });
+  for (const uid of sim.capturedIds) {
+    const m = await guild.members.fetch(uid).catch(() => null);
+    if (m) await captureMemberInto(guild, winner, m, `Captured in war: ${loser.shortName || loser.name} → ${winner.shortName || winner.name}`).catch(() => {});
+  }
+  tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount: sim.raidAmount, capturedIds: sim.capturedIds });
+  const oddsLine = `-# Odds were ${Math.round(sim.attackerWinChance * 100)}% ${attacker.shortName || attacker.name} · ${Math.round((1 - sim.attackerWinChance) * 100)}% ${defender.shortName || defender.name}, by Tides-weighted strength.`;
+  const captureLine = sim.capturedIds.length ? `**${sim.capturedIds.length}** member${sim.capturedIds.length === 1 ? '' : 's'} captured: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No members captured (loser too small).';
+  const summary = `## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} wins!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}\n${oddsLine}`;
+  await editOriginal(summary);   // attacker's hall — where the vote happened
+  for (const t of [attacker, defender]) {
+    if (!t.throneId) continue;
+    const throne = await guild.channels.fetch(t.throneId).catch(() => null);
+    if (throne) await throne.send({ content: summary, allowedMentions: { parse: [] } }).catch(() => {});
+  }
+  await refreshThronePanel(guild, tribes.get(attacker.key)).catch(() => {});
+  await refreshThronePanel(guild, tribes.get(defender.key)).catch(() => {});
+}
+async function sweepExpiredWarVotes(guild) {
+  for (const war of tribes.expiredWarVotes(Date.now())) await resolveWarVoteRecord(guild, war).catch(e => console.error('[tribe war] resolve:', e.message));
+}
+async function postAllianceVote(guild, vote, proposer, target) {
+  if (!proposer.hallId) return null;
+  const hall = await guild.channels.fetch(proposer.hallId).catch(() => null);
+  if (!hall) return null;
+  const memberCount = guild.roles.cache.get(proposer.roleId)?.members.size ?? 0;
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribealliance_vote:${vote.id}:yes`).setEmoji('🤝').setLabel('For alliance').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`tribealliance_vote:${vote.id}:no`).setEmoji('❌').setLabel('Against').setStyle(ButtonStyle.Secondary));
+  const endsAt = Math.floor(vote.voteEndsAt / 1000);
+  const msg = await hall.send({ content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target.emoji || '🏴'} ${target.shortName || target.name}**?\nVoting ends <t:${endsAt}:R>.\n${voteTallyLine(vote.votes, memberCount, 'propose')}`, components: [row], allowedMentions: { roles: [proposer.roleId] } }).catch(() => null);
+  if (msg) tribes.resolveAllianceVoteRecord(vote.id, { channelId: hall.id, messageId: msg.id });
+  return msg;
+}
+async function resolveAllianceVoteRecord(guild, vote) {
+  const proposer = tribes.get(vote.proposerKey), target = tribes.get(vote.targetKey);
+  if (!proposer || !target) { tribes.resolveAllianceVoteRecord(vote.id, { status: 'failed', resolvedAt: Date.now() }); return; }
+  const memberCount = guild.roles.cache.get(proposer.roleId)?.members.size ?? 0;
+  const turnout = Object.keys(vote.votes).length;
+  const yes = Object.values(vote.votes).filter(v => v === 'yes').length, no = Object.values(vote.votes).filter(v => v === 'no').length;
+  const passed = memberCount > 0 && (turnout / memberCount) >= tribes.WAR_VOTE_TURNOUT && yes > no;
+  const editOriginal = async (content, components = []) => {
+    if (!vote.channelId || !vote.messageId) return;
+    const ch = await guild.channels.fetch(vote.channelId).catch(() => null);
+    const msg = ch && await ch.messages.fetch(vote.messageId).catch(() => null);
+    if (msg) await msg.edit({ content, components }).catch(() => {});
+  };
+  if (!passed) {
+    tribes.resolveAllianceVoteRecord(vote.id, { status: 'failed', resolvedAt: Date.now() });
+    await editOriginal(`## 🤝 Alliance vote failed\n**${proposer.shortName || proposer.name}** did not vote to propose an alliance with **${target.shortName || target.name}** (${voteTallyLine(vote.votes, memberCount, 'propose')}).`);
+    return;
+  }
+  // Internal vote passed — now it's the TARGET tribe's call, mirrors every other cross-tribe consent flow
+  // (nominate/invite/join-request) rather than a second full membership vote on their end.
+  tribes.resolveAllianceVoteRecord(vote.id, { status: 'awaiting_target' });
+  await editOriginal(`## 🤝 Alliance vote passed\n**${proposer.shortName || proposer.name}**'s members voted to propose an alliance with **${target.shortName || target.name}** (${voteTallyLine(vote.votes, memberCount, 'propose')}). Waiting on their response.`);
+  if (!target.throneId) return;
+  const throne = await guild.channels.fetch(target.throneId).catch(() => null);
+  if (!throne) return;
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribealliance_approve:${vote.id}`).setLabel('✅ Accept').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`tribealliance_deny:${vote.id}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
+  await throne.send({ content: `## 🤝 Alliance proposal\n**${proposer.emoji || '🏴'} ${proposer.shortName || proposer.name}**'s members voted to propose an alliance. ${tribes.leaderTitle(target)} or staff: accept?`, components: [row] }).catch(() => {});
+}
+async function sweepExpiredAllianceVotes(guild) {
+  for (const vote of tribes.expiredAllianceVotes(Date.now())) await resolveAllianceVoteRecord(guild, vote).catch(e => console.error('[tribe alliance] resolve:', e.message));
 }
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
@@ -1776,6 +1918,10 @@ client.once('ready', async () => {
   // Muster auto-close: boot catch-up + every 5min (a muster's 2h window makes a tighter cadence worth it).
   if (dguild) await sweepExpiredMusters(dguild).catch(e => console.error(`[tribe muster] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
+  if (dguild) await sweepExpiredWarVotes(dguild).catch(e => console.error(`[tribe war] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredWarVotes(g)).catch(() => {}), 5 * 60 * 1000);
+  if (dguild) await sweepExpiredAllianceVotes(dguild).catch(e => console.error(`[tribe alliance] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredAllianceVotes(g)).catch(() => {}), 5 * 60 * 1000);
   // #roles self-heal: drop any toggle button whose role was deleted outside the bot's control (boot + hourly).
   const roleselectSweep = async g => { const removed = await roleselect.sweepDeadRoles(g, config.rolesChannelId); const n = Object.values(removed).flat().length; if (n) console.log(`[roleselect] sweep: removed ${n} dead role(s) — ${JSON.stringify(removed)}`); };
   if (dguild) await roleselectSweep(dguild).catch(e => console.error(`[roleselect] boot sweep: ${e.message}`));
@@ -3357,7 +3503,10 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.reply({ content: 'You’re not in a tribe.', flags: MessageFlags.Ephemeral });
     if (tribes.isLeader(interaction.member, tribe)) return interaction.reply({ content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).', flags: MessageFlags.Ephemeral });
     // Staff (General) get an instant release, same exemption as /tribe leave; everyone else goes through
-    // the normal leave-request approval — one button does the right thing for whoever clicks it.
+    // the normal leave-request approval — one button does the right thing for whoever clicks it. Capture
+    // lock overrides even the staff exemption — otherwise a captured staff member could just bounce out
+    // instantly and the war's whole point (a real, sticky consequence) would mean nothing.
+    if (tribes.isCaptureLocked(interaction.member.id)) return interaction.reply({ content: `You were captured in a recent war — can’t leave until <t:${Math.floor(tribes.captureLockUntil(interaction.member.id) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
     if (['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await releaseTribeMember(interaction.guild, tribe, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
@@ -3387,7 +3536,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     const act = action.slice('tribethrone_'.length);
-    const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster'].includes(act);
+    const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster', 'war', 'alliance', 'allybreak', 'allygift'].includes(act);
     if (isLeaderTool && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     if (act === 'roster') {
@@ -3405,6 +3554,7 @@ client.on('interactionCreate', async (interaction) => {
     if (act === 'shop') return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
     if (act === 'leave') {
       if (tribes.isLeader(interaction.member, tribe)) return interaction.reply({ content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).', flags: MessageFlags.Ephemeral });
+      if (tribes.isCaptureLocked(interaction.member.id)) return interaction.reply({ content: `You were captured in a recent war — can’t leave until <t:${Math.floor(tribes.captureLockUntil(interaction.member.id) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
       if (['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const r = await releaseTribeMember(interaction.guild, tribe, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
@@ -3456,6 +3606,40 @@ client.on('interactionCreate', async (interaction) => {
       const mottoInput = new TextInputBuilder().setCustomId('text').setLabel('The motto').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300);
       if (tribe.motto) mottoInput.setValue(tribe.motto);
       const modal = new ModalBuilder().setCustomId(`tribethrone_motto_modal:${tribeKey}`).setTitle('Set motto').addComponents(new ActionRowBuilder().addComponents(mottoInput));
+      return safeShowModal(interaction, modal);
+    }
+    if (act === 'war') {
+      if (tribes.onWarCooldown(tribe)) return interaction.reply({ content: `On war cooldown until <t:${Math.floor(tribes.warCooldownEndsAt(tribe) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
+      if (tribes.anyActiveWarInvolving(tribe.key)) return interaction.reply({ content: 'This tribe is already in an active war vote.', flags: MessageFlags.Ephemeral });
+      const targets = tribes.all().filter(t => t.key !== tribe.key);
+      if (!targets.length) return interaction.reply({ content: 'No other tribes to war.', flags: MessageFlags.Ephemeral });
+      const menu = new StringSelectMenuBuilder().setCustomId(`tribethrone_war_pick:${tribeKey}`).setPlaceholder('Declare war on which tribe?')
+        .addOptions(targets.slice(0, 25).map(t => ({ label: `${t.emoji || '🏴'} ${t.shortName || t.name}`.slice(0, 100), value: t.key })));
+      return interaction.reply({ content: '⚔️ This opens a 24h vote for YOUR members — the target has no say in whether it starts. Pick who to war.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'alliance') {
+      if (tribe.allyKey) return interaction.reply({ content: 'Already allied — break it first if you want a different ally.', flags: MessageFlags.Ephemeral });
+      if (tribes.activeAllianceVoteFor(tribe.key)) return interaction.reply({ content: 'Already have an alliance vote in progress.', flags: MessageFlags.Ephemeral });
+      const targets = tribes.all().filter(t => t.key !== tribe.key && !t.allyKey);
+      if (!targets.length) return interaction.reply({ content: 'No eligible tribes right now (everyone else is already allied).', flags: MessageFlags.Ephemeral });
+      const menu = new StringSelectMenuBuilder().setCustomId(`tribethrone_alliance_pick:${tribeKey}`).setPlaceholder('Propose an alliance with which tribe?')
+        .addOptions(targets.slice(0, 25).map(t => ({ label: `${t.emoji || '🏴'} ${t.shortName || t.name}`.slice(0, 100), value: t.key })));
+      return interaction.reply({ content: '🤝 This opens a 24h vote for YOUR members first, then the other tribe decides. Pick who to propose to.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'allybreak') {
+      const ally = tribes.getAlly(tribe.key);
+      if (!ally) return interaction.reply({ content: 'Not currently allied with anyone.', flags: MessageFlags.Ephemeral });
+      tribes.breakAlliance(tribe.key, ally.key);
+      await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
+      await refreshThronePanel(interaction.guild, tribes.get(ally.key)).catch(() => {});
+      if (ally.throneId) { const t = await interaction.guild.channels.fetch(ally.throneId).catch(() => null); if (t) await t.send({ content: `## 💔 Alliance broken\n**${tribe.shortName || tribe.name}** has broken the alliance with **${ally.shortName || ally.name}**.` }).catch(() => {}); }
+      return interaction.reply({ content: `💔 Alliance with **${ally.shortName || ally.name}** broken.`, flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'allygift') {
+      const ally = tribes.getAlly(tribe.key);
+      if (!ally) return interaction.reply({ content: 'No current ally to gift treasury to.', flags: MessageFlags.Ephemeral });
+      const amountInput = new TextInputBuilder().setCustomId('amount').setLabel(`How much treasury to send ${ally.shortName || ally.name}?`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10);
+      const modal = new ModalBuilder().setCustomId(`tribethrone_allygift_modal:${tribeKey}`).setTitle('Gift treasury to ally').addComponents(new ActionRowBuilder().addComponents(amountInput));
       return safeShowModal(interaction, modal);
     }
   }
@@ -3517,6 +3701,33 @@ client.on('interactionCreate', async (interaction) => {
     await applyTribeRank(interaction.guild, tribe, target, idx, `manual — set by <@${interaction.user.id}>`, false);
     return interaction.editReply({ content: `${tribe.emoji || '🌊'} Set <@${targetId}> to **${tribe.ranks[idx].name}** in ${tribe.shortName || tribe.name}.`, components: [], allowedMentions: { parse: [] } });
   }
+  if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('tribethrone_war_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const attacker = tribes.get(tribeKey);
+    if (!attacker) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, attacker) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(attacker)} or staff can do that.`, components: [] });
+    if (tribes.onWarCooldown(attacker) || tribes.anyActiveWarInvolving(attacker.key)) return interaction.update({ content: 'No longer eligible to declare war right now.', components: [] }).catch(() => {});
+    const defender = tribes.get(interaction.values[0]);
+    if (!defender) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (tribes.onWarCooldown(defender) || tribes.anyActiveWarInvolving(defender.key)) return interaction.update({ content: `**${defender.shortName || defender.name}** is on cooldown or already in a war vote.`, components: [] }).catch(() => {});
+    await interaction.deferUpdate();
+    const war = tribes.startWarVote(attacker.key, defender.key, interaction.user.id);
+    await postWarVote(interaction.guild, war, attacker, defender);
+    return interaction.editReply({ content: `⚔️ War vote started against **${defender.shortName || defender.name}** in <#${attacker.hallId}>.`, components: [] });
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('tribethrone_alliance_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const proposer = tribes.get(tribeKey);
+    if (!proposer) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, proposer) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(proposer)} or staff can do that.`, components: [] });
+    if (proposer.allyKey || tribes.activeAllianceVoteFor(proposer.key)) return interaction.update({ content: 'No longer eligible to propose an alliance right now.', components: [] }).catch(() => {});
+    const target = tribes.get(interaction.values[0]);
+    if (!target || target.allyKey) return interaction.update({ content: 'That tribe is no longer available (already allied or gone).', components: [] }).catch(() => {});
+    await interaction.deferUpdate();
+    const vote = tribes.startAllianceVote(proposer.key, target.key, interaction.user.id);
+    await postAllianceVote(interaction.guild, vote, proposer, target);
+    return interaction.editReply({ content: `🤝 Alliance vote started with **${target.shortName || target.name}** in <#${proposer.hallId}>.`, components: [] });
+  }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_retheme_modal:')) {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
@@ -3566,6 +3777,20 @@ client.on('interactionCreate', async (interaction) => {
     if (!notes.length) return interaction.reply({ content: `No notes on <@${targetId}> yet.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     const body = notes.map(n => `> ${n.text}\n-# by <@${n.by}> · <t:${Math.floor(n.at / 1000)}:R>`).join('\n');
     return interaction.reply({ content: `## 📝 Notes on <@${targetId}>\n${body}`.slice(0, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_allygift_modal:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    const ally = tribes.getAlly(tribe.key);
+    if (!ally) return interaction.reply({ content: 'No current ally to gift treasury to.', flags: MessageFlags.Ephemeral });
+    const amount = parseInt(interaction.fields.getTextInputValue('amount'), 10);
+    if (!Number.isFinite(amount) || amount <= 0) return interaction.reply({ content: 'Enter a positive whole number.', flags: MessageFlags.Ephemeral });
+    if (!tribes.spendTreasury(tribe.key, amount)) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** only has **${tribes.getTreasury(tribe.key)}** treasury.`, flags: MessageFlags.Ephemeral });
+    tribes.addTreasury(ally.key, amount);
+    if (ally.throneId) { const t = await interaction.guild.channels.fetch(ally.throneId).catch(() => null); if (t) await t.send({ content: `## 🎁 Ally gift\n**${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}** sent **${amount}** treasury. Now **${tribes.getTreasury(ally.key)}**.`, allowedMentions: { parse: [] } }).catch(() => {}); }
+    return interaction.reply({ content: `🎁 Sent **${amount}** treasury to **${ally.shortName || ally.name}**. **${tribe.shortName || tribe.name}** now has **${tribes.getTreasury(tribe.key)}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   // ---- The land shop: /tribe expand's Buy/Teardown buttons ----
   if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_buy:')) {
@@ -3636,6 +3861,57 @@ client.on('interactionCreate', async (interaction) => {
     const joined = tribes.joinMuster(tribeKey, interaction.user.id);
     const count = tribes.getMuster(tribeKey)?.participants.length ?? muster.participants.length;
     return interaction.reply({ content: joined ? `🪖 You're counted! **${count}** have answered so far.` : `You're already counted (**${count}** so far).`, flags: MessageFlags.Ephemeral });
+  }
+  // ---- War & Alliance votes — any CURRENT member of the proposing tribe can vote, live tally on every click ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribewar_vote:')) {
+    const [, warId, choice] = interaction.customId.split(':');
+    const war = tribes.getWar(warId);
+    if (!war || war.status !== 'voting') return interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+    const attacker = tribes.get(war.attackerKey);
+    if (!attacker || !interaction.member.roles.cache.has(attacker.roleId)) return interaction.reply({ content: 'Only current members of the proposing tribe can vote on this.', flags: MessageFlags.Ephemeral });
+    const updated = tribes.voteOnWar(warId, interaction.user.id, choice);
+    const memberCount = interaction.guild.roles.cache.get(attacker.roleId)?.members.size ?? 0;
+    const defender = tribes.get(war.defenderKey);
+    await interaction.update({ content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender?.emoji || '🏴'} ${defender?.shortName || defender?.name || 'that tribe'}**?\nVoting ends <t:${Math.floor(war.voteEndsAt / 1000)}:R>.\n${voteTallyLine(updated.votes, memberCount, 'declare war')}`, allowedMentions: { roles: [attacker.roleId] } }).catch(() => {});
+    return;
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_vote:')) {
+    const [, voteId, choice] = interaction.customId.split(':');
+    const vote = tribes.getAllianceVote(voteId);
+    if (!vote || vote.status !== 'voting') return interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+    const proposer = tribes.get(vote.proposerKey);
+    if (!proposer || !interaction.member.roles.cache.has(proposer.roleId)) return interaction.reply({ content: 'Only current members of the proposing tribe can vote on this.', flags: MessageFlags.Ephemeral });
+    const updated = tribes.voteOnAlliance(voteId, interaction.user.id, choice);
+    const memberCount = interaction.guild.roles.cache.get(proposer.roleId)?.members.size ?? 0;
+    const target = tribes.get(vote.targetKey);
+    await interaction.update({ content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target?.emoji || '🏴'} ${target?.shortName || target?.name || 'that tribe'}**?\nVoting ends <t:${Math.floor(vote.voteEndsAt / 1000)}:R>.\n${voteTallyLine(updated.votes, memberCount, 'propose')}`, allowedMentions: { roles: [proposer.roleId] } }).catch(() => {});
+    return;
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_approve:')) {
+    const voteId = interaction.customId.split(':')[1];
+    const vote = tribes.getAllianceVote(voteId);
+    if (!vote || vote.status !== 'awaiting_target') return interaction.reply({ content: 'This proposal is no longer active.', flags: MessageFlags.Ephemeral });
+    const target = tribes.get(vote.targetKey), proposer = tribes.get(vote.proposerKey);
+    if (!target || !proposer) return interaction.update({ content: 'One of the tribes no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, target) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(target)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
+    if (proposer.allyKey || target.allyKey) {
+      tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
+      return interaction.update({ content: `❌ Can't ally — one of the two tribes already has an ally (capped at 1).`, components: [] }).catch(() => {});
+    }
+    tribes.setAlly(proposer.key, target.key);
+    tribes.resolveAllianceVoteRecord(voteId, { status: 'resolved', resolvedAt: Date.now() });
+    await refreshThronePanel(interaction.guild, tribes.get(proposer.key)).catch(() => {});
+    await refreshThronePanel(interaction.guild, tribes.get(target.key)).catch(() => {});
+    return interaction.update({ content: `## 🤝 Alliance formed!\n**${proposer.emoji || '🏴'} ${proposer.shortName || proposer.name}** and **${target.emoji || '🏴'} ${target.shortName || target.name}** are now allied: mutual defense in wars, and treasury can be gifted to each other.\n-# Accepted by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_deny:')) {
+    const voteId = interaction.customId.split(':')[1];
+    const vote = tribes.getAllianceVote(voteId);
+    if (!vote || vote.status !== 'awaiting_target') return interaction.reply({ content: 'This proposal is no longer active.', flags: MessageFlags.Ephemeral });
+    const target = tribes.get(vote.targetKey);
+    if (target && !tribes.isLeader(interaction.member, target) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(target)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
+    tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
+    return interaction.update({ content: `❌ Alliance declined by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
   // Public member hub (from /dashboard and the pinned panel). Action buttons DO the thing: open a modal
   // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.

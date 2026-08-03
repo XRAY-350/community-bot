@@ -675,3 +675,54 @@ Bug caught before it shipped: `channel.messages.fetchPins()` (the non-deprecated
 `refreshThronePanel()` and the one-off refresh script; correct form is `pins.items.map(p => p.message)`.
 All 4 tribes' pinned text guides replaced live with the new interactive panel, verified end-to-end (roster/
 leaderboard/rank data all resolve correctly against the live guild).
+
+## 30. Phase 6 — War & Alliances — 2026-08-03
+Owner: "add war and alliances at the request of the other leaders." Flagged a real tension before designing:
+the Weekly Crown was explicitly ruled "just a role/bragging rights, no channel or territory control... avoids
+fights over who controls what" — war/alliances sits in exactly that territory, so scope was nailed down via
+several rounds of AskUserQuestion + owner corrections rather than assumed. Final locked design:
+
+**War.** `/tribe war` isn't a command — it's a **Declare War** button on the Throne Hub (leader/staff only).
+Picking a target starts a **24h vote** among the PROPOSING tribe's own members (any current member votes 👍/👎
+in the hall, live tally on every click) — needs **≥30% turnout AND a simple majority** to pass. The TARGET has
+no say in whether it starts (owner: "no consent from the attacked part[y]"). One vote in flight per tribe at a
+time; **72h cooldown** on both sides after a war actually resolves (not after a failed vote — nothing happened,
+nothing to cool down from).
+Resolution is a probabilistic **simulation**, not a guaranteed stomp: each side's "power" = Σ over every
+current member of `1 + their Tides` — **Tides-specifically, not rank** (owner's own correction: rank power
+could be gamed by a leader mass-promoting everyone right before a fight; Tides only come from real,
+rate-limited hall activity and can't be manufactured on demand). Win chance = `powerA / (powerA + powerB)` — a
+coin weighted by strength, so a small very-active tribe can beat a bigger sloppy one, just not usually.
+**Stakes on the loser:** 25% of Treasury raided to the winner (never negative, capped at what they actually
+have), winner gets a flat **+100 Glory** (not stolen — Glory is a weekly flow, doesn't work as "theft"), and
+**floor(10% of members) captured, capped at 5, never below a 3-member floor** in the loser — picked at random
+from REGULAR members only (leaders can never be captured, mirrors banish). Captured members move tribes via
+a NEW `captureMemberInto()` (deliberately NOT `joinTribeSelfServe` — no veteran/entrance-gate/consent checks,
+it's a forced move, not a join) and enter the new tribe at rank 0 fresh.
+**Capture lock — 36h (half the war cooldown, owner's exact ask):** a captured member can't `/tribe leave` (the
+staff instant-leave) OR submit a leave-request for 36h, checked at BOTH exit paths — otherwise a captured
+staff member could just bounce out immediately and the whole point of real stakes would mean nothing. After
+36h, normal rules resume (they're never permanently trapped).
+
+**Alliances.** Capped at **ONE per tribe** (owner: with 5 tribes, unlimited alliances makes the politics
+meaningless). Bilateral, unlike war: the proposer's own members vote first (same 24h/30%/majority mechanic),
+then — deliberately mirroring every other cross-tribe consent flow already in this framework (nominate/
+invite/join-request) rather than inventing a SECOND full membership vote — the TARGET tribe's leader/staff
+just accept or deny via a throne button. Effects: **mutual defense** (an ally's power is added to your side
+in `simulateWar()` if either combatant has one — the ally isn't at risk itself, just reinforces) and a
+**shared treasury pool** (`Gift Treasury to Ally` button, moves real treasury between the two, gated to
+leader/staff since it's a tribe-level resource not a personal one). `Break Alliance` is immediate, no vote
+needed to leave one.
+
+**Architecture:** all new state lives in `tribes.js` (war/alliance vote records, `lastWarAt`, `allyKey`,
+`captureLocks` — a plain global map since anyone COULD in principle be captured more than once over time).
+`simulateWar(guild, attacker, defender)` is a PURE decision function — it reads guild role membership for
+power/capture-candidate selection but mutates NOTHING; the caller (index.js, which owns live Discord actions
+same as `releaseTribeMember`/`addCoLeader`) applies every consequence. Two boot+5-min sweeps
+(`sweepExpiredWarVotes`/`sweepExpiredAllianceVotes`) resolve votes past their deadline, mirroring the existing
+`sweepExpiredMusters` cadence/pattern exactly. Throne panel gained a 4th row: Declare War (disabled while on
+cooldown), Propose Alliance/Break Alliance (label + customId swap based on live `tribe.allyKey`), Gift
+Treasury to Ally (disabled without one). Verified live against all 5 real tribes: power formula computes
+correctly off real Tides totals, panels render the new row with correct disabled states, no boot errors.
+**Deliberately NOT live-tested with a real war** — captures move real members and drain real treasury, so the
+first actual test is the owner's call, not something to trial unilaterally.
