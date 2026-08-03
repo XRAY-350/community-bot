@@ -56,6 +56,42 @@ const SERVER_RULES = rules.TITLES;
 // Small-caps unicode (the server's channel/role aesthetic). Used by /tribe-admin create's style option.
 const SMALL_CAPS = { a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ', j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ', s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ' };
 const toSmallCaps = s => String(s).split('').map(ch => SMALL_CAPS[ch.toLowerCase()] || ch).join('');
+// Every role id the bot considers "structural" (staff, colors, regions, pronouns, ages, Arcane levels, the
+// contest winner role, every existing tribe's roles, the crown role) — used to rule these OUT when deciding
+// whether a role is a member's own personal vanity role. Best-effort, not exhaustive by construction; a role
+// this misses just means the founder falls through to getting a normal new tribe role, never the reverse.
+function systemicRoleIds(guild) {
+  const s = new Set([guild.id]);
+  const add = (...ids) => ids.forEach(id => { if (id) s.add(id); });
+  add(opspanel.ADMIN_ROLE_ID, opspanel.MOD_ROLE_ID, opspanel.OWNER_DISPLAY_ROLE_ID, ...(opspanel.OWNER_ROLE_IDS || []));
+  add(config.verifiedRoleId, config.unverifiedRoleId, config.cornerRoleId, config.trialModRoleId, config.watchlistRoleId, config.mdniRoleId, config.langMiniModRoleId, config.minorAgeRoleId);
+  (config.adultAgeRoleIds || []).forEach(add);
+  (config.strikeRoleIds || []).forEach(add);
+  (config.identifyingRoleIds || []).forEach(add);
+  roleselect.COLORS.forEach(([, id]) => add(id));
+  roleselect.AGE.forEach(([, id]) => add(id));
+  Object.values(roleselect.loadSections() || {}).forEach(list => (list || []).forEach(([, id]) => add(id)));
+  add('1529120692845674687', '1529121181767176313', '1529121191384842330', '1529121471946035330'); // Arcane Novice/Inter/Elite/NOLIFE
+  const contestCfg = contest.loadCfg ? contest.loadCfg() : null;
+  if (contestCfg) add(contestCfg.winnerRoleId);
+  for (const t of tribes.all()) { add(t.roleId, t.leaderRoleId); (t.ranks || []).forEach(r => add(r.roleId)); }
+  add(tribes.load().crownRoleId);
+  return s;
+}
+// A founder's "personal role" — owner: "for the people that already have personal roles if they create a
+// tribe just rename their role" instead of making a brand-new one. Only counts if EXACTLY ONE of their roles
+// is a clear match: solely theirs (nobody else holds it), not a bot/booster role, and not anything structural
+// (see systemicRoleIds). 0 or 2+ candidates is ambiguous — falls back to a fresh role, same as before.
+async function findFounderPersonalRole(guild, member) {
+  // role.members.size only reflects the CACHED member list — a cold cache could undercount a role's real
+  // holders and wrongly call something "personal" that other people also have. Force a full fetch first;
+  // this only runs at tribe-founding time (rare), so the cost is worth the correctness guarantee.
+  await guild.members.fetch().catch(() => {});
+  const excluded = systemicRoleIds(guild);
+  const candidates = [...member.roles.cache.values()].filter(r =>
+    !excluded.has(r.id) && !r.managed && !r.tags?.premiumSubscriberRole && r.members.size === 1);
+  return candidates.length === 1 ? candidates[0] : null;
+}
 // Build a whole tribe: gradient/solid role + leader role + private "land" category (throne/hall/voice),
 // register it in the framework, and return the pieces. Mirrors how the Cobalt Vigil was built by hand.
 // The ROLE name stays plain (typeable/mentionable); CHANNELS honor the style option (small-caps default).
@@ -85,9 +121,19 @@ async function buildTribe(guild, opts, config) {
   }
 
   const roleBase = { name: opts.name, hoist: true, mentionable: false, reason: `Tribe: ${opts.name}` };
+  const roleColors = opts.color2 ? { primaryColor: opts.color, secondaryColor: opts.color2 } : { primaryColor: opts.color };
+  // If the founder holds exactly one clearly personal role, repurpose IT into the tribe role instead of
+  // creating a second, redundant one (mirrors how Cobalt Vigil itself was founded — the owner's own personal
+  // role was renamed into the tribe role by hand, before this was automated).
+  const personalRole = opts.leaderMember ? await findFounderPersonalRole(guild, opts.leaderMember) : null;
   let role;
-  try { role = await guild.roles.create({ ...roleBase, colors: opts.color2 ? { primaryColor: opts.color, secondaryColor: opts.color2 } : { primaryColor: opts.color } }); }
-  catch { role = await guild.roles.create({ ...roleBase, color: opts.color }); }
+  if (personalRole) {
+    try { role = await personalRole.edit({ ...roleBase, colors: roleColors }); }
+    catch { role = await personalRole.edit({ ...roleBase, color: opts.color }); }
+  } else {
+    try { role = await guild.roles.create({ ...roleBase, colors: roleColors }); }
+    catch { role = await guild.roles.create({ ...roleBase, color: opts.color }); }
+  }
   if (slotRolePos != null) await role.setPosition(slotRolePos).catch(() => {});
   const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null);
   if (leaderRole && slotLeaderPos != null) await leaderRole.setPosition(slotLeaderPos).catch(() => {});
