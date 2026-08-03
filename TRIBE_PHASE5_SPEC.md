@@ -645,3 +645,33 @@ raised for this one, unlike #roles). Exposed as `/tribe-admin hub-setup` (admin-
 `/tribe-admin` subcommand) for re-running after a future content change. Verified live: channel created,
 message posted with correct content/components, `tribes.standings()`/`tribes.roster()` both return real data
 against the live guild.
+
+## 29. Trimmed the /tribe command list + a real Throne Hub per tribe — 2026-08-03
+Owner: "now that we have the hub what commands can we get rid of." Identified 5 subcommands fully superseded
+by hub buttons with ZERO functionality loss: `list` (= Standings), `expand` (= Shop), `leave-request` + `leave`
+(both folded into the hub's one Leave button, which already auto-detects staff vs regular), `join-request`
+(= Join Request's tribe-picker). All 5 removed — both the `SlashCommandBuilder` registration AND the dead
+dispatch handler underneath (the logic itself lives on in the shared helpers, still used by hub buttons).
+Cleaned up every stale `/tribe list`/`/tribe expand` text reference left behind (retheme's unlock-check
+message, `/tribe-admin register`'s confirmation, 7× "no tribe matches" errors) to point at #tribes-hub instead.
+`roster`/`leaderboard` were kept at first (their optional "which tribe" arg isn't covered by a "my tribe"
+button) — owner then asked for "All Rosters"/"All Leaderboards" buttons on the CENTRAL hub (one embed per
+tribe, no argument needed at all) specifically so THOSE could go too. Removed both, central hub's row 1 is
+now Standings/All Rosters/All Leaderboards (cross-tribe), row 2 is My Shop/Join Request/Leave (my-tribe
+actions) — dropped the old "My Roster"/"My Leaderboard" hub buttons since a tribe's own Throne Hub (below)
+already covers that exact case with full top-15 depth (the central "All" view caps at top-5 per tribe to
+stay scannable across all of them at once). `/tribe` is down from 17 subcommands to 10.
+Owner then clarified the ACTUAL ask was "add another hub in EACH THRONE" (not just the central one) — scoped
+via AskUserQuestion: full leader-tool panel (banish/invite via Discord's native User Select menus; note/
+retheme/announce/motto via modals; muster instant; rank via User Select → String Select of the tribe's own
+rank ladder), replacing the old TEXT-only pinned throne guide with a real button panel (`tribeThronePanel()`).
+Extracted shared `submitInvite/submitBanish/submitMuster/applyRetheme` helpers (mirroring the
+submitLeaveRequest/submitJoinRequest pattern from §28) so the throne buttons and the typed commands they
+mirror (`/tribe invite`, `/tribe banish`, `/tribe muster`, `/tribe retheme`) call the exact same code, one
+implementation each. Added `refreshThronePanel()` (find-pinned-by-content, edit-in-place, same pattern as
+`refreshTribeBlock`) called after retheme and motto changes so the panel's header/motto line never goes stale.
+Bug caught before it shipped: `channel.messages.fetchPins()` (the non-deprecated pin-fetch API) returns
+`{items: [{message, pinnedAt}], hasMore}`, NOT a Collection — `[...pins.values()]` throws. Fixed in both
+`refreshThronePanel()` and the one-off refresh script; correct form is `pins.items.map(p => p.message)`.
+All 4 tribes' pinned text guides replaced live with the new interactive panel, verified end-to-end (roster/
+leaderboard/rank data all resolve correctly against the live guild).

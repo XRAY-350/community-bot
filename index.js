@@ -5,7 +5,7 @@
 // guildMemberUpdate so we can see the Verified role being assigned). The GuildMembers intent
 // must also be enabled in the Discord Developer Portal for this application.
 
-const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, AuditLogEvent, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const config = require('./config');
 const State = require('./state');
@@ -180,6 +180,70 @@ async function submitJoinRequest(guild, member, tribe) {
   await throne.send({ content: `## 🪶 Join request\n> <@${member.id}> is asking to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to let them in.`, components: [row], allowedMentions: { users: [member.id] } }).catch(() => {});
   return { ok: true, content: `🪶 Sent to <#${tribe.throneId}> for approval.` };
 }
+// ---- Shared leader-tool actions — used by BOTH the typed /tribe subcommands and the per-tribe Throne Hub
+// buttons (owner, 2026-08-03: "add another hub in each throne"), one implementation each so the two surfaces
+// can't drift apart (the exact class of bug this session kept finding: retheme/banish role-cleanup gaps). ----
+async function submitInvite(guild, tribe, inviterId, target) {
+  if (target.user.bot) return { ok: false, content: 'Bots can’t join tribes.' };
+  if (target.roles.cache.has(tribe.roleId)) return { ok: false, content: `<@${target.id}> is already in **${tribe.shortName || tribe.name}**.` };
+  const other = tribes.memberTribe(target);
+  if (other && other.key !== tribe.key) return { ok: false, content: `<@${target.id}> is already in **${other.shortName || other.name}**. A member can only be in one tribe. Banish them there first.` };
+  const existing = tribes.getNomination(target.id);
+  if (existing && ['pending_approval', 'pending_accept'].includes(existing.status)) return { ok: false, content: `<@${target.id}> already has a pending nomination or invite.` };
+  tribes.createDirectInvite(tribe.key, inviterId, target.id);
+  const posted = await postAcceptPrompt(guild, tribe, target.id);
+  if (!posted) { tribes.clearNomination(target.id); return { ok: false, content: 'Couldn’t reach #bot-commands to send the invite.' }; }
+  return { ok: true, content: `🪶 Sent <@${target.id}> an invite to **${tribe.shortName || tribe.name}**. They’ll join once they accept.` };
+}
+async function submitBanish(guild, tribe, target, byTag) {
+  if (!target.roles.cache.has(tribe.roleId)) return { ok: false, content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}**.` };
+  if (tribe.leaderRoleId && target.roles.cache.has(tribe.leaderRoleId)) return { ok: false, content: 'You can’t banish the tribe’s leader.' };
+  const r = await releaseTribeMember(guild, tribe, target, `Tribe banish by ${byTag}`);
+  return r.ok ? { ok: true, content: `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` } : { ok: false, content: 'Couldn’t remove the role. Check my role position.' };
+}
+async function submitMuster(guild, tribe, callerId) {
+  if (tribes.getMuster(tribe.key)) return { ok: false, content: 'A muster is already running for this tribe.' };
+  if (tribe.lastMusterAt && Date.now() - tribe.lastMusterAt < MUSTER_COOLDOWN_MS) {
+    const nextAt = Math.floor((tribe.lastMusterAt + MUSTER_COOLDOWN_MS) / 1000);
+    return { ok: false, content: `This tribe already mustered recently. Next one can go out <t:${nextAt}:R>.` };
+  }
+  if (!tribe.hallId) return { ok: false, content: 'This tribe has no hall to muster in.' };
+  const hall = await guild.channels.fetch(tribe.hallId).catch(() => null);
+  if (!hall) return { ok: false, content: 'Couldn’t find the hall channel.' };
+  tribes.startMuster(tribe.key, callerId, MUSTER_DURATION_MS);
+  const endsAt = Math.floor((Date.now() + MUSTER_DURATION_MS) / 1000);
+  const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribemuster_join:${tribe.key}`).setLabel('🪖 I’m here!').setStyle(ButtonStyle.Success));
+  const msg = await hall.send({ content: `## 🪖 Muster called!\n<@&${tribe.roleId}>\n> Called by <@${callerId}>. Click below to be counted, ends <t:${endsAt}:R>. Every member who answers earns the tribe treasury and glory.`, components: [row], allowedMentions: { roles: [tribe.roleId], users: [callerId] } }).catch(() => null);
+  if (!msg) return { ok: false, content: 'Couldn’t post to the hall.' };
+  tribes.setMusterMessage(tribe.key, hall.id, msg.id);
+  return { ok: true, content: `🪖 Muster called in <#${hall.id}>. Ends <t:${endsAt}:R>.` };
+}
+async function applyRetheme(guild, tribe, { color, color2, name, shortName }) {
+  const role = guild.roles.cache.get(tribe.roleId);
+  if (!role) return { ok: false, content: 'Couldn’t find the tribe role.' };
+  const colors = color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color };
+  for (const r of [role, tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId), tribe.staffRankRoleId && guild.roles.cache.get(tribe.staffRankRoleId)]) {
+    if (!r) continue;
+    try { await r.edit({ colors, ...(name && r.id === role.id ? { name } : {}) }); }
+    catch { await r.edit({ color, ...(name && r.id === role.id ? { name } : {}) }); }
+  }
+  const patch = { color, color2 };
+  if (name) patch.name = name;
+  if (shortName) patch.shortName = shortName;
+  tribes.update(tribe.key, patch);
+  const fresh = tribes.get(tribe.key);
+  if ((name || shortName) && tribe.leaderRoleId) {
+    const leaderRole = guild.roles.cache.get(tribe.leaderRoleId);
+    if (leaderRole) await leaderRole.setName(`${fresh.shortName || fresh.name} Leader`, 'Tribe retheme: rename to match').catch(() => {});
+  }
+  if ((name || shortName) && tribe.staffRankRoleId) {
+    const staffRankRole = guild.roles.cache.get(tribe.staffRankRoleId);
+    if (staffRankRole) await staffRankRole.setName(`${fresh.shortName || fresh.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, 'Tribe retheme: rename to match').catch(() => {});
+  }
+  if ((name || shortName) && config.rolesChannelId) await roleselect.refreshTribeBlock(guild, config.rolesChannelId).catch(() => {});
+  await refreshThronePanel(guild, fresh).catch(() => {});
+  return { ok: true, content: `🎨 **${fresh.shortName || fresh.name}** has been ${name || shortName ? 'renamed and ' : ''}recoloured.` };
+}
 // Posts the "do you want to join?" Accept/Decline card — shared by a leader's direct /tribe invite (owner,
 // 2026-08-03: "invite should get consent" — skips straight to this, no separate approval needed since the
 // leader inviting IS the approval) and an approved member nomination.
@@ -313,33 +377,60 @@ async function buildTribe(guild, opts, config) {
   if (config.rolesChannelId) await roleselect.refreshTribeBlock(guild, config.rolesChannelId).catch(() => {});
   return { tribe, role, leaderRole, cat, throne, hall, vc };
 }
-// The pinned reference every tribe's throne gets, so members know what they can do without digging through
-// /help (owner: "we also need this pinned in the throne so all members know what they can do").
-function tribeThroneGuide(tribe) {
+// The pinned Throne Hub every tribe's throne gets — a button panel, not just text (owner, 2026-08-03: "add
+// another hub in each throne"). Member row is scoped to THIS tribe (no ambiguity, unlike the central hub).
+// Leader rows cover every leader-only tool via a picker/modal, gated inside each handler same as the typed
+// commands (isLeader || staff). Tribe key is baked into every customId, resolved fresh at click-time so the
+// panel never goes stale even if roles/state change.
+function tribeThronePanel(tribe) {
   const pts = tribe.pointsName || 'points';
   const title = tribes.leaderTitle(tribe);
   const ranks = (tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet';
-  return {
-    content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
-      + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
-      + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks as you go: ${ranks}. Ranks only ever go up.\n`
-      + `-# Staff (mods/admins) who join as members automatically hold **${tribes.staffRankTitle(tribe)}**, above the whole ladder.\n`
-      + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n> \`/tribe offer <amount>\`: give up your OWN ${pts} to fill the tribe's treasury (1:1). Never demotes you, just slows your climb to your next rank.\n> \`/tribe leave-request\`: ask ${title} (or staff) to release you. \`/tribe join-request <tribe>\` petitions a NEW tribe directly (veterans only, first tribe stays a free pick via #roles).\n> When ${title} calls a **muster** in the hall, click the button to be counted, every answer earns the tribe treasury and glory.\n`
-      + `\n**${title} (or staff) only:**\n> \`/tribe invite\`: sends them an accept/decline request, they still have to say yes. \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n> \`/tribe expand\`: the land shop, spend treasury on unlocks once you hit their milestone. \`/tribe retheme\`: recolour, once unlocked.\n> \`/tribe muster\`: call a roll-call in the hall (once every ~20h). Every member who answers earns treasury and glory.\n`
-      + `\n-# Staff holding **${tribes.staffRankTitle(tribe)}** can \`/tribe leave\` instantly, no approval needed. Everyone else needs \`/tribe leave-request\` approved, or a ${title}'s \`/tribe banish\`. Your first tribe is a free pick, after that you need to be accepted.`
-      + (tribe.entranceGate ? `\n-# ⚔️ This tribe gates new applicants: "${tribe.entranceGate.prompt}" (also asked of nominated/invited members before they join).` : ''),
-    allowedMentions: { parse: [] },
-  };
+  const k = tribe.key;
+  const content = `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
+    + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
+    + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks: ${ranks}. Ranks only ever go up.\n`
+    + `-# Staff who join as members automatically hold **${tribes.staffRankTitle(tribe)}**, above the whole ladder.\n`
+    + `\n-# Row 1: everyone. Rows 2-3: ${title} or staff only.`
+    + (tribe.entranceGate ? `\n-# ⚔️ This tribe gates new applicants: "${tribe.entranceGate.prompt}" (also asked of nominated/invited members before they join).` : '');
+  const memberRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribethrone_roster:${k}`).setEmoji('📋').setLabel('Roster').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_leaderboard:${k}`).setEmoji('🏆').setLabel('Leaderboard').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_shop:${k}`).setEmoji('🛒').setLabel('Shop').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_leave:${k}`).setEmoji('🚪').setLabel('Leave').setStyle(ButtonStyle.Danger));
+  const leaderRow1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribethrone_invite:${k}`).setEmoji('👥').setLabel('Invite').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`tribethrone_banish:${k}`).setEmoji('⛔').setLabel('Banish').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`tribethrone_note:${k}`).setEmoji('📝').setLabel('Note').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_rank:${k}`).setEmoji('🎖️').setLabel('Set Rank').setStyle(ButtonStyle.Secondary));
+  const leaderRow2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribethrone_retheme:${k}`).setEmoji('🎨').setLabel('Retheme').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`tribethrone_announce:${k}`).setEmoji('📣').setLabel('Announce').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`tribethrone_motto:${k}`).setEmoji('✍️').setLabel('Motto').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`tribethrone_muster:${k}`).setEmoji('🪖').setLabel('Muster').setStyle(ButtonStyle.Primary));
+  return { content, components: [memberRow, leaderRow1, leaderRow2], allowedMentions: { parse: [] } };
 }
-// Post + pin the guide in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
+// Post + pin the panel in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
 // e.g. the channel already has 50 pins — all fail silently rather than blocking tribe creation on it).
 async function postThroneGuide(guild, tribe) {
   if (!tribe.throneId) return null;
   const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
   if (!throne) return null;
-  const msg = await throne.send(tribeThroneGuide(tribe)).catch(() => null);
+  const msg = await throne.send(tribeThronePanel(tribe)).catch(() => null);
   if (msg) await msg.pin().catch(() => {});
   return msg;
+}
+// Re-render the already-posted/pinned Throne Hub — call after anything that changes what it shows (motto,
+// retheme's rename/recolour, entrance gate). Same "find by content, edit in place" pattern as refreshTribeBlock.
+async function refreshThronePanel(guild, tribe) {
+  if (!tribe.throneId) return false;
+  const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
+  if (!throne) return false;
+  const pins = await throne.messages.fetchPins().catch(() => null);
+  const msg = pins && pins.items.map(p => p.message).find(m => m.content.includes(': what you can do'));
+  if (!msg) return false;
+  await msg.edit(tribeThronePanel(tribe)).catch(() => {});
+  return true;
 }
 // ---- Tribes Hub (owner, 2026-08-03: "consolidate commands into dashboards and panels because it's getting
 // really long") — everything from the original launch announcement, evergreen, plus buttons for the
@@ -352,7 +443,7 @@ function tribeHubContent() {
     + `## What a tribe is\n`
     + `Every tribe has its own hoisted role and colour, a private land (throne, hall, voice), an internal rank ladder, and a leader who runs it (each tribe names its own title, Warden, Warlord, whatever fits).\n\n`
     + `## How to join\n`
-    + `Open **#roles** and pick a tribe from the Tribes section. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a tribe's leader must release you (or, for staff, an instant \`/tribe leave\`), and any new tribe has to accept you, by nomination, invite, or your own \`/tribe join-request\` (buttons below).\n\n`
+    + `Open **#roles** and pick a tribe from the Tribes section. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a tribe's leader must release you (staff can Leave below instantly), and any new tribe has to accept you, by nomination, invite, or your own Join Request below.\n\n`
     + `## Rising through the ranks\n`
     + `Being active in your tribe's hall moves you up its rank ladder automatically, ranks only ever go up, never down.\n\n`
     + `## Treasury, Glory, and the Weekly Crown\n`
@@ -365,12 +456,15 @@ function tribeHubContent() {
 }
 function tribeHubButtons() {
   return [
+    // Cross-tribe views — owner, 2026-08-03: "just make a button... that lists the roster or leaderboard
+    // for ALL tribes so there's no need for that argument" (replaced /tribe roster's/leaderboard's optional
+    // tribe param entirely — this covers "any tribe," your OWN tribe's throne panel covers "just mine").
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('tribehub_standings').setEmoji('👑').setLabel('Standings').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('tribehub_roster').setEmoji('📋').setLabel('My Roster').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('tribehub_leaderboard').setEmoji('🏆').setLabel('My Leaderboard').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('tribehub_shop').setEmoji('🛒').setLabel('My Shop').setStyle(ButtonStyle.Secondary)),
+      new ButtonBuilder().setCustomId('tribehub_allrosters').setEmoji('📋').setLabel('All Rosters').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('tribehub_allleaderboards').setEmoji('🏆').setLabel('All Leaderboards').setStyle(ButtonStyle.Secondary)),
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('tribehub_shop').setEmoji('🛒').setLabel('My Shop').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('tribehub_join').setEmoji('🪶').setLabel('Join Request').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('tribehub_leave').setEmoji('🚪').setLabel('Leave').setStyle(ButtonStyle.Danger)),
   ];
@@ -1422,20 +1516,14 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('tribe').setDescription('Your tribe: info, roster, standings, and (leaders) set the motto')
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
-        .addSubcommand(s => s.setName('roster').setDescription('List a tribe’s members')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
-        .addSubcommand(s => s.setName('list').setDescription('All tribes and their standings'))
         .addSubcommand(s => s.setName('motto').setDescription('Set your tribe’s motto (leaders only)')
           .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
         .addSubcommand(s => s.setName('invite').setDescription('Add a member to your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('nominate').setDescription('Propose a member to join YOUR tribe (any member can; head/staff approve, they accept)')
           .addUserOption(o => o.setName('user').setDescription('Who to nominate').setRequired(true)))
-        .addSubcommand(s => s.setName('join-request').setDescription('Petition to join a tribe you’re not in (for a veteran without a first-pledge left)')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
         .addSubcommand(s => s.setName('offer').setDescription('Convert your OWN activity points into your tribe’s treasury (1:1, never demotes you)')
           .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
-        .addSubcommand(s => s.setName('expand').setDescription('The land shop: spend treasury on unlocks (leaders only)'))
         .addSubcommand(s => s.setName('muster').setDescription('Call a roll-call: members who answer earn the tribe treasury + glory (leaders only)'))
         .addSubcommand(s => s.setName('retheme').setDescription('Recolour and/or rename your tribe (needs the Re-theme unlock; leaders only)')
           .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
@@ -1444,15 +1532,11 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('short_name').setDescription('New short name for cards (optional)').setRequired(false).setMaxLength(40)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
-        .addSubcommand(s => s.setName('leave-request').setDescription('Ask your tribe’s leader to release you (regular members only)'))
-        .addSubcommand(s => s.setName('leave').setDescription('Instantly leave your tribe, no approval needed (staff/General only)'))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
           .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
         .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Which member').setRequired(true))
           .addStringOption(o => o.setName('text').setDescription('The note, leave blank to read existing notes').setRequired(false)))
-        .addSubcommand(s => s.setName('leaderboard').setDescription('Tribe Tides leaderboard: top members by activity')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
         .addSubcommand(s => s.setName('rank').setDescription('Set a member’s rank by hand (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Member to rank').setRequired(true))
           .addStringOption(o => o.setName('rank').setDescription('Which rank').setRequired(true).setAutocomplete(true)))
@@ -3245,23 +3329,32 @@ client.on('interactionCreate', async (interaction) => {
     const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown, and resets each week. Treasury is the tribe’s permanent bank.' });
     return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed], flags: MessageFlags.Ephemeral });
   }
-  if (interaction.isButton?.() && (interaction.customId === 'tribehub_roster' || interaction.customId === 'tribehub_leaderboard' || interaction.customId === 'tribehub_shop')) {
+  // Cross-tribe views — one embed per tribe, so there's no "which tribe" argument to fill in. Your OWN
+  // tribe's throne panel has the single-tribe Roster/Leaderboard buttons for the full top-15 depth.
+  if (interaction.isButton?.() && interaction.customId === 'tribehub_allrosters') {
+    const list = tribes.all();
+    if (!list.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
+    const embeds = list.slice(0, 10).map(t => {
+      const members = tribes.roster(interaction.guild, t);
+      const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
+      return new EmbedBuilder().setColor(t.color || 0x2A426A).setTitle(`${t.emoji || '🏴'} ${t.shortName || t.name}`).setDescription(body).setFooter({ text: `${members.length} member${members.length === 1 ? '' : 's'}` });
+    });
+    return interaction.reply({ content: '## 📋 Every tribe’s roster', embeds, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribehub_allleaderboards') {
+    const list = tribes.all();
+    if (!list.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
+    const embeds = list.slice(0, 10).map(t => {
+      const pts = t.pointsName || 'points';
+      const top = tribes.topTides(t.key, 5);
+      const body = top.length ? top.map((e, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> · \`${e.points} ${pts}\``).join('\n') : `_No ${pts} earned yet._`;
+      return new EmbedBuilder().setColor(t.color || 0x2A426A).setTitle(`${t.emoji || '🏴'} ${t.shortName || t.name}`).setDescription(body).setFooter({ text: `top 5 by ${pts}` });
+    });
+    return interaction.reply({ content: '## 🏆 Every tribe’s leaderboard', embeds, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tribehub_shop') {
     const tribe = tribes.myTribe(interaction.member);
     if (!tribe) return interaction.reply({ content: 'You’re not in a tribe yet. Head to #roles to pledge one.', flags: MessageFlags.Ephemeral });
-    if (interaction.customId === 'tribehub_roster') {
-      const members = tribes.roster(interaction.guild, tribe);
-      const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
-      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body);
-      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed], flags: MessageFlags.Ephemeral });
-    }
-    if (interaction.customId === 'tribehub_leaderboard') {
-      const pts = tribe.pointsName || 'points';
-      const top = tribes.topTides(tribe.key, 15);
-      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts}\n> No ${pts} earned yet. Chat in the hall to start climbing.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-      const body = top.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${t.userId}> · \`${t.points} ${pts}\``).join('\n');
-      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts} leaderboard`, embeds: [new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    }
-    // tribehub_shop — same gate as /tribe expand (leader/staff only, unchanged scope for this pass)
     if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can open the shop.`, flags: MessageFlags.Ephemeral });
     return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
@@ -3292,6 +3385,194 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
     const r = await submitJoinRequest(interaction.guild, interaction.member, tribe);
     return interaction.update({ content: r.content, components: [], allowedMentions: { parse: [] } });
+  }
+  // ---- Throne Hub — the per-tribe button panel (owner, 2026-08-03: "add another hub in each throne").
+  // Every action reuses the SAME shared helper as its typed-command twin (submitInvite/submitBanish/
+  // submitMuster/applyRetheme/releaseTribeMember/submitLeaveRequest), so the two surfaces can't drift apart.
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribethrone_')) {
+    const [action, tribeKey] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    const act = action.slice('tribethrone_'.length);
+    const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster'].includes(act);
+    if (isLeaderTool && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (act === 'roster') {
+      const members = tribes.roster(interaction.guild, tribe);
+      const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
+      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'leaderboard') {
+      const pts = tribe.pointsName || 'points';
+      const top = tribes.topTides(tribe.key, 15);
+      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts}\n> No ${pts} earned yet. Chat in the hall to start climbing.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      const body = top.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${t.userId}> · \`${t.points} ${pts}\``).join('\n');
+      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts} Leaderboard`, embeds: [new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (act === 'shop') return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
+    if (act === 'leave') {
+      if (tribes.isLeader(interaction.member, tribe)) return interaction.reply({ content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).', flags: MessageFlags.Ephemeral });
+      if (['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const r = await releaseTribeMember(interaction.guild, tribe, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
+        return interaction.editReply(r.ok ? `🚪 Left **${tribe.shortName || tribe.name}**. You can be accepted into a new tribe whenever you like.` : 'Couldn’t remove the role. Check my role position.');
+      }
+      const r = await submitLeaveRequest(interaction.guild, interaction.member);
+      return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'invite') {
+      const menu = new UserSelectMenuBuilder().setCustomId(`tribethrone_invite_pick:${tribeKey}`).setPlaceholder('Who to invite?');
+      return interaction.reply({ content: '👥 Pick who to invite.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'banish') {
+      const menu = new UserSelectMenuBuilder().setCustomId(`tribethrone_banish_pick:${tribeKey}`).setPlaceholder('Who to remove?');
+      return interaction.reply({ content: '⛔ Pick who to remove.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'note') {
+      const menu = new UserSelectMenuBuilder().setCustomId(`tribethrone_note_pick:${tribeKey}`).setPlaceholder('Whose notes?');
+      return interaction.reply({ content: '📝 Pick a member.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'rank') {
+      const menu = new UserSelectMenuBuilder().setCustomId(`tribethrone_rank_pick:${tribeKey}`).setPlaceholder('Who to rank?');
+      return interaction.reply({ content: '🎖️ Pick a member.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'muster') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const r = await submitMuster(interaction.guild, tribe, interaction.user.id);
+      return interaction.editReply(r.content);
+    }
+    if (act === 'retheme') {
+      if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button.`, flags: MessageFlags.Ephemeral });
+      const colorInput = new TextInputBuilder().setCustomId('color').setLabel('Primary colour hex, e.g. #2A426A').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(7);
+      if (tribe.color != null) colorInput.setValue('#' + tribe.color.toString(16).padStart(6, '0'));
+      const color2Input = new TextInputBuilder().setCustomId('color2').setLabel('Second hex for a gradient (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(7);
+      if (tribe.color2 != null) color2Input.setValue('#' + tribe.color2.toString(16).padStart(6, '0'));
+      const nameInput = new TextInputBuilder().setCustomId('name').setLabel('New full name (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(80);
+      const shortInput = new TextInputBuilder().setCustomId('short_name').setLabel('New short name (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40);
+      const modal = new ModalBuilder().setCustomId(`tribethrone_retheme_modal:${tribeKey}`).setTitle('Retheme').addComponents(
+        new ActionRowBuilder().addComponents(colorInput), new ActionRowBuilder().addComponents(color2Input),
+        new ActionRowBuilder().addComponents(nameInput), new ActionRowBuilder().addComponents(shortInput));
+      return safeShowModal(interaction, modal);
+    }
+    if (act === 'announce') {
+      const msgInput = new TextInputBuilder().setCustomId('message').setLabel('The announcement').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1500);
+      const modal = new ModalBuilder().setCustomId(`tribethrone_announce_modal:${tribeKey}`).setTitle('Announce').addComponents(new ActionRowBuilder().addComponents(msgInput));
+      return safeShowModal(interaction, modal);
+    }
+    if (act === 'motto') {
+      const mottoInput = new TextInputBuilder().setCustomId('text').setLabel('The motto').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300);
+      if (tribe.motto) mottoInput.setValue(tribe.motto);
+      const modal = new ModalBuilder().setCustomId(`tribethrone_motto_modal:${tribeKey}`).setTitle('Set motto').addComponents(new ActionRowBuilder().addComponents(mottoInput));
+      return safeShowModal(interaction, modal);
+    }
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tribethrone_invite_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    const target = await interaction.guild.members.fetch(interaction.values[0]).catch(() => null);
+    if (!target) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
+    const r = await submitInvite(interaction.guild, tribe, interaction.user.id, target);
+    return interaction.update({ content: r.content, components: [], allowedMentions: { parse: [] } });
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tribethrone_banish_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    const target = await interaction.guild.members.fetch(interaction.values[0]).catch(() => null);
+    if (!target) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
+    await interaction.deferUpdate();
+    const r = await submitBanish(interaction.guild, tribe, target, interaction.user.tag);
+    return interaction.editReply({ content: r.content, components: [] });
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tribethrone_note_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    const targetId = interaction.values[0];
+    const modal = new ModalBuilder().setCustomId(`tribethrone_note_modal:${tribeKey}:${targetId}`).setTitle('Note').addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('text').setLabel('Note (blank to just view existing)').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)));
+    return safeShowModal(interaction, modal);
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tribethrone_rank_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    const targetId = interaction.values[0];
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target || !tribes.isMember(target, tribe)) return interaction.update({ content: `That member isn’t in **${tribe.shortName || tribe.name}**. Invite them first.`, components: [] });
+    const ranks = tribe.ranks || [];
+    if (!ranks.length) return interaction.update({ content: 'This tribe has no rank ladder set up.', components: [] });
+    const menu = new StringSelectMenuBuilder().setCustomId(`tribethrone_rank_pick2:${tribeKey}:${targetId}`).setPlaceholder('Which rank?')
+      .addOptions(ranks.map((r, i) => ({ label: `${i + 1}. ${r.name}`, value: String(i) })));
+    return interaction.update({ content: `🎖️ Set <@${targetId}>'s rank:`, components: [new ActionRowBuilder().addComponents(menu)], allowedMentions: { parse: [] } });
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('tribethrone_rank_pick2:')) {
+    const [, tribeKey, targetId] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
+    const idx = parseInt(interaction.values[0], 10);
+    if (!(idx >= 0 && tribe.ranks && tribe.ranks[idx])) return interaction.update({ content: 'Invalid rank.', components: [] });
+    await interaction.deferUpdate();
+    await applyTribeRank(interaction.guild, tribe, target, idx, `manual — set by <@${interaction.user.id}>`, false);
+    return interaction.editReply({ content: `${tribe.emoji || '🌊'} Set <@${targetId}> to **${tribe.ranks[idx].name}** in ${tribe.shortName || tribe.name}.`, components: [], allowedMentions: { parse: [] } });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_retheme_modal:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    const color = parseTribeHex(interaction.fields.getTextInputValue('color'));
+    if (color === null) return interaction.reply(badHexReply('primary'));
+    const c2raw = interaction.fields.getTextInputValue('color2');
+    const color2 = c2raw ? parseTribeHex(c2raw) : null;
+    if (c2raw && color2 === null) return interaction.reply(badHexReply('second'));
+    const name = interaction.fields.getTextInputValue('name').trim() || null;
+    const shortName = interaction.fields.getTextInputValue('short_name').trim() || null;
+    const r = await applyRetheme(interaction.guild, tribe, { color, color2, name, shortName });
+    return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_announce_modal:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel.', flags: MessageFlags.Ephemeral });
+    const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
+    if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
+    const msg = interaction.fields.getTextInputValue('message').slice(0, 1500).replace(/\n/g, '\n> ');
+    await throne.send({ content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name}: Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(() => {});
+    return interaction.reply({ content: `📣 Posted to <#${tribe.throneId}> and rallied the tribe.`, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_motto_modal:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    const text = interaction.fields.getTextInputValue('text');
+    tribes.setMotto(tribe.key, text);
+    if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
+    await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
+    return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_note_modal:')) {
+    const [, tribeKey, targetId] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    const text = interaction.fields.getTextInputValue('text').trim();
+    if (text) { tribes.addNote(tribe.key, targetId, text, interaction.user.id); return interaction.reply({ content: `📝 Noted on <@${targetId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
+    const notes = tribes.getNotes(tribe.key, targetId);
+    if (!notes.length) return interaction.reply({ content: `No notes on <@${targetId}> yet.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    const body = notes.map(n => `> ${n.text}\n-# by <@${n.by}> · <t:${Math.floor(n.at / 1000)}:R>`).join('\n');
+    return interaction.reply({ content: `## 📝 Notes on <@${targetId}>\n${body}`.slice(0, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   // ---- The land shop: /tribe expand's Buy/Teardown buttons ----
   if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_buy:')) {
@@ -4219,18 +4500,11 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'tribe') {
     const sub = interaction.options.getSubcommand();
-    if (sub === 'list') {
-      const board = tribes.standings(interaction.guild);
-      if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
-      const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury`).join('\n');
-      const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown, and resets each week. Treasury is the tribe’s permanent bank.' });
-      return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed] });
-    }
     const argTribe = interaction.options.getString('tribe');
     // Warden tools always act on the tribe you LEAD/belong to; info/roster accept an explicit tribe arg.
     const wardenSub = ['invite', 'banish', 'announce', 'note', 'rank'].includes(sub);
     const tribe = (!wardenSub && argTribe) ? tribes.resolve(argTribe) : tribes.myTribe(interaction.member);
-    if (!tribe) return interaction.reply({ content: (!wardenSub && argTribe) ? `No tribe matches “${argTribe}”. Try \`/tribe list\`.` : (wardenSub ? 'You don’t lead a tribe, so there’s nothing to manage.' : 'You’re not in a tribe yet. `/tribe list` shows them; `/request-role` the tribe role to join one.'), flags: MessageFlags.Ephemeral });
+    if (!tribe) return interaction.reply({ content: (!wardenSub && argTribe) ? `No tribe matches “${argTribe}”. Check Standings in #tribes-hub.` : (wardenSub ? 'You don’t lead a tribe, so there’s nothing to manage.' : 'You’re not in a tribe yet. #tribes-hub shows them; `/request-role` the tribe role to join one.'), flags: MessageFlags.Ephemeral });
     if (sub === 'info') {
       const memberCount = interaction.guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
       const land = [tribe.throneId && `<#${tribe.throneId}>`, tribe.hallId && `<#${tribe.hallId}>`, tribe.vcId && `<#${tribe.vcId}>`, tribe.text2Id && `<#${tribe.text2Id}>`, tribe.vc2Id && `<#${tribe.vc2Id}>`].filter(Boolean).join(' · ') || '_none yet_';
@@ -4247,26 +4521,13 @@ client.on('interactionCreate', async (interaction) => {
       if (footerBits.length) embed.setFooter({ text: footerBits.join(' · ') });
       return interaction.reply({ content, embeds: [embed], allowedMentions: { parse: [] } });
     }
-    if (sub === 'roster') {
-      const members = tribes.roster(interaction.guild, tribe);
-      const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
-      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body);
-      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [embed] });
-    }
-    if (sub === 'leaderboard') {
-      const pts = tribe.pointsName || 'points';
-      const top = tribes.topTides(tribe.key, 15);
-      if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts}\n> No ${pts} earned yet. Chat in the hall to start climbing.`, allowedMentions: { parse: [] } });
-      const lines = top.map((e, i) => `> ${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${e.userId}> · \`${e.points} ${pts}\``);
-      const embed = new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(lines.join('\n'));
-      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts} Leaderboard\n-# top ${top.length} by activity`, embeds: [embed], allowedMentions: { parse: [] } });
-    }
     if (sub === 'motto') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its motto.`, flags: MessageFlags.Ephemeral });
       const text = interaction.options.getString('text');
       tribes.setMotto(tribe.key, text);
       if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});   // the picker shows each tribe's motto — keep it in sync
+      await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
       return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
     }
     if (sub === 'nominate') {   // ANY member can propose; goes to the throne for approval, then the nominee accepts
@@ -4292,10 +4553,6 @@ client.on('interactionCreate', async (interaction) => {
     // A self-service petition — reuses the EXACT nomination machinery (nominatorId === targetId), so leader/
     // staff approval + the DM-first accept prompt (with entrance gate if set) all come for free. A first-timer
     // with no prior tribe should just use the free #roles pledge instead (no approval needed there at all).
-    if (sub === 'join-request') {
-      const r = await submitJoinRequest(interaction.guild, interaction.member, tribe);
-      return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    }
     if (sub === 'offer') {   // voluntary tithe: your OWN points -> tribe treasury, 1:1. Ranks never demote, so
       const pts = tribe.pointsName || 'points';                                                   // this only slows your NEXT promotion, it can't cost you your current rank.
       const amount = interaction.options.getInteger('amount');
@@ -4305,70 +4562,24 @@ client.on('interactionCreate', async (interaction) => {
       tribes.addTreasury(tribe.key, amount);
       return interaction.reply({ content: `🪙 Offered **${amount} ${pts}** to **${tribe.shortName || tribe.name}**'s treasury, now **${tribes.getTreasury(tribe.key)}**. Your rank doesn't drop, this only slows your climb to the next one.`, allowedMentions: { parse: [] } });
     }
-    if (sub === 'expand') {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
-        return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can open the shop.`, flags: MessageFlags.Ephemeral });
-      return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
-    }
     if (sub === 'retheme') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can retheme the tribe.`, flags: MessageFlags.Ephemeral });
-      if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check \`/tribe expand\`.`, flags: MessageFlags.Ephemeral });
+      if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
       const color = parseTribeHex(interaction.options.getString('color'));
       if (color === null) return interaction.reply(badHexReply('primary'));
       const c2raw = interaction.options.getString('color2');
       const color2 = c2raw ? parseTribeHex(c2raw) : null;
       if (c2raw && color2 === null) return interaction.reply(badHexReply('second'));
-      const role = interaction.guild.roles.cache.get(tribe.roleId);
-      if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
-      const newName = interaction.options.getString('name');
-      const newShort = interaction.options.getString('short_name');
-      const colors = color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color };
-      // A tribe's colour lives on 3 roles (base, leader, staff rank) — keep them all in lockstep so a retheme
-      // never leaves one role behind, same class of drift as owner spotted by hand on Trib (2026-08-03).
-      for (const r of [role, tribe.leaderRoleId && interaction.guild.roles.cache.get(tribe.leaderRoleId), tribe.staffRankRoleId && interaction.guild.roles.cache.get(tribe.staffRankRoleId)]) {
-        if (!r) continue;
-        try { await r.edit({ colors, ...(newName && r.id === role.id ? { name: newName } : {}) }); }
-        catch { await r.edit({ color, ...(newName && r.id === role.id ? { name: newName } : {}) }); }
-      }
-      const patch = { color, color2 };
-      if (newName) patch.name = newName;
-      if (newShort) patch.shortName = newShort;
-      tribes.update(tribe.key, patch);
-      const fresh = tribes.get(tribe.key);
-      if ((newName || newShort) && tribe.leaderRoleId) {
-        const leaderRole = interaction.guild.roles.cache.get(tribe.leaderRoleId);
-        if (leaderRole) await leaderRole.setName(`${fresh.shortName || fresh.name} Leader`, 'Tribe retheme: rename to match').catch(() => {});
-      }
-      // BUG FIXED 2026-08-03: only leaderRole was kept in sync on rename, staffRankRole ("General") was left
-      // with its old name forever — same class of drift as the colour-sync fix above, caught while renaming
-      // Trib. Matches the literal ` General` suffix buildTribe() uses at creation (not the customizable title).
-      if ((newName || newShort) && tribe.staffRankRoleId) {
-        const staffRankRole = interaction.guild.roles.cache.get(tribe.staffRankRoleId);
-        if (staffRankRole) await staffRankRole.setName(`${fresh.shortName || fresh.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, 'Tribe retheme: rename to match').catch(() => {});
-      }
-      if ((newName || newShort) && config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
-      return interaction.reply(`🎨 **${fresh.shortName || fresh.name}** has been ${newName || newShort ? 'renamed and ' : ''}recoloured.`);
+      const r = await applyRetheme(interaction.guild, tribe, { color, color2, name: interaction.options.getString('name'), shortName: interaction.options.getString('short_name') });
+      return interaction.reply(r.content);
     }
     if (sub === 'muster') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can call a muster.`, flags: MessageFlags.Ephemeral });
-      if (tribes.getMuster(tribe.key)) return interaction.reply({ content: 'A muster is already running for this tribe.', flags: MessageFlags.Ephemeral });
-      if (tribe.lastMusterAt && Date.now() - tribe.lastMusterAt < MUSTER_COOLDOWN_MS) {
-        const nextAt = Math.floor((tribe.lastMusterAt + MUSTER_COOLDOWN_MS) / 1000);
-        return interaction.reply({ content: `This tribe already mustered recently. Next one can go out <t:${nextAt}:R>.`, flags: MessageFlags.Ephemeral });
-      }
-      if (!tribe.hallId) return interaction.reply({ content: 'This tribe has no hall to muster in.', flags: MessageFlags.Ephemeral });
-      const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null);
-      if (!hall) return interaction.reply({ content: 'Couldn’t find the hall channel.', flags: MessageFlags.Ephemeral });
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      tribes.startMuster(tribe.key, interaction.user.id, MUSTER_DURATION_MS);
-      const endsAt = Math.floor((Date.now() + MUSTER_DURATION_MS) / 1000);
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribemuster_join:${tribe.key}`).setLabel('🪖 I’m here!').setStyle(ButtonStyle.Success));
-      const msg = await hall.send({ content: `## 🪖 Muster called!\n<@&${tribe.roleId}>\n> Called by <@${interaction.user.id}>. Click below to be counted, ends <t:${endsAt}:R>. Every member who answers earns the tribe treasury and glory.`, components: [row], allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(() => null);
-      if (!msg) return interaction.editReply('Couldn’t post to the hall.');
-      tribes.setMusterMessage(tribe.key, hall.id, msg.id);
-      return interaction.editReply(`🪖 Muster called in <#${hall.id}>. Ends <t:${endsAt}:R>.`);
+      const r = await submitMuster(interaction.guild, tribe, interaction.user.id);
+      return interaction.editReply(r.content);
     }
     // ---- Warden's tools: leaders of THIS tribe (or staff) ----
     if (wardenSub) {
@@ -4381,41 +4592,14 @@ client.on('interactionCreate', async (interaction) => {
         // the same nomination/accept machinery as /tribe nominate. No entrance gate on this path though —
         // the leader already vouches for this person, a quiz on top would be redundant here specifically.
         if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
-        if (target.user.bot) return interaction.reply({ content: 'Bots can’t join tribes.', flags: MessageFlags.Ephemeral });
-        if (target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> is already in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-        const other = tribes.memberTribe(target);
-        if (other && other.key !== tribe.key) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}**. A member can only be in one tribe. Banish them there first.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-        const existing = tribes.getNomination(target.id);
-        if (existing && ['pending_approval', 'pending_accept'].includes(existing.status)) return interaction.reply({ content: `<@${target.id}> already has a pending nomination or invite.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-        tribes.createDirectInvite(tribe.key, interaction.user.id, target.id);
-        const posted = await postAcceptPrompt(interaction.guild, tribe, target.id);
-        if (!posted) { tribes.clearNomination(target.id); return interaction.reply({ content: 'Couldn’t reach #bot-commands to send the invite.', flags: MessageFlags.Ephemeral }); }
-        return interaction.reply({ content: `🪶 Sent <@${target.id}> an invite to **${tribe.shortName || tribe.name}** in <#${BOT_COMMANDS_CH}>. They’ll join once they accept.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        const r = await submitInvite(interaction.guild, tribe, interaction.user.id, target);
+        return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
       if (sub === 'banish') {
         if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
-        if (!target.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `<@${target.id}> isn’t in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-        if (tribe.leaderRoleId && target.roles.cache.has(tribe.leaderRoleId)) return interaction.reply({ content: 'You can’t banish the tribe’s leader.', flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const r = await releaseTribeMember(interaction.guild, tribe, target, `Tribe banish by ${interaction.user.tag}`);
-        return interaction.editReply(r.ok ? `✅ Released <@${target.id}> from **${tribe.shortName || tribe.name}**. They can be accepted into a new tribe now.` : 'Couldn’t remove the role. Check my role position.');
-      }
-      if (sub === 'leave-request') {
-        const r = await submitLeaveRequest(interaction.guild, interaction.member);
-        return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral });
-      }
-      // Owner, 2026-08-03: "Generals leave tribes and switch allegiances as they wish" — staff (mod/admin
-      // tier) holding a tribe's General auto-rank can walk out instantly, no leader approval needed, unlike
-      // a regular member's leave-request. JOINING a new tribe afterward still goes through the normal path
-      // (petition/nominate/invite) — only the leave side is unlocked for staff.
-      if (sub === 'leave') {
-        const mine = tribes.myTribe(interaction.member);
-        if (!mine) return interaction.reply({ content: 'You’re not in a tribe.', flags: MessageFlags.Ephemeral });
-        if (tribes.isLeader(interaction.member, mine)) return interaction.reply({ content: 'You’re this tribe’s leader — that’s not the General exemption. Ask staff (`/tribe-admin`) to step down.', flags: MessageFlags.Ephemeral });
-        if (!['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) return interaction.reply({ content: `Instant leave is a staff (General) perk. Use \`/tribe leave-request\` instead — ${tribes.leaderTitle(mine)} or staff has to release you.`, flags: MessageFlags.Ephemeral });
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const r = await releaseTribeMember(interaction.guild, mine, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
-        return interaction.editReply(r.ok ? `🚪 Left **${mine.shortName || mine.name}**. You can be accepted into a new tribe whenever you like.` : 'Couldn’t remove the role. Check my role position.');
+        const r = await submitBanish(interaction.guild, tribe, target, interaction.user.tag);
+        return interaction.editReply(r.content);
       }
       if (sub === 'announce') {
         if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });
@@ -4501,25 +4685,25 @@ client.on('interactionCreate', async (interaction) => {
       const t = tribes.register({ key, name: interaction.options.getString('name'), shortName: interaction.options.getString('name'),
         emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
-      return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in \`/tribe list\` and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in #tribes-hub Standings and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'points') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const nm = interaction.options.getString('name').slice(0, 20);
       tribes.update(t.key, { pointsName: nm });
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now calls its activity points **${nm}**. Shows on \`/tribe leaderboard\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'title') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const nm = interaction.options.getString('name').slice(0, 40);
       tribes.update(t.key, { leaderTitle: nm });
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now calls its head **${nm}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'staffrank-set') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const nm = interaction.options.getString('name').slice(0, 40);
       tribes.update(t.key, { staffRankTitle: nm });
       if (t.staffRankRoleId) { const role = interaction.guild.roles.cache.get(t.staffRankRoleId); if (role) await role.setName(`${t.shortName || t.name} ${nm}`, 'tribe staff-rank rename').catch(() => {}); }
@@ -4541,7 +4725,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'grant') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const meter = interaction.options.getString('meter');
       const amount = interaction.options.getInteger('amount');
       const newVal = meter === 'treasury' ? tribes.addTreasury(t.key, amount) : tribes.addGlory(t.key, amount);
@@ -4563,7 +4747,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'challenge-complete') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const ch = tribes.getChallenge();
       if (!ch) return interaction.reply({ content: 'There’s no active challenge to complete.', flags: MessageFlags.Ephemeral });
       const ok = tribes.completeChallengeForTribe(t.key);
@@ -4578,7 +4762,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'gate-set') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const prompt = interaction.options.getString('prompt').slice(0, 200);
       const optionA = interaction.options.getString('option_a').slice(0, 80);
       const optionB = interaction.options.getString('option_b').slice(0, 80);
@@ -4588,7 +4772,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'gate-clear') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       tribes.clearEntranceGate(t.key);
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** no longer gates self-joins.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
