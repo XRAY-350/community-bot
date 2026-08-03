@@ -41,7 +41,7 @@ no refund.
 | # | Unlock | Gate (members / crowns) | Treasury cost |
 |---|---|---|---|
 | 1 | 2nd text channel | 50 / 5 | 500 |
-| 2 | Re-theme (head can recolor the tribe gradient anytime after) | 60 / 6 | 400 |
+| 2 | Re-theme (head can recolor the tribe gradient AND rename it, anytime after) | 60 / 6 | 400 |
 | 3 | External Sounds (tribe voice channel) | 75 / 10 | 700 |
 | 4 | 2nd voice channel | 85 / 14 | 900 |
 | 5 | Voice quality boost (bitrate/video on tribe VC) | 100 / 18 | 800 |

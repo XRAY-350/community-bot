@@ -1174,9 +1174,11 @@ client.once('ready', async () => {
           .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
         .addSubcommand(s => s.setName('expand').setDescription('The land shop: spend treasury on unlocks (leaders only)'))
         .addSubcommand(s => s.setName('muster').setDescription('Call a roll-call: members who answer earn the tribe treasury + glory (leaders only)'))
-        .addSubcommand(s => s.setName('retheme').setDescription('Recolour your tribe (needs the Re-theme unlock; leaders only)')
+        .addSubcommand(s => s.setName('retheme').setDescription('Recolour and/or rename your tribe (needs the Re-theme unlock; leaders only)')
           .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
-          .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false)))
+          .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false))
+          .addStringOption(o => o.setName('name').setDescription('New full tribe name (optional)').setRequired(false).setMaxLength(80))
+          .addStringOption(o => o.setName('short_name').setDescription('New short name for cards (optional)').setRequired(false).setMaxLength(40)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
@@ -3877,10 +3879,21 @@ client.on('interactionCreate', async (interaction) => {
       if (c2raw && color2 === null) return interaction.reply({ content: 'Bad second colour hex.', flags: MessageFlags.Ephemeral });
       const role = interaction.guild.roles.cache.get(tribe.roleId);
       if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
-      try { await role.edit({ colors: color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color } }); }
-      catch { await role.edit({ color }); }
-      tribes.update(tribe.key, { color });
-      return interaction.reply(`🎨 **${tribe.shortName || tribe.name}** has been recoloured.`);
+      const newName = interaction.options.getString('name');
+      const newShort = interaction.options.getString('short_name');
+      try { await role.edit({ colors: color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color }, ...(newName ? { name: newName } : {}) }); }
+      catch { await role.edit({ color, ...(newName ? { name: newName } : {}) }); }
+      const patch = { color };
+      if (newName) patch.name = newName;
+      if (newShort) patch.shortName = newShort;
+      tribes.update(tribe.key, patch);
+      const fresh = tribes.get(tribe.key);
+      if ((newName || newShort) && tribe.leaderRoleId) {
+        const leaderRole = interaction.guild.roles.cache.get(tribe.leaderRoleId);
+        if (leaderRole) await leaderRole.setName(`${fresh.shortName || fresh.name} Leader`, 'Tribe retheme: rename to match').catch(() => {});
+      }
+      if ((newName || newShort) && config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
+      return interaction.reply(`🎨 **${fresh.shortName || fresh.name}** has been ${newName || newShort ? 'renamed and ' : ''}recoloured.`);
     }
     if (sub === 'muster') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
