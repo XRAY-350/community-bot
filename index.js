@@ -4265,6 +4265,14 @@ client.on('interactionCreate', async (interaction) => {
     if (member.id === client.user.id) return interaction.reply({ content: 'I cannot corner myself.', flags: MessageFlags.Ephemeral });
 
     if (name === 'corner') {
+      // Self-cornering is blocked for everyone EXCEPT this one member (owner-approved standing exception,
+      // 2026-08-03: "white korean baddie" / beautyinelijah). She picks her own duration like anyone else
+      // would; nothing here changes /uncorner, so only staff can still release her early — this exemption is
+      // scoped to the corner path only, not the shared corner/uncorner self-target logic above.
+      const SELF_CORNER_EXEMPT_ID = '1415112053823242250';
+      if (member.id === interaction.user.id && member.id !== SELF_CORNER_EXEMPT_ID) {
+        return interaction.reply({ content: 'You can’t corner yourself.', flags: MessageFlags.Ephemeral });
+      }
       // Tier hierarchy: you may corner your OWN staff tier or LOWER — never a higher tier. So equal
       // tiers can corner each other (mod↔mod, admin↔admin), staff can corner regular members, but a mod
       // can't corner an admin. Ranks: owner > admin > mod > member. The guild owner is never cornerable
