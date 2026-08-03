@@ -1343,6 +1343,8 @@ client.once('ready', async () => {
           .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('nominate').setDescription('Propose a member to join YOUR tribe (any member can; head/staff approve, they accept)')
           .addUserOption(o => o.setName('user').setDescription('Who to nominate').setRequired(true)))
+        .addSubcommand(s => s.setName('join-request').setDescription('Petition to join a tribe you’re not in (for a veteran without a first-pledge left)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
         .addSubcommand(s => s.setName('offer').setDescription('Convert your OWN activity points into your tribe’s treasury (1:1, never demotes you)')
           .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
         .addSubcommand(s => s.setName('expand').setDescription('The land shop: spend treasury on unlocks (leaders only)'))
@@ -1355,6 +1357,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('leave-request').setDescription('Ask your tribe’s leader to release you (regular members only)'))
+        .addSubcommand(s => s.setName('leave').setDescription('Instantly leave your tribe, no approval needed (staff/General only)'))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
           .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
         .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
@@ -4141,6 +4144,25 @@ client.on('interactionCreate', async (interaction) => {
       await throne.send({ content: `## 🪶 Nomination\n-# proposed by <@${interaction.user.id}>\n> <@${interaction.user.id}> nominates <@${target.id}> to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to send them an invite to accept.`, components: [row], allowedMentions: { users: [target.id] } }).catch(() => {});
       return interaction.reply({ content: `🪶 Sent to <#${tribe.throneId}> for approval. If ${tribes.leaderTitle(tribe)} or staff approve, ${target.displayName} will get an invite to accept.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
+    // A self-service petition — reuses the EXACT nomination machinery (nominatorId === targetId), so leader/
+    // staff approval + the DM-first accept prompt (with entrance gate if set) all come for free. A first-timer
+    // with no prior tribe should just use the free #roles pledge instead (no approval needed there at all).
+    if (sub === 'join-request') {
+      if (interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re already in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a different tribe. Its leader has to release you first.', flags: MessageFlags.Ephemeral });
+      if (!tribes.isVeteran(interaction.user.id)) return interaction.reply({ content: 'You haven’t pledged before, so your first tribe is a free pick, no approval needed: use the picker in #roles instead.', flags: MessageFlags.Ephemeral });
+      const existing = tribes.getNomination(interaction.user.id);
+      if (existing && ['pending_approval', 'pending_accept'].includes(existing.status)) return interaction.reply({ content: 'You already have a pending request.', flags: MessageFlags.Ephemeral });
+      if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to route the request through.', flags: MessageFlags.Ephemeral });
+      const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
+      if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
+      tribes.createNomination(tribe.key, interaction.user.id, interaction.user.id);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tribenom_approve:${interaction.user.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`tribenom_deny:${interaction.user.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
+      await throne.send({ content: `## 🪶 Join request\n> <@${interaction.user.id}> is asking to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to let them in.`, components: [row], allowedMentions: { users: [interaction.user.id] } }).catch(() => {});
+      return interaction.reply({ content: `🪶 Sent to <#${tribe.throneId}> for approval.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
     if (sub === 'offer') {   // voluntary tithe: your OWN points -> tribe treasury, 1:1. Ranks never demote, so
       const pts = tribe.pointsName || 'points';                                                   // this only slows your NEXT promotion, it can't cost you your current rank.
       const amount = interaction.options.getInteger('amount');
@@ -4259,6 +4281,19 @@ client.on('interactionCreate', async (interaction) => {
           if (throne) await throne.send({ content: `## 🚪 Leave request\n<@${interaction.user.id}> is asking to leave **${mine.shortName || mine.name}**.${mine.leaderRoleId ? ` <@&${mine.leaderRoleId}>` : ''}`, components: [row], allowedMentions: { users: [interaction.user.id], roles: mine.leaderRoleId ? [mine.leaderRoleId] : [] } }).catch(() => {});
         }
         return interaction.reply({ content: `🚪 Sent to ${tribes.leaderTitle(mine)}${mine.throneId ? ` in <#${mine.throneId}>` : ''}. You'll stay in **${mine.shortName || mine.name}** until it's approved.`, flags: MessageFlags.Ephemeral });
+      }
+      // Owner, 2026-08-03: "Generals leave tribes and switch allegiances as they wish" — staff (mod/admin
+      // tier) holding a tribe's General auto-rank can walk out instantly, no leader approval needed, unlike
+      // a regular member's leave-request. JOINING a new tribe afterward still goes through the normal path
+      // (petition/nominate/invite) — only the leave side is unlocked for staff.
+      if (sub === 'leave') {
+        const mine = tribes.myTribe(interaction.member);
+        if (!mine) return interaction.reply({ content: 'You’re not in a tribe.', flags: MessageFlags.Ephemeral });
+        if (tribes.isLeader(interaction.member, mine)) return interaction.reply({ content: 'You’re this tribe’s leader — that’s not the General exemption. Ask staff (`/tribe-admin`) to step down.', flags: MessageFlags.Ephemeral });
+        if (!['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) return interaction.reply({ content: `Instant leave is a staff (General) perk. Use \`/tribe leave-request\` instead — ${tribes.leaderTitle(mine)} or staff has to release you.`, flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const r = await releaseTribeMember(interaction.guild, mine, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
+        return interaction.editReply(r.ok ? `🚪 Left **${mine.shortName || mine.name}**. You can be accepted into a new tribe whenever you like.` : 'Couldn’t remove the role. Check my role position.');
       }
       if (sub === 'announce') {
         if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });

@@ -599,3 +599,19 @@ permissions on those roles) but wrong, and nothing else would ever clean it up p
 shared `releaseTribeMember(guild, tribe, member, reason)` that strips the base role, staff-rank role, and any
 held rank role together, de-authorizing membership first so the tribe-membership guard doesn't fight it.
 Both `/tribe banish` and the new leave-request approval now go through this one function.
+
+## 27. `/tribe join-request` (self-petition) + `/tribe leave` (staff instant-leave) — 2026-08-03
+Owner asked for a "Join request" button in the planned hub (see §28) — reusing the EXISTING nomination
+machinery turned out to fit perfectly: `/tribe join-request <tribe>` calls `tribes.createNomination(tribe.key,
+requesterId, requesterId)` — nominator === target, since the petitioner IS the nominee. Costs zero new state
+plumbing: leader/staff approval, the DM-first accept prompt, and the entrance gate all come for free from the
+nominate/accept code already built. Gated: blocks if already in a different tribe (release first) or already
+in this one, and blocks a first-timer with `!tribes.isVeteran()` — someone who's never pledged should just use
+the free #roles picker, no approval needed there at all.
+Separately, owner: "Generals leave tribes and switch allegiances as they wish" → clarified: "They cannot join
+as they wish. Only leave as they wish" — staff (mod/admin tier, i.e. holders of a tribe's General auto-rank)
+get an INSTANT self-release, no leader approval, but still go through the normal petition/nominate/invite path
+to join a NEW tribe afterward like anyone else. Added `/tribe leave` (distinct from the regular-member
+`/tribe leave-request`): gated to staff tier and not-the-leader (a staff LEADER isn't the General exemption —
+that's a bigger, unbuilt "step down" problem), calls the same `releaseTribeMember()` directly, no throne post
+or approval step at all.
