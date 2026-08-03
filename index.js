@@ -95,10 +95,25 @@ async function findFounderPersonalRole(guild, member) {
 // The actual first-tribe self-join (via #roles), shared by the direct path (no gate) and the entrance-gate
 // answer button (gate passed). Caller has already run eligibility checks (not already in a tribe, not a
 // veteran) — this just does the membership state + role grant + hall welcome post.
+// Keeps a member's "General" role (see tribes.staffRankTitle) correct: granted the instant a staff member
+// (mod/admin tier) holds a tribe's base role and isn't its leader, revoked the instant either stops being
+// true (demoted from staff, banished, or promoted to leader). Called at join-time for instant effect, and
+// swept hourly (staffRankSweep below) to catch later promotions/demotions of EXISTING tribe members.
+async function syncStaffRank(guild, member, tribe) {
+  tribe = tribe || tribes.myTribe(member);
+  if (!tribe || !tribe.staffRankRoleId) return;
+  const has = member.roles.cache.has(tribe.staffRankRoleId);
+  if (tribes.isLeader(member, tribe)) { if (has) await member.roles.remove(tribe.staffRankRoleId, 'Tribe: leader outranks General').catch(() => {}); return; }
+  const isTribeMember = member.roles.cache.has(tribe.roleId);
+  const isStaff = ['admin', 'mod'].includes(opspanel.memberTier(member));
+  if (isTribeMember && isStaff && !has) await member.roles.add(tribe.staffRankRoleId, `Tribe: staff auto-rank (${tribes.staffRankTitle(tribe)})`).catch(() => {});
+  else if (has && !(isTribeMember && isStaff)) await member.roles.remove(tribe.staffRankRoleId, 'Tribe: no longer eligible for the staff rank').catch(() => {});
+}
 async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe — self-join via #roles') {
   tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
   const ok = await member.roles.add(tribe.roleId, reason).then(() => true).catch(() => false);
   if (!ok) { tribes.setMembership(tribe.key, member.id, false); return { ok: false }; }
+  await syncStaffRank(guild, member, tribe);
   if (tribe.hallId) { const hall = await guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
   return { ok: true, content: `${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; its ${tribes.leaderTitle(tribe)} must release you before you could ever join another.` };
 }
@@ -160,6 +175,11 @@ async function buildTribe(guild, opts, config) {
   const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null);
   if (leaderRole && slotLeaderPos != null) await leaderRole.setPosition(slotLeaderPos).catch(() => {});
   if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
+  // "General" — any staff (mod/admin) who joins as a regular member sits above the whole rank ladder
+  // automatically (owner, 2026-08-03). Sits just below the leader role in the hierarchy.
+  const staffRankRole = await guild.roles.create({ name: `${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
+    .catch(() => guild.roles.create({ name: `${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
+  if (staffRankRole && slotLeaderPos != null) await staffRankRole.setPosition(slotLeaderPos).catch(() => {});
   const corner = config.cornerRoleId;
   const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
   const leaderAllow = leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel] }] : [];
@@ -205,7 +225,8 @@ async function buildTribe(guild, opts, config) {
   const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color,
     pointsName: (opts.pointsName || 'points').slice(0, 20),
     leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40), ranks: rankRoles,
-    roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
+    roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, staffRankRoleId: staffRankRole ? staffRankRole.id : null,
+    categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
   await postThroneGuide(guild, tribe);
   // Keep #roles' tribe picker in sync — its options are baked in at message-send time, so a newly founded
   // tribe never shows up as a pledge choice on its own without re-rendering that message.
@@ -222,6 +243,7 @@ function tribeThroneGuide(tribe) {
     content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
       + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
       + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks as you go: ${ranks}. Ranks only ever go up.\n`
+      + `-# Staff (mods/admins) who join as members automatically hold **${tribes.staffRankTitle(tribe)}**, above the whole ladder.\n`
       + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n> \`/tribe offer <amount>\`: give up your OWN ${pts} to fill the tribe's treasury (1:1). Never demotes you, just slows your climb to your next rank.\n> When ${title} calls a **muster** in the hall, click the button to be counted, every answer earns the tribe treasury and glory.\n`
       + `\n**${title} (or staff) only:**\n> \`/tribe invite\`: sends them an accept/decline request, they still have to say yes. \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n> \`/tribe expand\`: the land shop, spend treasury on unlocks once you hit their milestone. \`/tribe retheme\`: recolour, once unlocked.\n> \`/tribe muster\`: call a roll-call in the hall (once every ~20h). Every member who answers earns treasury and glory.\n`
       + `\n-# Once you join, you can't leave or switch on your own, a ${title} must \`/tribe banish\` you first. Your first tribe is a free pick, after that you need to be accepted.`
@@ -268,6 +290,21 @@ async function processWeeklyCrownIfDue(guild) {
   if (tribe.throneId) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throne.send({ content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
+  }
+}
+// Catches "General" (staff auto-rank) drift that join-time syncing alone would miss: a member promoted to
+// mod/admin AFTER already being in a tribe, or demoted/banished afterward. Iterates every tribe's current
+// role-holders — needs the full member cache, so fetches it once up front rather than per-tribe.
+async function sweepStaffRanks(guild) {
+  await guild.members.fetch().catch(() => {});
+  for (const tribe of tribes.all()) {
+    if (!tribe.staffRankRoleId) continue;
+    const role = guild.roles.cache.get(tribe.roleId);
+    if (!role) continue;
+    for (const member of role.members.values()) await syncStaffRank(guild, member, tribe).catch(() => {});
+    // also sweep current staffRank holders in case they left the tribe/lost staff without losing THIS role
+    const staffRankRole = guild.roles.cache.get(tribe.staffRankRoleId);
+    if (staffRankRole) for (const member of staffRankRole.members.values()) await syncStaffRank(guild, member, tribe).catch(() => {});
   }
 }
 // Closes any muster whose window has passed: pays out, edits the original call-to-arms message (disabling the
@@ -1277,6 +1314,9 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('title').setDescription('Set what a tribe calls its head, e.g. Warden')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('name').setDescription('The head title, e.g. Warden').setRequired(true).setMaxLength(40)))
+        .addSubcommand(s => s.setName('staffrank-set').setDescription('Set what a tribe calls staff who join as members, e.g. General (default: General)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
+          .addStringOption(o => o.setName('name').setDescription('The staff-rank title, e.g. General').setRequired(true).setMaxLength(40)))
         .addSubcommand(s => s.setName('ranks').setDescription('Rename a tribe’s four rank rungs, lowest to highest')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('rank1').setDescription('Lowest rank name').setRequired(true).setMaxLength(40))
@@ -1496,6 +1536,9 @@ client.once('ready', async () => {
   const roleselectSweep = async g => { const removed = await roleselect.sweepDeadRoles(g, config.rolesChannelId); const n = Object.values(removed).flat().length; if (n) console.log(`[roleselect] sweep: removed ${n} dead role(s) — ${JSON.stringify(removed)}`); };
   if (dguild) await roleselectSweep(dguild).catch(e => console.error(`[roleselect] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(roleselectSweep).catch(() => {}), 3600000);
+  // Tribe "General" (staff auto-rank) drift: boot catch-up + hourly (catches later promotions/demotions).
+  if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {
@@ -2336,6 +2379,7 @@ async function enforceTribeMembership(member) {
 async function maybePromoteTribeRank(guild, tribeKey, member) {
   const tribe = tribes.get(tribeKey); if (!tribe || !(tribe.ranks || []).length) return;
   if (tribes.isLeader(member, tribe)) return;   // the Warden (head) is above the rank ladder, never ranked
+  if (['admin', 'mod'].includes(opspanel.memberTier(member))) return;   // staff sit in the General slot instead, also above the ladder
   const earned = tribes.earnedRankIndex(tribe, member.id);
   const current = tribes.currentRankIndex(member, tribe);
   if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + Tides', earned >= 1);
@@ -4154,6 +4198,14 @@ client.on('interactionCreate', async (interaction) => {
       const nm = interaction.options.getString('name').slice(0, 40);
       tribes.update(t.key, { leaderTitle: nm });
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now calls its head **${nm}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'staffrank-set') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      const nm = interaction.options.getString('name').slice(0, 40);
+      tribes.update(t.key, { staffRankTitle: nm });
+      if (t.staffRankRoleId) { const role = interaction.guild.roles.cache.get(t.staffRankRoleId); if (role) await role.setName(`${t.shortName || t.name} ${nm}`, 'tribe staff-rank rename').catch(() => {}); }
+      return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now calls its staff rank **${nm}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'ranks') {
       const t = tribes.resolve(interaction.options.getString('tribe'));

@@ -408,3 +408,25 @@ the ACCEPT step is new, not a quiz.
 **Valith is configured**: prompt "Every applicant must choose their weapon.", Spear vs Shield, **Spear is
 correct**. Its motto is also now set: "Bound by spears, guarded against foes." (picker + throne guide both
 refreshed to reflect the new motto, the gate, and invite's new consent step).
+
+## 16. The "General" rank — DONE 2026-08-03, general tribe feature
+Owner: "I think mods or admins should get a special role like general or something." Confirmed via 3 quick
+questions: sits ABOVE the whole normal rank ladder (like the tribe leader, one step below them), per-tribe
+customizable title (default "General", like leaderTitle), applies to BOTH mod and admin tier.
+`tribe.staffRankRoleId` is a real Discord role (created in `buildTribe()` for future tribes, backfilled for the
+3 existing ones via a one-off script), `tribe.staffRankTitle` the customizable name (`/tribe-admin
+staffrank-set` — also renames the actual role to match, mirroring how `title`/`ranks` already work).
+`syncStaffRank(guild, member, tribe)` is the single source of truth: grants the role the instant someone holds
+BOTH the tribe's base role AND mod/admin tier and ISN'T the tribe's leader (leader already outranks everything,
+so a leader who's also staff just stays leader); revokes it the instant either stops being true (demoted from
+staff, banished, or promoted to leader). Called at JOIN time (inside `joinTribeSelfServe`, so all 3 join paths —
+self-join, invite-accept, nomination-accept — get it instantly) and swept hourly (`sweepStaffRanks`, boot +
+hourly like the other drift sweeps) to catch LATER promotions/demotions of members who were already in a tribe
+before gaining or losing staff.
+`maybePromoteTribeRank` now also skips staff (in addition to leaders) — they sit in the General slot instead of
+climbing the normal ladder underneath. Rank display (pubdash `statusView`/`tribeView`) checks
+`member.roles.cache.has(tribe.staffRankRoleId)` directly (the role itself is the source of truth, no need to
+re-derive staff tier at display time).
+Backfill results on existing tribes: Valith had 2 current members who are staff (ete5785, beautyinelijah) —
+both granted General immediately. Cobalt Vigil and Kayena's Cute Crabs had no staff among their existing
+members yet, so nothing to grant there (correct — not a bug, just nobody staff had joined yet).

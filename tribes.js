@@ -140,6 +140,12 @@ function standings(guild) {
 
 // The label a tribe uses for its head. Personalized per tribe (tribe.leaderTitle); falls back to the default.
 function leaderTitle(tribe) { return (tribe && tribe.leaderTitle) || DEFAULT_LEADER_TITLE; }
+// The "General" rank (owner, 2026-08-03: "mods or admins should get a special role like general"): any staff
+// member (mod or admin tier) who is a tribe MEMBER (not its leader — leader already outranks everything)
+// automatically holds this, sitting above the whole normal rank ladder. Per-tribe customizable, like
+// leaderTitle. tribe.staffRankRoleId stores the actual Discord role (created in buildTribe()).
+const DEFAULT_STAFF_RANK_TITLE = 'General';
+function staffRankTitle(tribe) { return (tribe && tribe.staffRankTitle) || DEFAULT_STAFF_RANK_TITLE; }
 // Rename a tribe's rank rungs in state (Discord role renames happen in the command handler). names is an
 // array aligned to tribe.ranks by position; blank/undefined entries keep the existing name.
 function setRankNames(key, names) {
@@ -309,6 +315,7 @@ function clearEntranceGate(key) { const s = load(); const t = s.tribes && s.trib
 
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
+  DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
