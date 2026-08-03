@@ -45,10 +45,12 @@ async function setup(guild, config) {
     topic: 'Appeal a ban on a friend’s behalf: /appeal <their @username>. Opens a private thread only you + staff can see.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
-      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] },
-      // Mods can review + Approve/Deny via buttons but CANNOT delete/manage appeal threads — the record of a
-      // decided appeal must survive (a mod deleted a denied appeal thread once, 2026-08-01). Admins+ keep it.
-      ...(config.modRoleId ? [{ id: config.modRoleId, deny: [P.ManageThreads] }] : [])],
+      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] }],
+    // Mods keep their native ManageThreads (passive access to every private thread here, incl. ones opened
+    // before they were promoted — no per-member add-to-thread bookkeeping needed). A mod deleting a decided
+    // appeal thread (2026-08-01) is no longer a data-loss risk: the transcript is snapshotted into the appeal
+    // record at decision time (see handleButton) and any appeal-thread deletion is alerted to owner-log
+    // regardless of who did it (see the threadDelete listener in index.js) — so the record survives either way.
     reason: 'Ban appeals (owner request)',
   });
   c = { ...c, channelId: channel.id }; saveConfig(c);
@@ -132,9 +134,6 @@ async function submit(guild, member, username, note) {
   });
   rec.threadId = thread.id;
   await thread.members.add(member.id).catch(() => {});
-  // Mods lack ManageThreads on this channel (can't delete/archive a decided appeal), which also strips the
-  // passive ability to SEE private threads here — add them explicitly so they can still find + open it.
-  if (config.modRoleId) await threads.addRoleToThread(guild, thread, config.modRoleId).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}>, this is the appeal for **${ban.user.username}**. Make the case for them here; up to ${MAX_FRIENDS} friends can join with \`/appeal\`. Staff will read it and decide.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
     embeds: [appealEmbed(rec)], components: [voteRow(rec, false), decideRow(false)], allowedMentions: { users: [member.id] },

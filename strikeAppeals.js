@@ -32,10 +32,10 @@ async function setup(guild) {
     topic: 'Appeal one of your own strikes: /appeal strike <strike>. Opens a private thread only you + staff can see.',
     permissionOverwrites: [{ id: guild.id,
       allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
-      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] },
-      // Mods review + decide via buttons but CANNOT delete/manage appeal threads — the decided-appeal record
-      // must survive (admins+ keep ManageThreads).
-      ...(config.modRoleId ? [{ id: config.modRoleId, deny: [P.ManageThreads] }] : [])],
+      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] }],
+    // Mods keep native ManageThreads (see appeals.js's setup() for why the earlier deny-and-manually-add-
+    // members workaround was dropped — the transcript snapshot + threadDelete owner-log alert now cover the
+    // data-loss risk that used to justify stripping it).
     reason: 'Strike appeals (owner request)',
   });
   c = { ...c, channelId: channel.id }; saveConfig(c);
@@ -110,9 +110,6 @@ async function submit(guild, member, state, strikeId, note) {
   });
   rec.threadId = thread.id;
   await thread.members.add(member.id).catch(() => {});
-  // Mods lack ManageThreads on this channel (can't delete/archive a decided appeal), which also strips the
-  // passive ability to SEE private threads here — add them explicitly so they can still find + open it.
-  if (config.modRoleId) await threads.addRoleToThread(guild, thread, config.modRoleId).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}>, this is your appeal for the strike below. Explain why here; staff will read it and decide. You don’t need anyone else to join.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
     embeds: [appealEmbed(rec)], components: buttons(rec, false, null, entry.weight), allowedMentions: { users: [member.id] },
