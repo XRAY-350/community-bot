@@ -125,6 +125,9 @@ async function submit(guild, member, username, note) {
   });
   rec.threadId = thread.id;
   await thread.members.add(member.id).catch(() => {});
+  // Mods lack ManageThreads on this channel (can't delete/archive a decided appeal), which also strips the
+  // passive ability to SEE private threads here — add them explicitly so they can still find + open it.
+  if (config.modRoleId) await threads.addRoleToThread(guild, thread, config.modRoleId).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}>, this is the appeal for **${ban.user.username}**. Make the case for them here; up to ${MAX_FRIENDS} friends can join with \`/appeal\`. Staff will read it and decide.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
     embeds: [appealEmbed(rec)], components: [buttons(false)], allowedMentions: { users: [member.id] },

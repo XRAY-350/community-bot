@@ -142,4 +142,19 @@ async function snapshotTranscript(thread, cap = 200) {
   return out.sort((a, b) => a.ts - b.ts);
 }
 
-module.exports = { memberThreads, activeThreads, archivedThreads, allThreads, lastActivity, deleteThread, kickMember, snapshotTranscript };
+// Add every CURRENT holder of a role to a private thread as an explicit member. Used where a role has had
+// ManageThreads denied on a private-thread channel (e.g. mods on the appeal channels, after a mod deleted a
+// decided appeal thread — 2026-08-01, see snapshotTranscript above) so the role still can't delete/archive/
+// lock the thread, but doesn't lose the ability to just SEE and reply in it — that visibility normally comes
+// bundled with ManageThreads, and was lost as an unintended side effect of denying it. Explicit thread
+// membership plus the channel's existing SendMessagesInThreads/ViewChannel allow is enough to read/reply
+// without ManageThreads at all.
+async function addRoleToThread(guild, thread, roleId) {
+  if (!roleId) return;
+  const role = guild.roles.cache.get(roleId) || await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) return;
+  await guild.members.fetch().catch(() => {});
+  for (const m of role.members.values()) await thread.members.add(m.id).catch(() => {});
+}
+
+module.exports = { memberThreads, activeThreads, archivedThreads, allThreads, lastActivity, deleteThread, kickMember, snapshotTranscript, addRoleToThread };

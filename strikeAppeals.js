@@ -102,6 +102,9 @@ async function submit(guild, member, state, strikeId, note) {
   });
   rec.threadId = thread.id;
   await thread.members.add(member.id).catch(() => {});
+  // Mods lack ManageThreads on this channel (can't delete/archive a decided appeal), which also strips the
+  // passive ability to SEE private threads here — add them explicitly so they can still find + open it.
+  if (config.modRoleId) await threads.addRoleToThread(guild, thread, config.modRoleId).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}>, this is your appeal for the strike below. Explain why here; staff will read it and decide. You don’t need anyone else to join.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
     embeds: [appealEmbed(rec)], components: buttons(false, null, entry.weight), allowedMentions: { users: [member.id] },
