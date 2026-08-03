@@ -725,4 +725,18 @@ cooldown), Propose Alliance/Break Alliance (label + customId swap based on live 
 Treasury to Ally (disabled without one). Verified live against all 5 real tribes: power formula computes
 correctly off real Tides totals, panels render the new row with correct disabled states, no boot errors.
 **Deliberately NOT live-tested with a real war** — captures move real members and drain real treasury, so the
-first actual test is the owner's call, not something to trial unilaterally.
+first actual test is the owner's call, not something to trial unilaterally. Did run a read-only dry-run
+(`simulateWar()` called directly, nothing applied) as a sanity check: Cobalt Vigil (power 130) beat Valith
+(power 30) in 4/5 rolls at the exact predicted 81.3% odds, and the underdog won the 5th — confirms the "not a
+guaranteed stomp" design goal actually holds, not just in theory.
+
+## 31. Shop gates dropped to match real tribe sizes — 2026-08-03
+Owner: the original gates (50-120 members / 5-25 crowns) were calibrated for a much bigger, more mature
+server than this one actually is — real tribes today top out at 21-22 members, and the crown (one winner a
+week, server-wide, only just built) hadn't been won even once. **Nobody could ever have unlocked anything.**
+Rescaled `TRIBE_UNLOCKS` (index.js) to member gates **15/18/22/26/30/35** and crown gates **1/2/3/4/5/7**,
+proportionally spaced like the original ladder. Verified live (after correctly re-fetching members first —
+`role.members.size` is cache-only, same caution as everywhere else in this file): Valith (21) and
+Whyamiissuperiortribe (20) already clear the first two tiers today, the rest are close behind. Gate-eligible
+still isn't free — buying still costs real treasury on top of clearing the gate, this only fixed "impossible
+to ever reach," not "free."

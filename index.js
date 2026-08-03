@@ -699,13 +699,17 @@ async function sweepExpiredAllianceVotes(guild) {
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
 // a big one by recruiting. Costs/gates match the locked spec table exactly.
+// Gates DROPPED 2026-08-03 (owner) — the original 50-120 members / 5-25 crowns were calibrated for a much
+// bigger, more mature server than this one actually is: real tribes today top out at 22 members and the
+// crown (one winner a week, server-wide, brand new) hadn't been won even once — nobody could EVER have
+// unlocked anything at the old gates. Rescaled so the ladder is a real, climbable goal instead of static.
 const TRIBE_UNLOCKS = [
-  { key: 'text2', emoji: '📝', label: '2nd text channel', desc: 'A second text channel added to your land.', memberGate: 50, crownGate: 5, cost: 500 },
-  { key: 'retheme', emoji: '🎨', label: 'Re-theme', desc: 'Recolour your tribe’s role gradient anytime with `/tribe retheme`.', memberGate: 60, crownGate: 6, cost: 400 },
-  { key: 'extsounds', emoji: '🔊', label: 'External Sounds', desc: 'Soundboard + external sounds in your tribe voice channel.', memberGate: 75, crownGate: 10, cost: 700 },
-  { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 85, crownGate: 14, cost: 900 },
-  { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 100, crownGate: 18, cost: 800 },
-  { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 120, crownGate: 25, cost: 2500 },
+  { key: 'text2', emoji: '📝', label: '2nd text channel', desc: 'A second text channel added to your land.', memberGate: 15, crownGate: 1, cost: 500 },
+  { key: 'retheme', emoji: '🎨', label: 'Re-theme', desc: 'Recolour your tribe’s role gradient anytime with `/tribe retheme`.', memberGate: 18, crownGate: 2, cost: 400 },
+  { key: 'extsounds', emoji: '🔊', label: 'External Sounds', desc: 'Soundboard + external sounds in your tribe voice channel.', memberGate: 22, crownGate: 3, cost: 700 },
+  { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 26, crownGate: 4, cost: 900 },
+  { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 30, crownGate: 5, cost: 800 },
+  { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 35, crownGate: 7, cost: 2500 },
 ];
 const TRIBE_CHANNEL_CAP = 6;
 const MUSTER_DURATION_MS = 2 * 3600000;   // window to answer a muster
