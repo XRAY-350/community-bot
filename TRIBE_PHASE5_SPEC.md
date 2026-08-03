@@ -532,3 +532,21 @@ Added a Link button "🖍️ Pick a colour visually" → `htmlcolorcodes.com/col
 output front and center) to the founding wizard's status message row, AND to both bad-hex error replies
 (wizard modal submit + `/tribe retheme`) via a new shared `badHexReply()` helper — shows up right when someone
 already got it wrong, not just as a standing hint they may not notice.
+
+## 23. `/request-role` let members request a tribe's Leader/General role — real bug, fixed — 2026-08-03
+Owner: "Remove the tribe leader and general ranks from the role request." `rolereq.js`'s `systemRoleIds()`
+blocklist was a hand-maintained list from before the tribe framework existed — it happened to contain Cobalt
+Vigil's leaderRoleId (added by hand when Cobalt Vigil was built manually) but NOTHING for Valith, Kayena's
+Cute Crabs, or Trib, and never anything for ANY tribe's `staffRankRoleId` ("General") at all. Neither role
+carries elevated Discord permissions (they're colour/channel-overwrite roles, not permission roles), so the
+POWER-permission check in `whyNotRequestable()` didn't catch them either — a member could `/request-role` a
+tribe's Leader or General role and, if staff clicked Approve without noticing, actually be granted it.
+Fixed `systemRoleIds()` to pull every registered tribe's `leaderRoleId` + `staffRankRoleId` live via
+`tribes.all()` instead of relying on a hand-maintained list, so a newly founded tribe is covered automatically,
+no code change needed per tribe going forward. Deliberately left tribe's own BASE role (`roleId`) OUT of this
+set — that one stays requestable on purpose, it's the sanctioned `/request-role` petition path for a veteran
+who wants into a tribe (see the `roleselect_tribe` handler's veteran message). Verified live against all 4
+tribes: Leader + General now correctly blocked, base role still requestable for all 4.
+Note on "refresh the list": `/request-role`'s role picker is Discord's own native role-select widget (an
+`addRoleOption()`), not something this bot renders or caches — there's no stale list to refresh, the fix is
+live immediately on the next `/request-role` use, no further action needed.

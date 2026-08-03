@@ -22,7 +22,13 @@ const saveConfig = c => { try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(c))
 function isConfigured() { return !!loadConfig().channelId; }
 
 function systemRoleIds(config) {
-  return new Set([...STAFF, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
+  // Tribe LEADER + General (staff auto-rank) roles are earned/appointed, never self-requestable — the base
+  // tribe role stays OUT of this set on purpose, it's the sanctioned /request-role petition path for a
+  // veteran wanting into a tribe (see the roleselect_tribe handler). Read live so a newly founded tribe's
+  // roles are covered without a code change (owner, 2026-08-03: "remove the tribe leader and general ranks").
+  const tribes = require('./tribes');
+  const tribeStaffRoles = tribes.all().flatMap(t => [t.leaderRoleId, t.staffRankRoleId]);
+  return new Set([...STAFF, ...tribeStaffRoles, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
     config.cornerRoleId, config.watchlistRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
 }
 // Why a role can't be requested (null = it's fine).
