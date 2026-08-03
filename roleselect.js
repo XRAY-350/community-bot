@@ -182,6 +182,21 @@ async function appendTribeBlock(guild, channelId) {
   return { ok: true, id: m.id };
 }
 
+// Re-render the ALREADY-POSTED tribe picker with the current tribe list — call this whenever a tribe is
+// founded so a newly created tribe actually shows up as a pledge option, not just in tribes.all() internally.
+// The picker's OPTIONS are baked into the message at send time, so a new tribe never appears on its own.
+async function refreshTribeBlock(guild, channelId) {
+  const ch = await guild.channels.fetch(channelId).catch(() => null);
+  if (!ch) return { ok: false, error: 'roles channel not found' };
+  const block = tribeBlock();
+  if (!block) return { ok: false, error: 'no tribes registered' };
+  const existing = await ch.messages.fetch({ limit: 50 }).catch(() => null);
+  const msg = existing && [...existing.values()].find(m => m.components?.some(r => r.components?.some(c => c.customId === 'roleselect_tribe')));
+  if (!msg) return appendTribeBlock(guild, channelId);   // picker was never posted — post it now instead
+  await msg.edit(block).catch(() => {});
+  return { ok: true, id: msg.id };
+}
+
 // Delete every existing message in #roles (the old plain-text + Carl-bot-reaction system) and post the
 // new bot-owned pickers in the same section order, with the same divider image between each. Tracks the
 // posted message IDs so a re-run doesn't need to re-delete (idempotent: skips if already posted).
@@ -232,6 +247,6 @@ async function rebuildFromIndex(guild, channelId, fromIndex) {
 }
 
 module.exports = {
-  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex, appendTribeBlock,
+  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex, appendTribeBlock, refreshTribeBlock,
   loadSections, addRoleToSection, removeRoleFromSection, SECTION_ORDER, SECTION_TITLE, SECTION_BLOCK_INDEX,
 };

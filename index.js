@@ -139,6 +139,9 @@ async function buildTribe(guild, opts, config) {
     leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40), ranks: rankRoles,
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
   await postThroneGuide(guild, tribe);
+  // Keep #roles' tribe picker in sync — its options are baked in at message-send time, so a newly founded
+  // tribe never shows up as a pledge choice on its own without re-rendering that message.
+  if (config.rolesChannelId) await roleselect.refreshTribeBlock(guild, config.rolesChannelId).catch(() => {});
   return { tribe, role, leaderRole, cat, throne, hall, vc };
 }
 // The pinned reference every tribe's throne gets, so members know what they can do without digging through
