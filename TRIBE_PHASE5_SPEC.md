@@ -479,3 +479,26 @@ in scope. Added `guild.members.fetch()` before each (role.members only reflects 
 elsewhere in this file). Pushed live immediately via `refreshTribeBlock()` rather than waiting for the next
 tribe-creation trigger — verified the live message now reads correctly for all 4 tribes (Cobalt Vigil, Valith,
 Kayena's Cute Crabs, Trib).
+
+## 20. Mod tribe-founding: co-signers lead TOGETHER, plus a real base-membership bug — 2026-08-03
+Owner: "why did the other two mods not get the role" (re: Zaire's newly founded tribe) → "No they are meant
+to lead it together." Co-signing was previously PURE gate-keeping: it let the founder retry `/tribe-admin
+create`, nothing else. Added `addCoLeader(guild, tribe, leaderRole, member)` in index.js — grants a co-signer
+the tribe's base role + the SAME leaderRoleId (a Discord role can hold multiple members; `/tribe info` and the
+#roles picker's leader line, see §19, already render every current holder, not just one). `tribewiz_build`'s
+success path now reads `foundingRequests[founderId].cosigns` *before* `clearFoundingRequest` wipes it, adds
+each cosigner as a co-leader, and lists all leaders in the confirmation message. A cosigner already pledged to
+a DIFFERENT tribe is skipped (loyalty rule outranks a co-founding grant) and named in the reply, not silently
+dropped. Checked every `isLeader()` gate in the file (7 call sites, all `!isLeader && !staffTier` permission
+checks) — none assume a single holder, multi-leader is already safe everywhere it matters.
+
+While wiring this up, found a SEPARATE, pre-existing bug via live verification: `buildTribe()` only ever
+granted the founder the **leader** role, never the tribe's own **base** role or a `members` entry. The founder
+could still see/use their own land (leaderRole carries its own channel overwrites), but never counted as a
+real tribe member: no Tides earned in the hall, excluded from the member count and `/tribe roster`, not
+blocked from pledging to a different tribe later. Confirmed live on both tribes actually built through this
+code path — Kayena (Kayena's Cute Crabs) and Zaire (Trib) both held their leader role but not their base role.
+Fixed `buildTribe()` to grant both going forward, and backfilled the base role for Kayena and Zaire directly,
+plus granted Trib's 2 co-signers (**562320011981619211**, **922164824094441473** — the "Triangle Nigga" nickname
+from §17's incident) full co-leadership (base role + leader role). Posted a confirmation in Trib's throne,
+refreshed the #roles picker, and Trib's line now correctly shows all 3 as leaders.

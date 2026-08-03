@@ -117,6 +117,21 @@ async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe �
   if (tribe.hallId) { const hall = await guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
   return { ok: true, content: `${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; its ${tribes.leaderTitle(tribe)} must release you before you could ever join another.` };
 }
+// A mod who co-signed another mod's founding request isn't just approving it, they're founding it TOGETHER
+// (owner, 2026-08-03: "they are meant to lead it together") — all 3 mods end up as equal co-leaders holding
+// the SAME leaderRoleId (a Discord role can hold multiple members; tribeBlock()'s picker line and /tribe info
+// already render every current holder, not just one). Skips (with a reason) a cosigner who's already pledged
+// to a different tribe, since the one-tribe loyalty rule outranks a co-founding grant.
+async function addCoLeader(guild, tribe, leaderRole, member) {
+  const existing = tribes.myTribe(member);
+  if (existing && existing.key !== tribe.key) return { ok: false, reason: `already in ${existing.shortName || existing.name}` };
+  tribes.setMembership(tribe.key, member.id, true);
+  const roleOk = await member.roles.add(tribe.roleId, 'Co-founder — co-signed the tribe founding request').then(() => true).catch(() => false);
+  const leadOk = leaderRole && await member.roles.add(leaderRole.id, 'Co-founder — co-signed the tribe founding request').then(() => true).catch(() => false);
+  if (!roleOk || !leadOk) { tribes.setMembership(tribe.key, member.id, false); return { ok: false, reason: 'role grant failed' }; }
+  await syncStaffRank(guild, member, tribe);
+  return { ok: true };
+}
 // Posts the "do you want to join?" Accept/Decline card to the public #bot-commands channel — shared by a
 // leader's direct /tribe invite (owner, 2026-08-03: "invite should get consent" — skips straight to this,
 // no separate approval needed since the leader inviting IS the approval) and an approved member nomination.
@@ -227,6 +242,15 @@ async function buildTribe(guild, opts, config) {
     leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40), ranks: rankRoles,
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, staffRankRoleId: staffRankRole ? staffRankRole.id : null,
     categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
+  // BUG FIXED 2026-08-03: the leader only ever got leaderRole above, never the tribe's own base role or a
+  // `members` entry — found while backfilling co-leaders for a mod-founded tribe. The leader could still see
+  // their own land (leaderRole carries its own channel overwrites), but never counted as a tribe member: no
+  // Tides earned in the hall, excluded from `/tribe roster` and the member count, not blocked from pledging
+  // elsewhere. Confirmed live on both tribes built through this path (Kayena's Cute Crabs, Trib).
+  if (opts.leaderMember) {
+    tribes.setMembership(tribe.key, opts.leaderMember.id, true);
+    await opts.leaderMember.roles.add(role.id, 'Tribe leader — base membership').catch(() => {});
+  }
   await postThroneGuide(guild, tribe);
   // Keep #roles' tribe picker in sync — its options are baked in at message-send time, so a newly founded
   // tribe never shows up as a pledge choice on its own without re-rendering that message.
@@ -2951,6 +2975,9 @@ client.on('interactionCreate', async (interaction) => {
     if (!leaderIsEligible) return interaction.reply({ content: 'The chosen leader is no longer eligible (must still hold the admin role, or for a mod founding their own tribe, still be that same mod).', flags: MessageFlags.Ephemeral });
     await interaction.update({ content: '🏗️ Building the tribe...', components: [] });
     try {
+      // Grab the co-signers BEFORE clearing the founding request (nothing left to read after that).
+      const foundingReq = tribes.getFoundingRequest(interaction.user.id);
+      const cosignerIds = (foundingReq?.cosigns || []).filter(id => id !== leaderMember.id);
       const b = await buildTribe(interaction.guild, {
         name: w.name, shortName: w.shortName, emoji: w.emoji, color: w.color, color2: w.color2, style: w.style, leaderMember,
         pointsName: w.pointsName, leaderTitle: w.leaderTitle, channelNames: w.channelNames, channelTopics: w.channelTopics,
@@ -2958,7 +2985,17 @@ client.on('interactionCreate', async (interaction) => {
       for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
       _tribeWizards.delete(interaction.user.id);
       tribes.clearFoundingRequest(interaction.user.id);   // only clear on ACTUAL success — see the create handler's fix for why
-      return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → <@${leaderMember.id}>\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard.`, allowedMentions: { parse: [] } });
+      // A mod-founded tribe isn't led solo, the founder + the 2 mods who co-signed lead it TOGETHER (owner,
+      // 2026-08-03: "they are meant to lead it together") — all become co-leaders of the same leaderRoleId.
+      const coLeaderIds = [], coLeaderFails = [];
+      for (const id of cosignerIds) {
+        const coMember = await interaction.guild.members.fetch(id).catch(() => null);
+        const r = coMember && await addCoLeader(interaction.guild, b.tribe, b.leaderRole, coMember);
+        if (r?.ok) coLeaderIds.push(id); else coLeaderFails.push(`<@${id}>${r?.reason ? ` (${r.reason})` : ''}`);
+      }
+      const leaderList = [leaderMember.id, ...coLeaderIds].map(id => `<@${id}>`).join(', ');
+      const failNote = coLeaderFails.length ? `\n-# Couldn’t co-lead: ${coLeaderFails.join(', ')}` : '';
+      return interaction.editReply({ content: `## ${b.tribe.emoji} ${b.tribe.name}: founded\n-# built by <@${interaction.user.id}>\n> Role <@&${b.role.id}> · Leader <@&${b.leaderRole?.id}> → ${leaderList}\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>\n-# Members can \`/request-role\` the role · channels blessed in permguard.${failNote}`, allowedMentions: { parse: [] } });
     } catch (e) {
       console.error('[tribe-admin create]', e.message);
       return interaction.editReply(`❌ Build failed: ${e.message}`);
