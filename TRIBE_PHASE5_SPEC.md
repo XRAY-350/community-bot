@@ -369,9 +369,26 @@ holding until more of the roadmap is live.
 
 ## Outstanding: launch announcement (owner, 2026-08-02: "We also need to create the announcement for when
 we're done")
-Owner wants an announcement drafted for when the tribe Phase 5 work ships (or a relevant milestone within it —
-clarify scope when we get there: the whole Phase 5 rollout, or just the next feature going live). Do NOT write
-this now — nothing in the build order (guided builder, nominate flow, economy, shop, rituals) is live yet. Draft
-it when we're actually close to shipping, pull from the FEATURES_RUNBOOK.md / COPY-REGISTRY.md conventions this
-repo already uses for member-facing copy (no em dashes, hybrid embed+markdown per [[hybrid-embeds-and-markdown]]
-memory). Revisit this line each time a build-order item ships to decide if "done" has arrived yet.
+DONE 2026-08-03. Rewritten as a genuine from-scratch introduction (not just "here's what's new") after
+realizing the ORIGINAL tribe-launch announcement, drafted much earlier in the framework's history, was ALSO
+never sent — meaning most members have never been told tribes exist at all. Merged that old draft's "what is a
+tribe" framing with the full current feature set. Sent via a one-shot systemd timer (`fubu-tribes-announce.timer`
++ `send-tribes-announcement.js`) at 2026-08-03 09:00 America/New_York to #announcements: a standalone `@everyone`
+message, then the two content halves, 0.5s apart, with a whole-sequence rollback-and-retry (delete what THIS
+attempt sent, retry up to 3 times) if any message in the pass fails — so a scheduled unattended send never
+leaves a broken half-announcement live.
+
+## 15. Entrance gate — DONE 2026-08-03, general tribe feature (not Valith-specific)
+Owner, relaying a request from Valith's leader for an entrance question to self-join: "will mean all of them
+will have to get one as well" — built as an opt-in per-tribe feature, OFF by default, not hardcoded to Valith.
+`/tribe-admin gate-set <tribe> <prompt> <option_a> <option_b> <correct>` stores `tribe.entranceGate =
+{prompt, optionA, optionB, correct}`; `gate-clear` removes it. Only applies to the FIRST-TRIBE SELF-JOIN path
+(#roles picker) — deliberately NOT applied to `/tribe invite` (the leader already vouches for that person) or
+nomination-accept (already has its own 3-step approval, a quiz on top would be redundant). When a tribe has a
+gate, picking it in #roles shows the prompt + two buttons instead of joining immediately; picking the WRONG
+answer just tells them to try again from #roles (no penalty/lockout — low-stakes and fun, not punitive).
+Correct answer proceeds through the exact same `joinTribeSelfServe()` used by ungated tribes (extracted as a
+shared helper so both paths do the identical membership-state + role-grant + hall-welcome-post logic).
+**Valith is configured**: prompt "Every applicant must choose their weapon.", Spear vs Shield, **Spear is
+correct**. Its motto is also now set: "Bound by spears, guarded against foes." (picker refreshed to show it,
+per the existing motto-change-refreshes-the-picker rule).

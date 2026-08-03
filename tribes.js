@@ -290,6 +290,15 @@ function cosignFounding(founderId, cosignerId) {
 }
 function clearFoundingRequest(founderId) { const s = load(); if (s.foundingRequests) delete s.foundingRequests[founderId]; save(s); }
 
+// Entrance gate: an optional per-tribe question a new applicant must answer correctly to SELF-join via the
+// #roles picker (owner, 2026-08-03: Valith wanted one, "will mean all of them will have to get one as well" —
+// so this is a general tribe feature, not Valith-only, just OFF by default for tribes that don't set one).
+// { prompt, optionA, optionB, correct: 'a'|'b' }. Does not apply to /tribe invite (leader already vouches) or
+// nomination-accept (already has its own 3-step approval).
+function setEntranceGate(key, gate) { const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null; t.entranceGate = gate; save(s); return t.entranceGate; }
+function getEntranceGate(key) { return (get(key) || {}).entranceGate || null; }
+function clearEntranceGate(key) { const s = load(); const t = s.tribes && s.tribes[key]; if (t) delete t.entranceGate; save(s); }
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
@@ -300,4 +309,5 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
   setChallenge, getChallenge, clearChallenge, completeChallengeForTribe,
-  startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest };
+  startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,
+  setEntranceGate, getEntranceGate, clearEntranceGate };

@@ -92,6 +92,16 @@ async function findFounderPersonalRole(guild, member) {
     !excluded.has(r.id) && !r.managed && !r.tags?.premiumSubscriberRole && r.members.size === 1);
   return candidates.length === 1 ? candidates[0] : null;
 }
+// The actual first-tribe self-join (via #roles), shared by the direct path (no gate) and the entrance-gate
+// answer button (gate passed). Caller has already run eligibility checks (not already in a tribe, not a
+// veteran) — this just does the membership state + role grant + hall welcome post.
+async function joinTribeSelfServe(guild, tribe, member) {
+  tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
+  const ok = await member.roles.add(tribe.roleId, 'First tribe — self-join via #roles').then(() => true).catch(() => false);
+  if (!ok) { tribes.setMembership(tribe.key, member.id, false); return { ok: false }; }
+  if (tribe.hallId) { const hall = await guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
+  return { ok: true, content: `${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; its ${tribes.leaderTitle(tribe)} must release you before you could ever join another.` };
+}
 // Build a whole tribe: gradient/solid role + leader role + private "land" category (throne/hall/voice),
 // register it in the framework, and return the pieces. Mirrors how the Cobalt Vigil was built by hand.
 // The ROLE name stays plain (typeable/mentionable); CHANNELS honor the style option (small-caps default).
@@ -1270,6 +1280,15 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('challenge-complete').setDescription('Mark a tribe as having completed the current challenge')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
         .addSubcommand(s => s.setName('challenge-clear').setDescription('Clear the current weekly challenge without setting a new one'))
+        .addSubcommand(s => s.setName('gate-set').setDescription('Set an entrance question new members must answer correctly to self-join')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
+          .addStringOption(o => o.setName('prompt').setDescription('The question/prompt shown to applicants').setRequired(true).setMaxLength(200))
+          .addStringOption(o => o.setName('option_a').setDescription('First choice').setRequired(true).setMaxLength(80))
+          .addStringOption(o => o.setName('option_b').setDescription('Second choice').setRequired(true).setMaxLength(80))
+          .addStringOption(o => o.setName('correct').setDescription('Which is correct').setRequired(true)
+            .addChoices({ name: 'Option A', value: 'a' }, { name: 'Option B', value: 'b' })))
+        .addSubcommand(s => s.setName('gate-clear').setDescription('Remove a tribe’s entrance question (self-join goes back to instant)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // visible to the ADMINS-★ role; handler gates on canWLAdmin
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes: weighted units, bans at 10')
@@ -2612,12 +2631,30 @@ client.on('interactionCreate', async (interaction) => {
     const current = tribes.memberTribe(member);
     if (current) return interaction.reply({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t leave or switch on your own. Its **${tribes.leaderTitle(current)} must release you** first (\`/tribe banish\`).`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     if (tribes.isVeteran(member.id)) return interaction.reply({ content: `You’ve pledged to a tribe before, so you can’t just self-join. **${tribe.shortName || tribe.name}** has to **accept** you. Use \`/request-role\` to petition, or ask its ${tribes.leaderTitle(tribe)} to invite you.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    const gate = tribes.getEntranceGate(tribe.key);
+    if (gate) {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`roleselect_tribegate:${tribe.key}:a`).setLabel(gate.optionA).setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`roleselect_tribegate:${tribe.key}:b`).setLabel(gate.optionB).setStyle(ButtonStyle.Primary));
+      return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: prove yourself\n> ${gate.prompt}`, components: [row], flags: MessageFlags.Ephemeral });
+    }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
-    const ok = await member.roles.add(tribe.roleId, 'First tribe — self-join via #roles').then(() => true).catch(() => false);
-    if (!ok) { tribes.setMembership(tribe.key, member.id, false); return interaction.editReply('Couldn’t add the tribe role. Tell an admin.'); }
-    if (tribe.hallId) { const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
-    return interaction.editReply(`${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; its ${tribes.leaderTitle(tribe)} must release you before you could ever join another.`);
+    const r = await joinTribeSelfServe(interaction.guild, tribe, member);
+    return interaction.editReply(r.ok ? r.content : 'Couldn’t add the tribe role. Tell an admin.');
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('roleselect_tribegate:')) {
+    const [, tribeKey, choice] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
+    const member = interaction.member;
+    const current = tribes.memberTribe(member);
+    if (current) return interaction.update({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t self-join anywhere else.`, components: [] });
+    if (tribes.isVeteran(member.id)) return interaction.update({ content: `You’ve pledged before, so you can’t self-join anymore. Ask to be accepted instead.`, components: [] });
+    const gate = tribes.getEntranceGate(tribe.key);
+    if (gate && choice !== gate.correct) return interaction.update({ content: `❌ Not the answer **${tribe.shortName || tribe.name}** was looking for. Head back to #roles and try again.`, components: [] });
+    await interaction.deferUpdate();
+    const r = await joinTribeSelfServe(interaction.guild, tribe, member);
+    return interaction.editReply({ content: r.ok ? r.content : 'Couldn’t add the tribe role. Tell an admin.', components: [] });
   }
   if (interaction.isStringSelectMenu?.() && (interaction.customId === 'roleselect_age' || interaction.customId === 'roleselect_color')) {
     const isAge = interaction.customId === 'roleselect_age';
@@ -4134,6 +4171,22 @@ client.on('interactionCreate', async (interaction) => {
       if (!tribes.getChallenge()) return interaction.reply({ content: 'There’s no active challenge.', flags: MessageFlags.Ephemeral });
       tribes.clearChallenge();
       return interaction.reply({ content: '🗺️ Challenge cleared.', flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'gate-set') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      const prompt = interaction.options.getString('prompt').slice(0, 200);
+      const optionA = interaction.options.getString('option_a').slice(0, 80);
+      const optionB = interaction.options.getString('option_b').slice(0, 80);
+      const correct = interaction.options.getString('correct');
+      tribes.setEntranceGate(t.key, { prompt, optionA, optionB, correct });
+      return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now gates self-joins:\n> ${prompt}\n> **${optionA}** vs **${optionB}** — correct: **${correct === 'a' ? optionA : optionB}**`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'gate-clear') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      tribes.clearEntranceGate(t.key);
+      return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** no longer gates self-joins.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
   }
   if (name === 'roleselect-role') {
