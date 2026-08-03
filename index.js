@@ -1189,7 +1189,7 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('tribe-admin').setDescription('Create or register tribes (admin)')
         .addSubcommand(s => s.setName('create').setDescription('Found a brand-new tribe: opens a guided setup (identity, colours, land)')
-          .addUserOption(o => o.setName('leader').setDescription('The tribe leader (must be an admin)').setRequired(true)))
+          .addUserOption(o => o.setName('leader').setDescription('The tribe leader: an admin, or a mod naming themselves').setRequired(true)))
         .addSubcommand(s => s.setName('register').setDescription('Adopt an EXISTING role + channels as a tribe')
           .addStringOption(o => o.setName('key').setDescription('Short key, e.g. valith').setRequired(true))
           .addStringOption(o => o.setName('name').setDescription('Full tribe name').setRequired(true))
@@ -2898,6 +2898,19 @@ client.on('interactionCreate', async (interaction) => {
     await teardownTribeUnlock(interaction.guild, tribe, unlockKey);
     return interaction.editReply(tribeShopView(tribes.get(tribe.key), interaction.guild));
   }
+  // ---- Mod tribe-founding: needs 2 other mods to co-sign (see /tribe-admin create's mod path) ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribefound_cosign:')) {
+    const founderId = interaction.customId.split(':')[1];
+    if (interaction.user.id === founderId) return interaction.reply({ content: 'You can’t co-sign your own founding request.', flags: MessageFlags.Ephemeral });
+    if (opspanel.tierOf(interaction) !== 'mod') return interaction.reply({ content: 'Only mods can co-sign this (this is a mod peer-approval, not an admin one).', flags: MessageFlags.Ephemeral });
+    const req = tribes.getFoundingRequest(founderId);
+    if (!req) return interaction.update({ content: 'This founding request is no longer active.', components: [] }).catch(() => {});
+    const updated = tribes.cosignFounding(founderId, interaction.user.id);
+    if (!updated) return interaction.reply({ content: 'You already co-signed this.', flags: MessageFlags.Ephemeral });
+    const need = Math.max(0, 2 - updated.cosigns.length);
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribefound_cosign:${founderId}`).setLabel('✅ Co-sign').setStyle(ButtonStyle.Success));
+    await interaction.update({ content: `## 🏴 Tribe founding request\n> <@${founderId}> wants to found a tribe. Co-signed by ${updated.cosigns.map(id => `<@${id}>`).join(', ')}.\n${need > 0 ? `-# Needs **${need} more** mod${need === 1 ? '' : 's'} to co-sign.` : `-# ✅ **3 mods reached** (founder + 2 co-signs). <@${founderId}> can now run \`/tribe-admin create\` again to continue.`}`, components: need > 0 ? [row] : [], allowedMentions: { users: [founderId, ...updated.cosigns] } });
+  }
   // ---- Rituals: muster roll-call join button ----
   if (interaction.isButton?.() && interaction.customId.startsWith('tribemuster_join:')) {
     const tribeKey = interaction.customId.split(':')[1];
@@ -3943,13 +3956,39 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
   if (name === 'tribe-admin') {
-    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
+    // 'create' has its own, looser gate below (admins as before, PLUS mods founding their own tribe). Every
+    // other subcommand (register/points/title/ranks/grant/challenge-*) stays admin-only, unchanged.
+    const modSelfFounding = sub === 'create' && opspanel.tierOf(interaction) === 'mod';
+    if (!canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
     if (sub === 'create') {
       const leaderMember = interaction.options.getMember('leader');
-      // A tribe head must be an admin (owner ruling): the ADMINS-★ ROLE, not the Administrator permission.
-      const leaderIsAdmin = leaderMember && ['admin', 'owner'].includes(opspanel.memberTier(leaderMember));
-      if (!leaderIsAdmin) return interaction.reply({ content: 'A tribe head has to hold the **admin role**. Pick an admin as the leader, or give them the admin role first.', flags: MessageFlags.Ephemeral });
+      const leaderTier = leaderMember && opspanel.memberTier(leaderMember);
+      const isModSelfFound = leaderMember && leaderTier === 'mod' && leaderMember.id === interaction.user.id;
+      // A tribe head must be an admin (owner ruling), OR a mod founding their OWN tribe (owner: "allow mods
+      // to create their own tribe") — a mod can't hand tribe leadership to a DIFFERENT mod this way.
+      const leaderIsEligible = leaderMember && (['admin', 'owner'].includes(leaderTier) || isModSelfFound);
+      if (!leaderIsEligible) return interaction.reply({ content: 'A tribe head has to hold the **admin role**, or be a **mod founding their own tribe** (you must name yourself as leader).', flags: MessageFlags.Ephemeral });
+      if (isModSelfFound) {
+        // Owner: "if a mod wants to start a tribe it must be in a group of three" — the founder needs 2 OTHER
+        // mods to co-sign before the wizard unlocks. Admin-founded tribes skip this entirely.
+        const existing = tribes.getFoundingRequest(interaction.user.id);
+        if (existing && existing.cosigns.length >= 2) {
+          tribes.clearFoundingRequest(interaction.user.id);
+          wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
+          return interaction.showModal(tribeIdentityModal());
+        }
+        if (existing) return interaction.reply({ content: `Still waiting on co-signs: **${existing.cosigns.length}/2** mods so far. Check <#${config.modAnnounceChannelId}>.`, flags: MessageFlags.Ephemeral });
+        if (!config.modAnnounceChannelId) return interaction.reply({ content: 'No mod-announcements channel configured to route this through.', flags: MessageFlags.Ephemeral });
+        const ch = await interaction.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
+        if (!ch) return interaction.reply({ content: 'Couldn’t find the mod-announcements channel.', flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        tribes.startFoundingRequest(interaction.user.id);
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribefound_cosign:${interaction.user.id}`).setLabel('✅ Co-sign').setStyle(ButtonStyle.Success));
+        const msg = await ch.send({ content: `## 🏴 Tribe founding request\n> <@${interaction.user.id}> wants to found a tribe. Founding a tribe as a mod takes **3 mods** total, needs **2 more** co-signs from other mods.`, components: [row], allowedMentions: { users: [interaction.user.id] } }).catch(() => null);
+        if (msg) tribes.setFoundingMessage(interaction.user.id, ch.id, msg.id);
+        return interaction.editReply(`🏴 Posted to <#${ch.id}>. Needs **2 more** mods to co-sign before you can continue. Run this command again once they have.`);
+      }
       wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
       return interaction.showModal(tribeIdentityModal());
     }

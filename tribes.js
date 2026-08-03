@@ -269,6 +269,27 @@ function completeChallengeForTribe(key) {
   save(s); return true;
 }
 
+// A mod founding their own tribe needs 2 OTHER mods to co-sign first (owner: "if a mod wants to start a
+// tribe it must be in a group of three" — the founder + 2 co-signers). Admin-founded tribes skip this
+// entirely. Keyed by founder id since a person can only have one pending founding request at a time.
+function startFoundingRequest(founderId) {
+  const s = load(); if (!s.foundingRequests) s.foundingRequests = {};
+  s.foundingRequests[founderId] = { cosigns: [], createdAt: Date.now() };
+  save(s); return s.foundingRequests[founderId];
+}
+function getFoundingRequest(founderId) { return (load().foundingRequests || {})[founderId] || null; }
+function setFoundingMessage(founderId, channelId, messageId) {
+  const s = load(); const r = s.foundingRequests && s.foundingRequests[founderId]; if (!r) return;
+  r.channelId = channelId; r.messageId = messageId; save(s);
+}
+// Returns the updated request, or null if this cosigner already signed (no-op) or there's no pending request.
+function cosignFounding(founderId, cosignerId) {
+  const s = load(); const r = s.foundingRequests && s.foundingRequests[founderId]; if (!r) return null;
+  if (r.cosigns.includes(cosignerId)) return null;
+  r.cosigns.push(cosignerId); save(s); return r;
+}
+function clearFoundingRequest(founderId) { const s = load(); if (s.foundingRequests) delete s.foundingRequests[founderId]; save(s); }
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
@@ -278,4 +299,5 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   dueForWeeklyCrown, markWeeklyCrownDone,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
-  setChallenge, getChallenge, clearChallenge, completeChallengeForTribe };
+  setChallenge, getChallenge, clearChallenge, completeChallengeForTribe,
+  startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest };
