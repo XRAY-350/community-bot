@@ -460,22 +460,32 @@ async function refreshThronePanel(guild, tribe) {
 // no-argument member actions instead of typing them out (Discord's own palette gets awkward with this many
 // subcommands under one base command). Leader-only actions that need picking a target (banish/invite/note/
 // retheme) stay as typed commands, already reference-listed in each tribe's own pinned throne guide instead.
-function tribeHubContent() {
-  return `# 🏴 Tribes\n`
-    + `The server's tribe system: member factions, each with its own private territory, roles, ranks, and economy. Pledge your allegiance, rise through the ranks, represent your people.\n\n`
+// Split content/embed on purpose: real @/# mentions must live in message CONTENT to resolve for viewers
+// who don't have the channel cached (embeds don't reliably resolve them) — see the "mentions in content not
+// embeds" pattern used everywhere else in this bot. The embed description just holds reference text, no
+// mentions, so it can carry the FULL detailed writeup (up to 4096 chars) without hitting the 2000-char
+// content limit the plain-text version kept bumping into once War & Alliances was added.
+function tribeHubContent(guild, config) {
+  return `# 🏴 Tribes\nPledge your first tribe in <#${config.rolesChannelId}>. Everything else — standings, your own tribe, joining/leaving, war — is below.`;
+}
+function tribeHubEmbed() {
+  const desc = `**The server's tribe system:** member factions, each with its own private territory, roles, ranks, and economy. Pledge your allegiance, rise through the ranks, represent your people.\n\n`
     + `## What a tribe is\n`
     + `Every tribe has its own hoisted role and colour, a private land (throne, hall, voice), an internal rank ladder, and a leader who runs it (each tribe names its own title, Warden, Warlord, whatever fits).\n\n`
     + `## How to join\n`
-    + `Open **#roles** and pick a tribe from the Tribes section. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a tribe's leader must release you (staff can Leave below instantly), and any new tribe has to accept you, by nomination, invite, or your own Join Request below.\n\n`
+    + `Pick a tribe from the Tribes section in #roles. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a tribe's leader must release you (staff can Leave below instantly), and any new tribe has to accept you, by nomination, invite, or your own Join Request below.\n\n`
     + `## Rising through the ranks\n`
-    + `Being active in your tribe's hall moves you up its rank ladder automatically, ranks only ever go up, never down.\n\n`
+    + `Being active in your tribe's hall moves you up its rank ladder automatically (Initiate → Member → Veteran → Elder by default, each tribe can rename its own), ranks only ever go up, never down. Staff who join as regular members automatically hold **General**, above the whole ladder.\n\n`
     + `## Treasury, Glory, and the Weekly Crown\n`
-    + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`).\n\n`
+    + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`, war raids, ally gifts).\n\n`
     + `## The Shop\n`
-    + `Once a tribe hits a members-or-crowns milestone, its leader can spend the treasury on real upgrades: extra channels, external sounds, faster point-earning, and more.\n\n`
+    + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, and faster Tides earning. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for prestige.\n\n`
     + `## Musters\n`
-    + `A leader can call a **muster**, a roll-call in the hall, answer it and the tribe banks treasury + glory.\n\n`
-    + `-# Use the buttons below instead of typing commands out. Leader-only tools (banish, invite, retheme, etc.) are on your tribe's own throne panel.`;
+    + `A leader can call a **muster**, a roll-call in the hall (about once a day). Answer it and the tribe banks treasury + glory for every member who shows up.\n\n`
+    + `## War & Alliances\n`
+    + `A leader can **Declare War**: your OWN members vote first (24h, needs real turnout and a majority), the target gets no say in whether it starts. It resolves instantly by a strength simulation weighted by your tribe's Tides (not a guaranteed win, not rank-based), and there's a 72h cooldown after. The loser gets raided for ~25% treasury and can lose a few regular members for 36h (never the leader, never wiped out). **Alliances** (capped at 1 per tribe) need your members' vote too, then the other tribe's leader accepts — allies defend each other in wars and can gift treasury to each other.\n\n`
+    + `-# Use the buttons below instead of typing commands out. Leader-only tools (banish, invite, retheme, war, etc.) are on your tribe's own throne panel.`;
+  return new EmbedBuilder().setColor(0x2A426A).setDescription(desc.slice(0, 4096));
 }
 function tribeHubButtons() {
   return [
@@ -505,7 +515,7 @@ async function ensureTribesHub(guild, config) {
     });
   }
   const msg = info && info.messageId && await ch.messages.fetch(info.messageId).catch(() => null);
-  const payload = { content: tribeHubContent(), components: tribeHubButtons(), allowedMentions: { parse: [] } };
+  const payload = { content: tribeHubContent(guild, config), embeds: [tribeHubEmbed()], components: tribeHubButtons(), allowedMentions: { parse: [] } };
   if (msg) { await msg.edit(payload); tribes.setHubInfo(ch.id, msg.id); return { ok: true, channelId: ch.id, messageId: msg.id, created: false }; }
   const sent = await ch.send(payload);
   tribes.setHubInfo(ch.id, sent.id);
@@ -4007,13 +4017,24 @@ client.on('interactionCreate', async (interaction) => {
         return await rolereq.handleButton(interaction);
       }
       if (id.startsWith('appeal_')) {
-        // Ban appeals are a BAN decision (approve = unban, deny = uphold the ban) → require ban power (admin+),
-        // the same tier as /unban and the dashboard ban. Mods can't act on ban appeals.
-        if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only staff with **ban power** (admins+) can approve or deny a ban appeal.', flags: MessageFlags.Ephemeral });
+        // Tightened 2026-08-03 (owner, after the mass-unban incident): a ban appeal's APPROVE unbans someone,
+        // same real-world action as /unban — that's owner-only now, not admin+. Voting (advisory, doesn't
+        // decide anything) stays open to admin+, the tier that used to be able to decide outright.
+        if (id === 'appeal_vote_up' || id === 'appeal_vote_down') {
+          if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only staff with **ban power** (admins+) can vote on a ban appeal.', flags: MessageFlags.Ephemeral });
+        } else if (!isOwner(interaction)) {
+          return interaction.reply({ content: 'Only the **owner** (or bot owner) can approve or deny a ban appeal.', flags: MessageFlags.Ephemeral });
+        }
         return await appeals.handleButton(interaction);
       }
       if (id.startsWith('strikeappeal_')) {
-        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can approve or deny strike appeals.', flags: MessageFlags.Ephemeral });
+        // Tightened 2026-08-03 (owner, after the mass-unban incident): deciding a strike appeal now needs
+        // admin+ (was mod+). Voting (advisory) stays open to mod+, the tier that used to be able to decide.
+        if (id === 'strikeappeal_vote_up' || id === 'strikeappeal_vote_down') {
+          if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can vote on strike appeals.', flags: MessageFlags.Ephemeral });
+        } else if (!canWLAdmin(interaction)) {
+          return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can approve or deny strike appeals.', flags: MessageFlags.Ephemeral });
+        }
         return await strikeAppeals.handleButton(interaction, state);
       }
       if (id.startsWith('promote_')) {

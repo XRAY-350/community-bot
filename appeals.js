@@ -55,7 +55,13 @@ async function setup(guild, config) {
   return { channel, created: true };
 }
 
-const buttons = (done, approved) => new ActionRowBuilder().addComponents(
+// Vote row is ADVISORY only (owner, 2026-08-03, after the mass-unban incident: tightened the actual DECIDE
+// step to owner-only, but kept a voting layer for admins+ — the tier that used to be able to decide outright
+// — so the process still gets input from more than one person). Toggle-style, same shape as promote.js's vote.
+const voteRow = (rec, done) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('appeal_vote_up').setEmoji('👍').setLabel(String((rec.votes?.up || []).length)).setStyle(ButtonStyle.Success).setDisabled(!!done),
+  new ButtonBuilder().setCustomId('appeal_vote_down').setEmoji('👎').setLabel(String((rec.votes?.down || []).length)).setStyle(ButtonStyle.Danger).setDisabled(!!done));
+const decideRow = (done, approved) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('appeal_approve').setEmoji('✅').setLabel(done && approved ? 'Approved: unbanned' : 'Approve & unban').setStyle(ButtonStyle.Success).setDisabled(!!done),
   new ButtonBuilder().setCustomId('appeal_deny').setEmoji('⛔').setLabel(done && !approved ? 'Denied' : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done));
 
@@ -65,11 +71,12 @@ function appealEmbed(rec, resolution, byId) {
     .setTitle('⚖️ Ban appeal').addFields(
       { name: 'For (banned)', value: `<@${rec.bannedId}> \`${rec.bannedTag}\``, inline: false },
       { name: 'Opened by', value: `<@${rec.openedBy}>`, inline: true },
-      { name: 'Supporters', value: `${rec.friends.length}/${MAX_FRIENDS}`, inline: true });
+      { name: 'Supporters', value: `${rec.friends.length}/${MAX_FRIENDS}`, inline: true },
+      { name: 'Staff vote (advisory)', value: `👍 ${(rec.votes?.up || []).length} · 👎 ${(rec.votes?.down || []).length}`, inline: true });
   if (rec.banReason) e.addFields({ name: 'Original ban reason', value: String(rec.banReason).slice(0, 1024), inline: false });
   if (rec.originAmbiguous) e.addFields({ name: '⚠️ Heads up', value: 'This ban’s reason doesn’t match one of the bot’s known categories, so its origin (threshold strike vs. something else) couldn’t be auto-verified. Check manually before deciding.', inline: false });
   if (resolution) e.addFields({ name: resolution === 'approved' ? '✅ Approved by' : '⛔ Denied by', value: `<@${byId}>`, inline: true });
-  e.setFooter({ text: 'Friends make the case in this thread. Staff decide: Approve unbans them.' });
+  e.setFooter({ text: 'Friends make the case in this thread. Admins+ vote (advisory), the owner decides: Approve unbans them.' });
   return e;
 }
 
@@ -117,7 +124,7 @@ async function submit(guild, member, username, note) {
 
   // brand-new appeal
   const rec = { bannedId, bannedTag: ban.user.tag || ban.user.username, openedBy: member.id, friends: [member.id],
-    status: 'open', banReason: ban.reason || '', note: note || '',
+    status: 'open', banReason: ban.reason || '', note: note || '', votes: { up: [], down: [] },
     originAmbiguous: !Object.values(CATEGORY_LABEL).some(label => (ban.reason || '').startsWith(label)) };
   const thread = await channel.threads.create({
     name: `Appeal · ${ban.user.username}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,
@@ -130,7 +137,7 @@ async function submit(guild, member, username, note) {
   if (config.modRoleId) await threads.addRoleToThread(guild, thread, config.modRoleId).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}>, this is the appeal for **${ban.user.username}**. Make the case for them here; up to ${MAX_FRIENDS} friends can join with \`/appeal\`. Staff will read it and decide.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
-    embeds: [appealEmbed(rec)], components: [buttons(false)], allowedMentions: { users: [member.id] },
+    embeds: [appealEmbed(rec)], components: [voteRow(rec, false), decideRow(false)], allowedMentions: { users: [member.id] },
   });
   rec.starterId = msg.id;
   state.appeals[thread.id] = rec; saveState(state);
@@ -144,11 +151,30 @@ async function refreshStarter(guild, rec) {
   const thread = await guild.channels.fetch(rec.threadId).catch(() => null);
   if (!thread) return;
   const msg = rec.starterId ? await thread.messages.fetch(rec.starterId).catch(() => null) : null;
-  if (msg) await msg.edit({ embeds: [appealEmbed(rec, rec.status === 'open' ? null : rec.status, rec.decidedBy)], components: [buttons(rec.status !== 'open', rec.status === 'approved')] }).catch(() => {});
+  if (msg) await msg.edit({ embeds: [appealEmbed(rec, rec.status === 'open' ? null : rec.status, rec.decidedBy)], components: [voteRow(rec, rec.status !== 'open'), decideRow(rec.status !== 'open', rec.status === 'approved')] }).catch(() => {});
 }
 
-// staff Approve/Deny — gated to mods+ in index.js
+// Advisory vote — toggle-style (click again to remove your vote), same shape as promote.js. Gated to
+// admins+ in index.js. Doesn't decide anything by itself; the owner still has to click Approve/Deny.
+async function vote(interaction, dir) {
+  const state = loadState();
+  const rec = state.appeals[interaction.channelId];
+  if (!rec) return interaction.reply({ content: copy.appeals.untracked, flags: MessageFlags.Ephemeral });
+  if (rec.status !== 'open') return interaction.reply({ content: 'This appeal was already decided.', flags: MessageFlags.Ephemeral });
+  if (!rec.votes) rec.votes = { up: [], down: [] };
+  const uid = interaction.user.id;
+  const up = rec.votes.up.filter(x => x !== uid), down = rec.votes.down.filter(x => x !== uid);
+  const wasIn = (dir === 'up' ? rec.votes.up : rec.votes.down).includes(uid);
+  if (!wasIn) (dir === 'up' ? up : down).push(uid);
+  rec.votes = { up, down }; saveState(state);
+  await interaction.update({ embeds: [appealEmbed(rec)], components: [voteRow(rec, false), decideRow(false)] }).catch(() => {});
+  return interaction.followUp({ content: wasIn ? `Your ${dir === 'up' ? '👍' : '👎'} was removed.` : `Your ${dir === 'up' ? '👍' : '👎'} is counted.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+}
+
+// staff Approve/Deny — gated to owner+ in index.js (vote is admins+, see vote() above)
 async function handleButton(interaction) {
+  if (interaction.customId === 'appeal_vote_up') return vote(interaction, 'up');
+  if (interaction.customId === 'appeal_vote_down') return vote(interaction, 'down');
   const state = loadState();
   const rec = state.appeals[interaction.channelId];
   if (!rec) return interaction.reply({ content: copy.appeals.untracked, flags: MessageFlags.Ephemeral });
@@ -160,7 +186,7 @@ async function handleButton(interaction) {
     if (!ok) return interaction.reply({ content: 'Couldn’t unban them. Are they still actually banned? Nothing was changed.', flags: MessageFlags.Ephemeral });
   }
   rec.status = approve ? 'approved' : 'denied'; rec.decidedBy = interaction.user.id; saveState(state);
-  await interaction.update({ embeds: [appealEmbed(rec, rec.status, interaction.user.id)], components: [buttons(true, approve)] }).catch(() => {});
+  await interaction.update({ embeds: [appealEmbed(rec, rec.status, interaction.user.id)], components: [voteRow(rec, true), decideRow(true, approve)] }).catch(() => {});
   const friendPings = rec.friends.map(f => `<@${f}>`).join(' ');
   const thread = await interaction.guild.channels.fetch(rec.threadId).catch(() => null);
   if (thread) {

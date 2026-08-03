@@ -42,12 +42,19 @@ async function setup(guild) {
   return { channel, created: true };
 }
 
+// Vote row is ADVISORY only (owner, 2026-08-03, after the mass-unban incident: tightened the actual DECIDE
+// step to admin+, but kept a voting layer for mods+ — the tier that used to be able to decide outright — so
+// the process still gets input from more than one person). Toggle-style, same shape as promote.js's vote.
+const voteRow = (rec, done) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('strikeappeal_vote_up').setEmoji('👍').setLabel(String((rec.votes?.up || []).length)).setStyle(ButtonStyle.Success).setDisabled(!!done),
+  new ButtonBuilder().setCustomId('strikeappeal_vote_down').setEmoji('👎').setLabel(String((rec.votes?.down || []).length)).setStyle(ButtonStyle.Danger).setDisabled(!!done));
+
 // Appeal card rows (returns an ARRAY of ActionRows). `outcome` (once decided) is 'approved'|'reduced'|'denied'.
 // `snapshotWeight` drives the partial-approval "Approve → Nu" buttons — one per integer weight below the
 // strike's current weight (so a 3-unit strike can be knocked to 2 or 1 instead of fully removed).
-function buttons(done, outcome, snapshotWeight) {
+function buttons(rec, done, outcome, snapshotWeight) {
   const topLabel = done ? (outcome === 'approved' ? 'Approved: removed' : outcome === 'reduced' ? 'Approved: reduced' : 'Approve & remove') : 'Approve & remove';
-  const rows = [new ActionRowBuilder().addComponents(
+  const rows = [voteRow(rec, done), new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('strikeappeal_approve').setEmoji(outcome === 'reduced' ? '⚖️' : '✅').setLabel(topLabel).setStyle(outcome === 'reduced' ? ButtonStyle.Secondary : ButtonStyle.Success).setDisabled(!!done),
     new ButtonBuilder().setCustomId('strikeappeal_deny').setEmoji('⛔').setLabel(done && outcome === 'denied' ? 'Denied' : 'Deny').setStyle(ButtonStyle.Danger).setDisabled(!!done))];
   const w = Math.floor(Number(snapshotWeight) || 0);
@@ -65,10 +72,11 @@ function appealEmbed(rec, resolution, byId) {
     .setColor(resolution === 'denied' ? 0xED4245 : (resolution === 'approved' || resolution === 'reduced') ? 0x57F287 : 0x5865F2)
     .setTitle('⚖️ Strike appeal').addFields(
       { name: 'Appealing', value: `<@${rec.memberId}> \`${rec.memberTag}\``, inline: false },
-      { name: 'Strike', value: strikes.entryLabel(rec.strikeSnapshot), inline: false });
+      { name: 'Strike', value: strikes.entryLabel(rec.strikeSnapshot), inline: false },
+      { name: 'Staff vote (advisory)', value: `👍 ${(rec.votes?.up || []).length} · 👎 ${(rec.votes?.down || []).length}`, inline: true });
   if (rec.note) e.addFields({ name: 'Their note', value: String(rec.note).slice(0, 1024), inline: false });
   if (resolution) e.addFields({ name: resolution === 'approved' ? '✅ Removed by' : resolution === 'reduced' ? `⚖️ Reduced to ${rec.reducedTo}u by` : '⛔ Denied by', value: `<@${byId}>`, inline: true });
-  e.setFooter({ text: 'Only the member who received it can appeal. Staff decide: Approve removes it, or reduce its units.' });
+  e.setFooter({ text: 'Only the member who received it can appeal. Mods+ vote (advisory), admins+ decide: Approve removes it, or reduce its units.' });
   return e;
 }
 
@@ -95,7 +103,7 @@ async function submit(guild, member, state, strikeId, note) {
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   if (!channel) return { ok: false, msg: 'The strike-appeals channel is missing. An admin needs to run `/appeal-strike-setup` again.' };
 
-  const rec = { memberId: member.id, memberTag: member.user.tag, strikeId, strikeSnapshot: { ...entry }, note: note || '', status: 'open' };
+  const rec = { memberId: member.id, memberTag: member.user.tag, strikeId, strikeSnapshot: { ...entry }, note: note || '', status: 'open', votes: { up: [], down: [] } };
   const thread = await channel.threads.create({
     name: `Strike appeal · ${member.user.username}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,
     reason: `Strike appeal by ${member.user.tag} for strike ${strikeId}`,
@@ -107,7 +115,7 @@ async function submit(guild, member, state, strikeId, note) {
   if (config.modRoleId) await threads.addRoleToThread(guild, thread, config.modRoleId).catch(() => {});
   const msg = await thread.send({
     content: `<@${member.id}>, this is your appeal for the strike below. Explain why here; staff will read it and decide. You don’t need anyone else to join.${note ? `\n\n> ${note.slice(0, 800)}` : ''}`,
-    embeds: [appealEmbed(rec)], components: buttons(false, null, entry.weight), allowedMentions: { users: [member.id] },
+    embeds: [appealEmbed(rec)], components: buttons(rec, false, null, entry.weight), allowedMentions: { users: [member.id] },
   });
   rec.starterId = msg.id;
   st.appeals[thread.id] = rec; saveState(st);
@@ -116,8 +124,28 @@ async function submit(guild, member, state, strikeId, note) {
   return { ok: true, threadId: thread.id };
 }
 
-// staff Approve/Deny — gated to mods+ in index.js. Needs `state` to actually remove the strike.
+// Advisory vote — toggle-style (click again to remove your vote), same shape as promote.js. Gated to
+// mods+ in index.js. Doesn't decide anything by itself; admins+ still have to click Approve/Deny/Reduce.
+async function vote(interaction, dir) {
+  const st = loadState();
+  const rec = st.appeals[interaction.channelId];
+  if (!rec) return interaction.reply({ content: copy.appeals.untracked, flags: MessageFlags.Ephemeral });
+  if (rec.status !== 'open') return interaction.reply({ content: 'This appeal was already decided.', flags: MessageFlags.Ephemeral });
+  if (!rec.votes) rec.votes = { up: [], down: [] };
+  const uid = interaction.user.id;
+  const up = rec.votes.up.filter(x => x !== uid), down = rec.votes.down.filter(x => x !== uid);
+  const wasIn = (dir === 'up' ? rec.votes.up : rec.votes.down).includes(uid);
+  if (!wasIn) (dir === 'up' ? up : down).push(uid);
+  rec.votes = { up, down }; saveState(st);
+  await interaction.update({ embeds: [appealEmbed(rec)], components: buttons(rec, false, null, rec.strikeSnapshot?.weight) }).catch(() => {});
+  return interaction.followUp({ content: wasIn ? `Your ${dir === 'up' ? '👍' : '👎'} was removed.` : `Your ${dir === 'up' ? '👍' : '👎'} is counted.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+}
+
+// staff Approve/Deny — gated to admins+ in index.js (vote is mods+, see vote() above). Needs `state` to
+// actually remove the strike.
 async function handleButton(interaction, state) {
+  if (interaction.customId === 'strikeappeal_vote_up') return vote(interaction, 'up');
+  if (interaction.customId === 'strikeappeal_vote_down') return vote(interaction, 'down');
   const guild = interaction.guild;
   const st = loadState();
   const rec = st.appeals[interaction.channelId];
@@ -146,7 +174,7 @@ async function handleButton(interaction, state) {
   rec.status = isDeny ? 'denied' : 'approved'; rec.decidedBy = interaction.user.id;
   if (isDeny) rec.deniedAt = Date.now();
   saveState(st);
-  await interaction.update({ embeds: [appealEmbed(rec, outcome, interaction.user.id)], components: buttons(true, outcome, rec.strikeSnapshot?.weight) }).catch(() => {});
+  await interaction.update({ embeds: [appealEmbed(rec, outcome, interaction.user.id)], components: buttons(rec, true, outcome, rec.strikeSnapshot?.weight) }).catch(() => {});
   const thread = await guild.channels.fetch(rec.threadId).catch(() => null);
   if (thread) {
     const msg = isDeny
