@@ -29,7 +29,7 @@ function systemRoleIds(config) {
   const tribes = require('./tribes');
   const tribeStaffRoles = tribes.all().flatMap(t => [t.leaderRoleId, t.staffRankRoleId]);
   return new Set([...STAFF, ...tribeStaffRoles, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
-    config.cornerRoleId, config.watchlistRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
+    config.cornerRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
 }
 // Why a role can't be requested (null = it's fine).
 function whyNotRequestable(role, guild, me, config) {

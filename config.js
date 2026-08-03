@@ -105,7 +105,6 @@ const config = {
   // the modapps config file (same id as .fubu_modapps.json trialModRoleId).
   trialModRoleId: opt('TRIAL_MOD_ROLE_ID', '1532037321740779860'),
   modAlertChannelId: opt('MOD_ALERT_CHANNEL_ID', ''), // falls back to verifyChannelId at use
-  watchlistRoleId: opt('WATCHLIST_ROLE_ID', '1528541994652270793'),
   modAnnounceChannelId: opt('MOD_ANNOUNCE_CHANNEL_ID', '1526926690637578362'), // strict watchlist alerts + ban buttons
   watchLogChannelId: opt('WATCH_LOG_CHANNEL_ID', '1531382379342729428'), // loose day-to-day monitor reports (mod-only, no ping)
   // Strike ladder (least → most severe). Watch-log reports escalate through these before a ban.

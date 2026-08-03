@@ -363,7 +363,7 @@ function buildWatchlist() {
   const strict = watchlist.loadTerms();
   const loose = watchlist.loadLoose();
   const welfare = watchlist.loadWelfare();
-  const pending = watchlist.loadPending();
+  const watched = watchlist.loadWatched();
   const fw = D.freshwatch ? D.freshwatch.status() : { mode: c.smartWatchFreshMode || 'off', hours: c.smartWatchFreshHours || 0, percentile: c.smartWatchFreshPercentile || 1, influxActive: false };
   const freshLine = fw.mode === 'auto'
     ? `**auto**: tags the newest **~${fw.percentile}%** of members as ⚠ brand-new (self-calibrates to growth${fw.influxActive ? '; 📈 **influx active → tightened**' : ''}). A mod heads-up only; the AI never sees account age.`
@@ -376,10 +376,10 @@ function buildWatchlist() {
     "• **Loose watch-log**: *anyone except staff* posts a **loose term** → quiet report in **#watch-log** (buttons, no ping).\n" +
     "• **Welfare**: a distress term (e.g. `i want to die`, `sh`) → soft **check-in** report in #watch-log (no ban button).\n" +
     "All reports keep a **saved copy + mirrored attachments**, so deleting the message can't hide it.\n\n" +
-    '👁️ **Watchlist** add/remove · 🔓 **Unban** (opt. re-watchlist on rejoin) · 🏷️ **Terms** for each list.\n' +
+    '👁️ **Watchlist** add/remove (an internal flag, not a Discord role) · 🔓 **Unban** (opt. keep watching) · 🏷️ **Terms** for each list.\n' +
     `🌱 **New-account flag:** ${freshLine}\n` +
     `🤖 **Monitor mode:** ${copy.watchlist.monitorStatus(features.enabled('smartWatchLab'), !!D.config.smartWatchLive && features.enabled('smartWatch'))}\n\n` +
-    `**Now:** ${strict.length} strict · ${loose.length} loose · ${welfare.length} welfare term(s) · ${pending.length} pending.`)
+    `**Now:** ${strict.length} strict · ${loose.length} loose · ${welfare.length} welfare term(s) · ${watched.length} watched.`)
     .setFooter({ text: 'Watchlist + unban + terms = ADMINS-★ role. Banning a flagged message = any mod.' });
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_wl_add').setEmoji('👁️').setLabel('Add to watchlist').setStyle(ButtonStyle.Primary),
@@ -708,13 +708,12 @@ async function handlePanel(interaction) {
   }
   if (id === 'fops_pick_wladd' || id === 'fops_pick_wlremove') {
     if (!meets(roleTier, 'admin')) return denyReply('admin');
-    if (!D.config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const uid = interaction.values[0];
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
     if (!member) return interaction.editReply(copy.common.noMemberInServer);
-    if (id === 'fops_pick_wladd') { await member.roles.add(D.config.watchlistRoleId, `Watchlist via dashboard by ${interaction.user.tag}`); return interaction.editReply(`👁️ <@${uid}> (\`${member.user.tag}\`) added to the Watchlist.`); }
-    await member.roles.remove(D.config.watchlistRoleId, `Un-watchlist via dashboard by ${interaction.user.tag}`).catch(() => {}); watchlist.removePending(uid);
+    if (id === 'fops_pick_wladd') { watchlist.addWatch(uid); return interaction.editReply(`👁️ <@${uid}> (\`${member.user.tag}\`) added to the Watchlist.`); }
+    watchlist.removeWatch(uid);
     return interaction.editReply(`✅ <@${uid}> (\`${member.user.tag}\`) removed from the Watchlist.`);
   }
   if (id === 'fops_pick_unban') {
@@ -951,8 +950,8 @@ async function handlePanel(interaction) {
       const keep = /^(y|yes|true|1|on)/i.test((interaction.fields.getTextInputValue('watchlist') || '').trim());
       try { await interaction.guild.bans.remove(uid, `Unban via dashboard by ${interaction.user.tag}`); }
       catch (e) { return interaction.editReply(`❌ Unban failed: ${e.message} (are they actually banned?)`); }
-      if (keep) watchlist.addPending(uid);
-      return interaction.editReply(`✅ Unbanned <@${uid}>.${keep ? " They'll get the Watchlist role when they rejoin." : ''}`);
+      if (keep) watchlist.addWatch(uid);
+      return interaction.editReply(`✅ Unbanned <@${uid}>.${keep ? ' They’re still on the Watchlist.' : ''}`);
     }
     if (id === 'fops_wl_termaddmodal' || id === 'fops_wl_termdelmodal') {
       if (!meets(roleTier, 'admin')) return deny('admin');
@@ -983,13 +982,8 @@ async function handlePanel(interaction) {
       return interaction.editReply(`**Strict (${s.length})** → ban:\n${s.map(t => `\`${t}\``).join(' · ') || '_none_'}\n\n**Loose (${l.length})** → #watch-log:\n${l.map(t => `\`${t}\``).join(' · ') || '_none_'}\n\n**Welfare (${w.length})** → check-in:\n${w.map(t => `\`${t}\``).join(' · ') || '_none_'}`.slice(0, 1900));
     }
     if (id === 'fops_wl_list') {
-      if (!D.config.watchlistRoleId) return interaction.editReply(copy.common.noWatchlistRole);
-      await interaction.guild.members.fetch().catch(() => {});
-      const role = await interaction.guild.roles.fetch(D.config.watchlistRoleId).catch(() => null);
-      const members = role ? [...role.members.values()] : [];
-      const pend = watchlist.loadPending();
-      return interaction.editReply(`**On the Watchlist (${members.length}):**\n${members.map(m => `• <@${m.id}> \`${m.user.tag}\``).join('\n') || '_none_'}`.slice(0, 1800)
-        + (pend.length ? `\n**Pending re-watchlist (${pend.length}):** ${pend.map(x => `<@${x}>`).join(', ')}` : ''));
+      const ids = watchlist.loadWatched();
+      return interaction.editReply(`**On the Watchlist (${ids.length}):**\n${ids.map(uid => `• <@${uid}>`).join('\n') || '_none_'}`.slice(0, 1800));
     }
 
     await interaction.editReply('Unknown action.');

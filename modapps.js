@@ -14,6 +14,7 @@ const opspanel = require('./opspanel');
 const copy = require('./copy');
 const langmods = require('./langmods');
 const ownerlog = require('./ownerlog');
+const watchlist = require('./watchlist');
 
 const CONFIG_FILE = process.env.FUBU_MODAPPS_FILE || '/home/ubuntu/.fubu_modapps.json';
 const STATE_FILE = process.env.FUBU_MODAPPS_STATE_FILE || '/home/ubuntu/.fubu_modapps_state.json';
@@ -55,7 +56,7 @@ function punishment(member, config) {
   let strikeUnits = 0;
   for (let i = ids.length - 1; i >= 0; i--) if (roles.has(ids[i])) { strikeUnits = i + 1; break; }
   const cornered = config.cornerRoleId && roles.has(config.cornerRoleId);
-  const watchlisted = config.watchlistRoleId && roles.has(config.watchlistRoleId);
+  const watchlisted = watchlist.isWatched(member.id);
   const points = -(strikeUnits * 2) - (watchlisted ? 3 : 0) - (cornered ? 1 : 0);
   const parts = [];
   if (strikeUnits) parts.push(`${strikeUnits} strike unit${strikeUnits > 1 ? 's' : ''}`);

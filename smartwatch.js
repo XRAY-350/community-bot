@@ -21,6 +21,7 @@
 const fs = require('fs');
 const config = require('./config');
 const opspanel = require('./opspanel');
+const watchlist = require('./watchlist');
 
 let Anthropic = null;
 try { Anthropic = require('@anthropic-ai/sdk'); } catch { /* SDK not installed yet - feature stays dark */ }
@@ -267,7 +268,7 @@ function buildPayload(msg, matchedTerms, context, replyingTo) {
   return {
     content: (msg.content || '').slice(0, 1500),
     matchedTerms, channelName: msg.channel?.name || 'unknown', replyingTo, context,
-    onWatchlist: !!(config.watchlistRoleId && member?.roles?.cache?.has(config.watchlistRoleId)),
+    onWatchlist: watchlist.isWatched(member?.id),
     isStaff: !!opspanel.memberTier(member),
   };
 }

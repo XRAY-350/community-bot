@@ -64,7 +64,7 @@ function systemicRoleIds(guild) {
   const s = new Set([guild.id]);
   const add = (...ids) => ids.forEach(id => { if (id) s.add(id); });
   add(opspanel.ADMIN_ROLE_ID, opspanel.MOD_ROLE_ID, opspanel.OWNER_DISPLAY_ROLE_ID, ...(opspanel.OWNER_ROLE_IDS || []));
-  add(config.verifiedRoleId, config.unverifiedRoleId, config.cornerRoleId, config.trialModRoleId, config.watchlistRoleId, config.mdniRoleId, config.langMiniModRoleId, config.minorAgeRoleId);
+  add(config.verifiedRoleId, config.unverifiedRoleId, config.cornerRoleId, config.trialModRoleId, config.mdniRoleId, config.langMiniModRoleId, config.minorAgeRoleId);
   (config.adultAgeRoleIds || []).forEach(add);
   (config.strikeRoleIds || []).forEach(add);
   (config.identifyingRoleIds || []).forEach(add);
@@ -1823,12 +1823,6 @@ client.on('guildMemberAdd', async (member) => {
   try {
     if (member.guild.id !== config.guildId || member.user.bot) return;
     freshwatch.onMemberJoin(member.guild, member);   // real-time join tracking (fresh-flag + influx detection)
-    // Re-apply the Watchlist role to a member who was unbanned with "watchlist on rejoin".
-    if (config.watchlistRoleId && watchlist.isPending(member.id)) {
-      await member.roles.add(config.watchlistRoleId, 'Watchlist on rejoin (unbanned with watchlist)').catch(e => console.error('[watchlist] rejoin add:', e.message));
-      watchlist.removePending(member.id);
-      console.log(`[watchlist] re-applied Watchlist to rejoining ${member.user.tag} (${member.id})`);
-    }
     if (!config.unverifiedRoleId) return;
     if (member.roles.cache.has(config.verifiedRoleId)) return;   // already verified
     if (member.roles.cache.has(config.unverifiedRoleId)) return; // already tagged
@@ -2305,7 +2299,7 @@ async function watchlistAlert(msg, hits, opts = {}) {
 async function labEvaluateAndPost(msg, member) {
   const ch = await msg.guild.channels.fetch(config.smartWatchLabChannelId).catch(() => null);
   if (!ch) return;
-  const onWatch = !!(config.watchlistRoleId && member.roles.cache.has(config.watchlistRoleId));
+  const onWatch = watchlist.isWatched(member.id);
   // WELFARE takes priority (mirrors production): a non-watchlisted member's distress signal gets a welfare
   // card with distress-appropriate grading (🫂 genuine / ⬜ hyperbole) and no multi-action — punishment
   // verdicts don't apply to someone's wellbeing.
@@ -2516,10 +2510,9 @@ async function handleWatchlistButton(interaction) {
     return interaction.update({ content: `🗑️ Dismissed by <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   if (action === 'wl_add') {   // "Add to watchlist" from a report - ADMINS-★ only
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can add to the watchlist.', flags: MessageFlags.Ephemeral });
-    if (!config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const m = await interaction.guild.members.fetch(userId).catch(() => null);
     if (!m) return interaction.reply({ content: "That member isn't in the server.", flags: MessageFlags.Ephemeral });
-    await m.roles.add(config.watchlistRoleId, `Watchlist via report by ${interaction.user.tag}`).catch(() => {});
+    watchlist.addWatch(userId);
     return interaction.update({ content: `👁️ <@${userId}> added to the Watchlist by <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (action === 'wl_strike') {
@@ -2675,7 +2668,7 @@ client.on('messageCreate', async (msg) => {
     // STRICT: a watchlisted member trips a strict term → mod-announcements alert (ban buttons + ping).
     // Strict ENCOMPASSES loose — a watchlisted member is matched against strict + loose combined, so you
     // only ever add strict-ONLY extras to the strict list (every loose term is auto-included here).
-    if (config.watchlistRoleId && member.roles.cache.has(config.watchlistRoleId)) {
+    if (watchlist.isWatched(member.id)) {
       const strict = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])];
       const hits = strict.length ? watchlist.matchTerms(msg.content, strict) : [];
       if (hits.length) { await watchlistAlert(msg, hits, { scope: 'strict' }); return; }   // strict wins - one report per message
@@ -4020,10 +4013,10 @@ client.on('interactionCreate', async (interaction) => {
     const reason = interaction.options.getString('reason') || `Unban by ${interaction.user.tag}`;
     try { await interaction.guild.bans.remove(id, reason); }
     catch (e) { return interaction.reply({ content: `❌ Unban failed: ${e.message} (are they actually banned?)`, flags: MessageFlags.Ephemeral }); }
-    if (keepWatch) watchlist.addPending(id);
-    await ownerlog.log(interaction.guild, { emoji: '🔓', title: 'Unbanned', color: 0x57F287, detail: `\`${id}\` — ${reason} — by <@${interaction.user.id}>.${keepWatch ? ' Will be re-watchlisted on rejoin.' : ''}` });
+    if (keepWatch) watchlist.addWatch(id);
+    await ownerlog.log(interaction.guild, { emoji: '🔓', title: 'Unbanned', color: 0x57F287, detail: `\`${id}\` — ${reason} — by <@${interaction.user.id}>.${keepWatch ? ' Kept on the Watchlist.' : ''}` });
     return interaction.reply({ flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] },
-      content: `✅ Unbanned <@${id}>.` + (keepWatch ? ' They\'ll get the **Watchlist** role automatically when they rejoin.' : '') });
+      content: `✅ Unbanned <@${id}>.` + (keepWatch ? ' They’re still on the **Watchlist**.' : '') });
   }
   if (name === 'contest-submit') {
     if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
@@ -4230,25 +4223,18 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'watchlist') {
     if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnly, flags: MessageFlags.Ephemeral });
-    if (!config.watchlistRoleId) return interaction.reply({ content: copy.common.noWatchlistRole, flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     if (sub === 'list') {
-      await interaction.guild.members.fetch().catch(() => {});
-      const role = interaction.guild.roles.cache.get(config.watchlistRoleId);
-      const members = role ? [...role.members.values()] : [];
-      const pend = watchlist.loadPending();
+      const ids = watchlist.loadWatched();
       return interaction.reply({ flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] },
-        content: `**On the Watchlist (${members.length}):**\n${members.map(m => `• <@${m.id}> \`${m.user.tag}\``).join('\n') || '_none_'}`
-          + (pend.length ? `\n\n**Pending (watchlist on rejoin, ${pend.length}):** ${pend.map(x => `<@${x}>`).join(', ')}` : '') });
+        content: `**On the Watchlist (${ids.length}):**\n${ids.map(id => `• <@${id}>`).join('\n') || '_none_'}` });
     }
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can edit the watchlist.', flags: MessageFlags.Ephemeral });
     const user = interaction.options.getUser('user');
     const member = await interaction.guild.members.fetch(user.id).catch(() => null);
     if (!member) return interaction.reply({ content: 'That member isn\'t in the server.', flags: MessageFlags.Ephemeral });
-    try {
-      if (sub === 'add') { await member.roles.add(config.watchlistRoleId, `Watchlist by ${interaction.user.tag}`); return interaction.reply({ content: `👁 <@${user.id}> added to the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
-      if (sub === 'remove') { await member.roles.remove(config.watchlistRoleId, `Un-watchlist by ${interaction.user.tag}`); watchlist.removePending(user.id); return interaction.reply({ content: `✅ <@${user.id}> removed from the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
-    } catch (e) { return interaction.reply({ content: `❌ ${e.message}`, flags: MessageFlags.Ephemeral }); }
+    if (sub === 'add') { watchlist.addWatch(user.id); return interaction.reply({ content: `👁 <@${user.id}> added to the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
+    if (sub === 'remove') { watchlist.removeWatch(user.id); return interaction.reply({ content: `✅ <@${user.id}> removed from the Watchlist.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
     return;
   }
   if (name === 'perms') {

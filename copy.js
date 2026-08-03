@@ -19,7 +19,6 @@
 // so they read identically everywhere and a re-word happens once.
 const common = {
   noMemberInServer: 'That member is no longer in the server.',
-  noWatchlistRole: 'No Watchlist role configured.',
   whichRule: 'Which rule (optional)?',
   // Parameterised notices shared by the anonymous member tools (confessions / reports / modmail) — identical
   // wording in all three, so they live here.

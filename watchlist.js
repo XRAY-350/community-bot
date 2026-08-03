@@ -1,5 +1,6 @@
-// watchlist.js — flagged-term monitoring for members on the Watchlist role, plus the editable term store.
-// The term list lives in a JSON file (no redeploy to edit) that the /watchlist-terms command manages.
+// watchlist.js — flagged-term monitoring for watched members (a plain user-ID list, not a Discord role —
+// see loadWatched/isWatched below), plus the editable term store. The term list lives in a JSON file (no
+// redeploy to edit) that the /watchlist-terms command manages.
 const fs = require('fs');
 const TERMS_FILE = process.env.FUBU_WATCHLIST_TERMS_FILE || '/home/ubuntu/.fubu_watchlist_terms.json';
 
@@ -53,14 +54,17 @@ function matchTerms(content, terms) {
   const norm = content.normalize('NFKD').replace(/[̀-ͯ]/g, '');
   return (terms || []).filter(t => { const re = _termRe(String(t).trim()); return re && re.test(norm); });
 }
-// Pending watchlist: user IDs to auto-apply the Watchlist role to WHEN THEY REJOIN (unban keeps them
-// watched — but an unbanned user isn't in the guild, so the role can only be added once they come back).
-const PENDING_FILE = process.env.FUBU_WATCHLIST_PENDING_FILE || '/home/ubuntu/.fubu_watchlist_pending.json';
-function loadPending() { try { const a = JSON.parse(fs.readFileSync(PENDING_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
-function savePending(ids) { try { fs.writeFileSync(PENDING_FILE, JSON.stringify([...new Set(ids)])); } catch (e) { console.error('[watchlist] pending save:', e.message); } }
-function addPending(id) { const p = loadPending(); if (!p.includes(id)) { p.push(id); savePending(p); } }
-function removePending(id) { savePending(loadPending().filter(x => x !== id)); }
-function isPending(id) { return loadPending().includes(id); }
+// Who's watched — a plain user-ID list, NOT a Discord role (owner, 2026-08-03: "I don't want it to be a
+// role at all... use the user id instead"). This is why the old "pending watchlist on rejoin" mechanism is
+// gone: a role gets stripped when someone leaves/is banned, so re-applying it needed to wait for a rejoin
+// event, but ID-keyed state just persists on its own regardless of guild membership — add/remove takes
+// effect immediately, unban-with-watch no longer needs to defer anything.
+const WATCHED_FILE = process.env.FUBU_WATCHLIST_WATCHED_FILE || '/home/ubuntu/.fubu_watchlist_watched.json';
+function loadWatched() { try { const a = JSON.parse(fs.readFileSync(WATCHED_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
+function saveWatched(ids) { try { fs.writeFileSync(WATCHED_FILE, JSON.stringify([...new Set(ids)])); } catch (e) { console.error('[watchlist] watched save:', e.message); } }
+function isWatched(id) { return !!id && loadWatched().includes(id); }
+function addWatch(id) { const w = loadWatched(); if (!w.includes(id)) { w.push(id); saveWatched(w); } }
+function removeWatch(id) { saveWatched(loadWatched().filter(x => x !== id)); }
 
 // Loose "day-to-day" term list — a second, softer set matched against everyone-except-staff, reported
 // quietly to #watch-log (no ping). Same matcher; its own editable file.
@@ -107,7 +111,7 @@ function addLabWelfare(term) { const t = loadLabWelfare(); const v = String(term
 function removeLabWelfare(term) { const v = String(term).trim().toLowerCase(); return _saveArr(LAB_WELFARE_FILE, loadLabWelfare().filter(x => x.toLowerCase() !== v), 'lab-welfare'); }
 
 module.exports = { loadTerms, saveTerms, addTerm, removeTerm, matchTerms, TERMS_FILE,
-  addPending, removePending, isPending, loadPending,
+  loadWatched, isWatched, addWatch, removeWatch, WATCHED_FILE,
   loadLoose, addLoose, removeLoose, LOOSE_FILE,
   loadWelfare, addWelfare, removeWelfare, WELFARE_FILE,
   loadLabStrict, loadLabLoose, loadLabWelfare, addLabStrict, removeLabStrict, addLabLoose, removeLabLoose, addLabWelfare, removeLabWelfare,
