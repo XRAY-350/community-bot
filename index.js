@@ -4129,6 +4129,13 @@ client.on('interactionCreate', async (interaction) => {
         const leaderRole = interaction.guild.roles.cache.get(tribe.leaderRoleId);
         if (leaderRole) await leaderRole.setName(`${fresh.shortName || fresh.name} Leader`, 'Tribe retheme: rename to match').catch(() => {});
       }
+      // BUG FIXED 2026-08-03: only leaderRole was kept in sync on rename, staffRankRole ("General") was left
+      // with its old name forever — same class of drift as the colour-sync fix above, caught while renaming
+      // Trib. Matches the literal ` General` suffix buildTribe() uses at creation (not the customizable title).
+      if ((newName || newShort) && tribe.staffRankRoleId) {
+        const staffRankRole = interaction.guild.roles.cache.get(tribe.staffRankRoleId);
+        if (staffRankRole) await staffRankRole.setName(`${fresh.shortName || fresh.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, 'Tribe retheme: rename to match').catch(() => {});
+      }
       if ((newName || newShort) && config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
       return interaction.reply(`🎨 **${fresh.shortName || fresh.name}** has been ${newName || newShort ? 'renamed and ' : ''}recoloured.`);
     }

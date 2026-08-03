@@ -550,3 +550,19 @@ tribes: Leader + General now correctly blocked, base role still requestable for 
 Note on "refresh the list": `/request-role`'s role picker is Discord's own native role-select widget (an
 `addRoleOption()`), not something this bot renders or caches — there's no stale list to refresh, the fix is
 live immediately on the next `/request-role` use, no further action needed.
+
+## 24. Trib renamed to Whyamiissuperiortribe — found + fixed a 3rd rename-sync gap — 2026-08-03
+Owner: Trib's members are renaming to "Whyamiissuperiortribe." Ran the rename directly (leader hasn't
+unlocked Re-theme yet — memberGate 60/crownGate 6, Trib has 7 members — so did it as an owner-directed admin
+action, same authority level as `/tribe-admin`, not through the gated leader command).
+While doing it, found ANOTHER instance of the same rename-drift class from §21/§23: `/tribe retheme` renamed
+the base role and leader role on a name change, but never `staffRankRoleId` ("General") — it would've been
+stuck on the OLD name forever. Fixed: retheme now also renames the staff-rank role to `${name} General}` to
+match, right next to the leader-role rename it already did.
+Category channel names were deliberately NOT added to this fix — unlike leader/staff-rank role names (always
+`${name} Leader` / `${name} General`, no exceptions), a tribe's land category can be hand-customized at
+founding via the land modal (Cobalt Vigil's category is "🌊 ᴛʜᴇ ᴅʀᴏᴡɴɪɴɢ ɴɪɢʜᴛ 彡", nothing like its shortName),
+so auto-renaming it on every retheme would clobber a deliberate customization for tribes that have one. Trib's
+category was still the untouched auto-generated default, so renamed it by hand for this one instance instead
+of writing a heuristic to guess "was this customized." Final state, all verified live: tribe record name+short,
+base role, leader role, staff-rank role, and land category all read "Whyamiissuperiortribe" consistently.
