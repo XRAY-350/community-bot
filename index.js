@@ -4019,9 +4019,10 @@ client.on('interactionCreate', async (interaction) => {
       if (id.startsWith('appeal_')) {
         // Tightened 2026-08-03 (owner, after the mass-unban incident): a ban appeal's APPROVE unbans someone,
         // same real-world action as /unban — that's owner-only now, not admin+. Voting (advisory, doesn't
-        // decide anything) stays open to admin+, the tier that used to be able to decide outright.
+        // decide anything) is open to ALL staff (mod+, owner: "mods can still vote... I just don't want them
+        // deciding") — broadened from an earlier admin+-only pass that accidentally locked mods out of voting.
         if (id === 'appeal_vote_up' || id === 'appeal_vote_down') {
-          if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only staff with **ban power** (admins+) can vote on a ban appeal.', flags: MessageFlags.Ephemeral });
+          if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can vote on a ban appeal.', flags: MessageFlags.Ephemeral });
         } else if (!isOwner(interaction)) {
           return interaction.reply({ content: 'Only the **owner** (or bot owner) can approve or deny a ban appeal.', flags: MessageFlags.Ephemeral });
         }

@@ -76,7 +76,7 @@ function appealEmbed(rec, resolution, byId) {
   if (rec.banReason) e.addFields({ name: 'Original ban reason', value: String(rec.banReason).slice(0, 1024), inline: false });
   if (rec.originAmbiguous) e.addFields({ name: '⚠️ Heads up', value: 'This ban’s reason doesn’t match one of the bot’s known categories, so its origin (threshold strike vs. something else) couldn’t be auto-verified. Check manually before deciding.', inline: false });
   if (resolution) e.addFields({ name: resolution === 'approved' ? '✅ Approved by' : '⛔ Denied by', value: `<@${byId}>`, inline: true });
-  e.setFooter({ text: 'Friends make the case in this thread. Admins+ vote (advisory), the owner decides: Approve unbans them.' });
+  e.setFooter({ text: 'Friends make the case in this thread. Staff (mods+) vote (advisory), the owner decides: Approve unbans them.' });
   return e;
 }
 
