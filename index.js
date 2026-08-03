@@ -3829,6 +3829,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its motto.`, flags: MessageFlags.Ephemeral });
       const text = interaction.options.getString('text');
       tribes.setMotto(tribe.key, text);
+      if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});   // the picker shows each tribe's motto — keep it in sync
       return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
     }
     if (sub === 'nominate') {   // ANY member can propose; goes to the throne for approval, then the nominee accepts
