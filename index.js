@@ -1460,6 +1460,10 @@ client.once('ready', async () => {
   // Muster auto-close: boot catch-up + every 5min (a muster's 2h window makes a tighter cadence worth it).
   if (dguild) await sweepExpiredMusters(dguild).catch(e => console.error(`[tribe muster] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
+  // #roles self-heal: drop any toggle button whose role was deleted outside the bot's control (boot + hourly).
+  const roleselectSweep = async g => { const removed = await roleselect.sweepDeadRoles(g, config.rolesChannelId); const n = Object.values(removed).flat().length; if (n) console.log(`[roleselect] sweep: removed ${n} dead role(s) — ${JSON.stringify(removed)}`); };
+  if (dguild) await roleselectSweep(dguild).catch(e => console.error(`[roleselect] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(roleselectSweep).catch(() => {}), 3600000);
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {

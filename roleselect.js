@@ -182,6 +182,25 @@ async function appendTribeBlock(guild, channelId) {
   return { ok: true, id: m.id };
 }
 
+// Self-heal: drop any section entry whose role no longer exists in the server (an admin can delete a custom
+// role from Discord's UI directly, with no way for the bot to know — found live: "OK to be tagged for jokes"
+// pointed at a role deleted a while back, and stayed clickable-but-broken in #roles until spotted by hand).
+// Sweeps every SECTION_ORDER section, removes dead entries, and re-renders only the sections that changed.
+// Returns { sectionKey: [removedLabel, ...] } for whatever it cleaned up (empty object if nothing was stale).
+async function sweepDeadRoles(guild, channelId) {
+  await guild.roles.fetch().catch(() => {});
+  const sections = loadSections();
+  const removed = {};
+  for (const key of SECTION_ORDER) {
+    const dead = (sections[key] || []).filter(([, id]) => !guild.roles.cache.has(id));
+    if (!dead.length) continue;
+    for (const [, id] of dead) removeRoleFromSection(key, id);
+    removed[key] = dead.map(([label]) => label);
+  }
+  for (const key of Object.keys(removed)) await rebuildFromIndex(guild, channelId, SECTION_BLOCK_INDEX[key]).catch(() => {});
+  return removed;
+}
+
 // Re-render the ALREADY-POSTED tribe picker with the current tribe list — call this whenever a tribe is
 // founded so a newly created tribe actually shows up as a pledge option, not just in tribes.all() internally.
 // The picker's OPTIONS are baked into the message at send time, so a new tribe never appears on its own.
@@ -247,6 +266,6 @@ async function rebuildFromIndex(guild, channelId, fromIndex) {
 }
 
 module.exports = {
-  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex, appendTribeBlock, refreshTribeBlock,
+  COLORS, AGE, colorSelectRow, ageSelectRow, toggleRow, rebuild, rebuildFromIndex, appendTribeBlock, refreshTribeBlock, sweepDeadRoles,
   loadSections, addRoleToSection, removeRoleFromSection, SECTION_ORDER, SECTION_TITLE, SECTION_BLOCK_INDEX,
 };
