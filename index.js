@@ -2645,6 +2645,7 @@ function ruleRow(customId) {
 function cornerReasonModal(memberId, channelId, messageId, ruleN) {
   return new ModalBuilder().setCustomId(`corner_reason:${memberId}:${channelId}:${messageId}:${ruleN || 'x'}`).setTitle('Send to corner').addComponents(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = 15m; 30s, 10m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('timeout').setLabel('Also native timeout? (blank = no; 30m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
 }
@@ -3165,9 +3166,13 @@ client.on('interactionCreate', async (interaction) => {
       const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? `, ${rawReason}` : ''}` : (rawReason || null);
       let durStr = '';
       try { durStr = (interaction.fields.getTextInputValue('duration') || '').trim(); } catch { /* older modal had no duration field */ }
+      let timeoutStr = '';
+      try { timeoutStr = (interaction.fields.getTextInputValue('timeout') || '').trim(); } catch { /* older modal had no timeout field */ }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       let durationMs = config.cornerDefaultDurationMs;
       if (durStr) { const d = corner.parseDuration(durStr); if (!d) return interaction.editReply('Bad duration. Use e.g. `30s`, `10m`, `2h`, `1d` (or leave it blank for 15m).'); durationMs = d; }
+      let timeoutMs = null;
+      if (timeoutStr) { timeoutMs = corner.parseDuration(timeoutStr); if (!timeoutMs) return interaction.editReply('Bad timeout duration. Use e.g. `30m`, `2h`, `1d` (or leave it blank for none).'); }
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply('That member isn’t in the server anymore.');
@@ -3176,6 +3181,11 @@ client.on('interactionCreate', async (interaction) => {
       if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
       const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs, ruleN);
       if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
+      let timeoutNote = '';
+      if (timeoutMs) {
+        const ok = await member.timeout(timeoutMs, reason || 'Sent to corner').then(() => true).catch(e => { console.error('[corner-reason] timeout:', e.message); return false; });
+        timeoutNote = ok ? ` · ⏱️ also timed out ${Math.floor(timeoutMs / 60000)}m` : ' · ⚠️ timeout failed';
+      }
       // Sweep: also corner everyone else (non-staff, non-bot) who posted in this channel in the last N minutes.
       let sweepStr = ''; try { sweepStr = (interaction.fields.getTextInputValue('sweep') || '').trim(); } catch { /* older modal */ }
       let sweepNote = '';
@@ -3196,7 +3206,7 @@ client.on('interactionCreate', async (interaction) => {
           allowedMentions: { parse: [] } }).catch(e => console.error('[corner-sweep] public announce:', e.message));
       }
       const relSec = Math.floor((Date.now() + durationMs) / 1000);
-      return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` (${reason})` : ''}. Stripped **${res.stripped}** role(s).${sweepNote}`, allowedMentions: { parse: [] } });
+      return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner until <t:${relSec}:f>${reason ? ` (${reason})` : ''}. Stripped **${res.stripped}** role(s).${timeoutNote}${sweepNote}`, allowedMentions: { parse: [] } });
     } catch (e) { console.error(`[corner-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not corner.') : interaction.reply({ content: 'Could not corner.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
