@@ -434,13 +434,24 @@ function wizardTouch(adminId, patch) {
   _tribeWizards.set(adminId, w);
   return w;
 }
+// Wraps showModal() so a bad modal (e.g. a TextInput label over Discord's 45-char cap — confirmed live,
+// 2026-08-03: a mod's founding request silently failed with "the application did not respond" because
+// tribeIdentityModal()'s leader_title label was 47 chars) logs AND tells the user something useful, instead
+// of silently leaving them with an unresponsive interaction and zero diagnostic trail.
+async function safeShowModal(interaction, modal) {
+  try { return await interaction.showModal(modal); }
+  catch (e) {
+    console.error('[tribe wizard] showModal failed:', e.message);
+    return interaction.reply({ content: 'Something went wrong opening that form. Tell an admin — this is a bug, not something you did.', flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
+}
 function tribeIdentityModal() {
   return new ModalBuilder().setCustomId('tribewiz_identity').setTitle('Found a tribe: identity').addComponents(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('name').setLabel('Full tribe name, e.g. "The Tribe of X"').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('short_name').setLabel('Short name for cards (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Tribe emoji (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('points_name').setLabel('Activity points name, e.g. Tides (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(20)),
-    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('leader_title').setLabel('What the head is called, e.g. Warden (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)));
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('leader_title').setLabel('Head title, e.g. Warden (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)));
 }
 function tribeColorsModal(w) {
   const colorInput = new TextInputBuilder().setCustomId('color').setLabel('Primary colour hex, e.g. #2A426A').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(7);
@@ -2905,17 +2916,17 @@ client.on('interactionCreate', async (interaction) => {
     if (w.emoji) modal.components[2].components[0].setValue(w.emoji);
     if (w.pointsName) modal.components[3].components[0].setValue(w.pointsName);
     if (w.leaderTitle) modal.components[4].components[0].setValue(w.leaderTitle);
-    return interaction.showModal(modal);
+    return safeShowModal(interaction, modal);
   }
   if (interaction.isButton?.() && interaction.customId === 'tribewiz_colors_btn') {
     const w = wizardGet(interaction.user.id);
     if (!w) return interaction.reply(wizExpired());
-    return interaction.showModal(tribeColorsModal(w));
+    return safeShowModal(interaction, tribeColorsModal(w));
   }
   if (interaction.isButton?.() && interaction.customId === 'tribewiz_land_btn') {
     const w = wizardGet(interaction.user.id);
     if (!w) return interaction.reply(wizExpired());
-    return interaction.showModal(tribeLandModal(w));
+    return safeShowModal(interaction, tribeLandModal(w));
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribewiz_style') {
     if (!wizardGet(interaction.user.id)) return interaction.reply(wizExpired());
@@ -4171,7 +4182,7 @@ client.on('interactionCreate', async (interaction) => {
         const existing = tribes.getFoundingRequest(interaction.user.id);
         if (existing && existing.cosigns.length >= 2) {
           wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
-          return interaction.showModal(tribeIdentityModal());
+          return safeShowModal(interaction, tribeIdentityModal());
         }
         if (existing) return interaction.reply({ content: `Still waiting on co-signs: **${existing.cosigns.length}/2** mods so far. Check <#${config.modAnnounceChannelId}>.`, flags: MessageFlags.Ephemeral });
         if (!config.modAnnounceChannelId) return interaction.reply({ content: 'No mod-announcements channel configured to route this through.', flags: MessageFlags.Ephemeral });
@@ -4185,7 +4196,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.editReply(`🏴 Posted to <#${ch.id}>. Needs **2 more** mods to co-sign before you can continue. Run this command again once they have.`);
       }
       wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
-      return interaction.showModal(tribeIdentityModal());
+      return safeShowModal(interaction, tribeIdentityModal());
     }
     if (sub === 'register') {
       const key = interaction.options.getString('key').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

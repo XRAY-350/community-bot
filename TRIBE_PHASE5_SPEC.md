@@ -452,3 +452,18 @@ still showed only the original 3). Two real bugs, both fixed:
    AND still the same person who started the wizard).
 Checked live state after the fix: 2 OTHER founding requests were sitting at 1/2 co-signs (unaffected, still in
 progress correctly), no currently-stuck 3-co-sign request needing manual intervention.
+
+## 18. The ACTUAL root cause of "did not respond" — 2026-08-03 (owner caught it)
+Owner remembered a known Discord constraint and asked "don't modals need a 45-char label limit? Could that be
+the issue?" — checked, and yes: `tribeIdentityModal()`'s `leader_title` field label was **47 characters**
+("What the head is called, e.g. Warden (optional)"), 2 over Discord's cap. This makes `showModal()` throw
+synchronously, with nothing catching it anywhere in the tribe-wizard code — so the interaction never got ANY
+response, exactly matching "the application did not respond." This is the actual root cause of the incident in
+§17, not a race/timing issue as first suspected. Audited EVERY `.setLabel()` call in the whole file (`grep`
++ length sort) — this was the ONLY one over 45 chars, an isolated bug, not a systemic pattern. Shortened to
+"Head title, e.g. Warden (optional)" (34 chars).
+Also added a class-level safety net: `safeShowModal(interaction, modal)` wraps every tribe-wizard `showModal()`
+call (5 sites: the identity/colors/land re-edit buttons, and the initial create command's two paths) in a
+try/catch — logs the real error AND tells the user "this is a bug, not something you did" instead of a silent,
+undiagnosable "did not respond." Scoped to the tribe wizard specifically, not a blanket refactor of every
+showModal() call in the codebase (corner/strike modals have been stable and untouched this whole session).
