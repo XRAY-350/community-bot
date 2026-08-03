@@ -566,3 +566,17 @@ so auto-renaming it on every retheme would clobber a deliberate customization fo
 category was still the untouched auto-generated default, so renamed it by hand for this one instance instead
 of writing a heuristic to guess "was this customized." Final state, all verified live: tribe record name+short,
 base role, leader role, staff-rank role, and land category all read "Whyamiissuperiortribe" consistently.
+
+## 25. Tribe invite/nomination accept prompts: DM-first, channel fallback — 2026-08-03
+Owner: these were getting missed in a busy #bot-commands. Considered DM-only vs DM+fallback vs leave as-is —
+picked DM+fallback (owner's choice): a bot DM can fail SILENTLY if the recipient has DMs from server members
+off, which is common, so DM-only risks an invite just vanishing with no visible sign anything went wrong.
+`postAcceptPrompt()` now tries `member.send()` with the same Accept/Decline buttons first; only posts to
+#bot-commands if that DM send fails.
+The 3 button handlers this feeds (`tribenom_accept`, `tribenomgate`, `tribenom_decline`) previously assumed
+`interaction.guild`/`interaction.member` always exist — true for a channel-posted button, but a DM-originated
+component interaction carries neither (DM interactions only ever have `.user`, not `.guild`/`.member`). Fixed
+`tribenom_accept` and `tribenomgate` (the two that actually touch guild state) to resolve both explicitly:
+`interaction.guild || client.guilds.fetch(config.guildId)`, then `interaction.member || guild.members.fetch(targetId)`.
+`tribenom_decline` needed no change, it never touches guild/member. Verified the fallback path still posts to
+#bot-commands exactly as before when DM send fails.

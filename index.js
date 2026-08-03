@@ -132,16 +132,23 @@ async function addCoLeader(guild, tribe, leaderRole, member) {
   await syncStaffRank(guild, member, tribe);
   return { ok: true };
 }
-// Posts the "do you want to join?" Accept/Decline card to the public #bot-commands channel — shared by a
-// leader's direct /tribe invite (owner, 2026-08-03: "invite should get consent" — skips straight to this,
-// no separate approval needed since the leader inviting IS the approval) and an approved member nomination.
+// Posts the "do you want to join?" Accept/Decline card — shared by a leader's direct /tribe invite (owner,
+// 2026-08-03: "invite should get consent" — skips straight to this, no separate approval needed since the
+// leader inviting IS the approval) and an approved member nomination.
+// Owner, 2026-08-03: these were getting missed in a busy #bot-commands — DM the target first (quieter, more
+// likely to be seen), falling back to the #bot-commands post ONLY if the DM fails (DMs closed from the bot is
+// common and fails silently, so this can't be DM-only or some invites would just vanish with no visible sign).
 async function postAcceptPrompt(guild, tribe, targetId) {
-  const ch = await guild.channels.fetch(BOT_COMMANDS_CH).catch(() => null);
-  if (!ch) return false;
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribenom_accept:${targetId}`).setLabel('✅ Accept').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tribenom_decline:${targetId}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
-  await ch.send({ content: `## 🪶 Tribe invitation\n<@${targetId}>, **${tribe.shortName || tribe.name}** wants you. Join?`, components: [row], allowedMentions: { users: [targetId] } }).catch(() => {});
+  const content = `## 🪶 Tribe invitation\n<@${targetId}>, **${tribe.shortName || tribe.name}** wants you. Join?`;
+  const member = await guild.members.fetch(targetId).catch(() => null);
+  const dmOk = member && await member.send({ content, components: [row] }).then(() => true).catch(() => false);
+  if (dmOk) return true;
+  const ch = await guild.channels.fetch(BOT_COMMANDS_CH).catch(() => null);
+  if (!ch) return false;
+  await ch.send({ content, components: [row], allowedMentions: { users: [targetId] } }).catch(() => {});
   return true;
 }
 // Build a whole tribe: gradient/solid role + leader role + private "land" category (throne/hall/voice),
@@ -3049,7 +3056,12 @@ client.on('interactionCreate', async (interaction) => {
     if (!nom || nom.status !== 'pending_accept') return interaction.update({ content: 'This invitation is no longer active.', components: [] }).catch(() => {});
     const tribe = tribes.get(nom.tribeKey);
     if (!tribe) { tribes.clearNomination(targetId); return interaction.update({ content: 'That tribe no longer exists.', components: [] }); }
-    if (tribes.memberTribe(interaction.member)) { tribes.clearNomination(targetId); return interaction.update({ content: 'You’re already in a tribe.', components: [] }); }
+    // These buttons can now arrive via DM (postAcceptPrompt DMs first, see 2026-08-03) — a DM interaction has
+    // no interaction.guild/interaction.member, so resolve both explicitly instead of assuming guild context.
+    const guild = interaction.guild || await client.guilds.fetch(config.guildId).catch(() => null);
+    const member = interaction.member || (guild && await guild.members.fetch(targetId).catch(() => null));
+    if (!guild || !member) return interaction.update({ content: 'Couldn’t look you up on the server. Try again from a server channel.', components: [] }).catch(() => {});
+    if (tribes.memberTribe(member)) { tribes.clearNomination(targetId); return interaction.update({ content: 'You’re already in a tribe.', components: [] }); }
     // Owner, 2026-08-03: nomination/invite acceptance also goes through the tribe's entrance gate (unlike
     // /tribe invite's own consent step, which stays gate-free — the leader already vouches for that person).
     const gate = tribes.getEntranceGate(tribe.key);
@@ -3060,7 +3072,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.update({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: prove yourself\n> ${gate.prompt}`, components: [row] });
     }
     await interaction.deferUpdate();
-    const r = await joinTribeSelfServe(interaction.guild, tribe, interaction.member, `Tribe invitation accepted, approved by ${nom.approvedBy}`);
+    const r = await joinTribeSelfServe(guild, tribe, member, `Tribe invitation accepted, approved by ${nom.approvedBy}`);
     tribes.clearNomination(targetId);
     return interaction.editReply({ content: r.ok ? `✅ Welcome to **${tribe.shortName || tribe.name}**, <@${targetId}>!` : 'Couldn’t add the tribe role. Tell an admin.', components: [], allowedMentions: { users: [targetId] } });
   }
@@ -3078,8 +3090,12 @@ client.on('interactionCreate', async (interaction) => {
         new ButtonBuilder().setCustomId(`tribenomgate:${targetId}:b`).setLabel(gate.optionB).setStyle(ButtonStyle.Primary));
       return interaction.update({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: prove yourself\n❌ Not quite. Try again:\n> ${gate.prompt}`, components: [row] });
     }
+    // Same DM-arrival caveat as tribenom_accept above.
+    const guild = interaction.guild || await client.guilds.fetch(config.guildId).catch(() => null);
+    const member = interaction.member || (guild && await guild.members.fetch(targetId).catch(() => null));
+    if (!guild || !member) return interaction.update({ content: 'Couldn’t look you up on the server. Try again from a server channel.', components: [] }).catch(() => {});
     await interaction.deferUpdate();
-    const r = await joinTribeSelfServe(interaction.guild, tribe, interaction.member, `Tribe invitation accepted, approved by ${nom.approvedBy}`);
+    const r = await joinTribeSelfServe(guild, tribe, member, `Tribe invitation accepted, approved by ${nom.approvedBy}`);
     tribes.clearNomination(targetId);
     return interaction.editReply({ content: r.ok ? `✅ Welcome to **${tribe.shortName || tribe.name}**, <@${targetId}>!` : 'Couldn’t add the tribe role. Tell an admin.', components: [], allowedMentions: { users: [targetId] } });
   }
