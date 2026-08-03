@@ -97,11 +97,34 @@ days later — added `tribes.createNomination/getNomination/updateNomination/cle
 Re-validates eligibility (not already in a tribe) at both approve-time and accept-time in case things changed
 while it was pending. This is IN ADDITION to the existing head-run `/tribe invite`, which stays a direct add.
 
-## 8. Rituals — still open, needs its own design pass
-"Muster roll-call" and "weekly challenge" are named as concepts (§2 faucets reference them) but not designed.
-Design when we get to this step: what a muster actually asks members to do, what a weekly challenge is (staff-set
-prompt? auto-generated? contest-adjacent?), and how participation is measured/paid out. Do this AFTER the
-economy + builder + nominate flow are live, since it's the smallest, most flexible piece.
+## 8. Rituals — DONE 2026-08-02, build order item #10, final Phase 5 item
+Designed and built in the same session (owner: "Let's do it" — no further back-and-forth needed, proposed the
+concrete design and built straight through).
+
+**Muster (roll-call).** `/tribe muster` (leader/staff, one active at a time, ~20h cooldown via
+`tribe.lastMusterAt` — `MUSTER_COOLDOWN_MS`) posts to the tribe's **hall** (not throne — hall is where members
+actually are and can act; buttons work there regardless of channel send-permissions) with a role ping and a
+"🪖 I'm here!" button. Any ACTUAL tribe member (`member.roles.cache.has(tribe.roleId)` checked at click-time)
+who clicks is counted once (`tribes.joinMuster`, de-duped). After a 2-hour window (`MUSTER_DURATION_MS`) an
+auto-sweep (`sweepExpiredMusters`, boot + every 5 minutes — tighter cadence than the hourly crown check since
+the window itself is only 2h) closes it: pays the tribe **+3 treasury and +3 glory PER participant** (naturally
+scales with real turnout, no artificial cap — a big muster is worth more), edits the original message to
+remove the button, and posts the final tally. State is per-tribe and persisted (`tribe.muster = {startedBy,
+startedAt, expiresAt, participants, channelId, messageId}`), survives a bot restart mid-muster.
+
+**Weekly challenge.** Staff-authored, NOT auto-generated (arbitrary goals — "win the voice call marathon",
+"most creative confession" — can't be auto-tracked, so staff judges completion by hand, matching how this bot
+already treats things like `/wordfilter` and `/weights` as staff-configured rather than automatic).
+`/tribe-admin challenge-set <text>` stores ONE server-wide challenge (`s.currentChallenge`, not per-tribe) and
+posts it to EVERY tribe's throne. `/tribe-admin challenge-complete <tribe>` marks that tribe done and pays the
+spec's exact **+200 treasury / +200 glory**, announced in that tribe's throne. **Not exclusive** — multiple
+tribes can complete the same challenge; a tribe just can't double-claim it (`ch.completedBy` tracks who has).
+The crown already covers the zero-sum "who's #1" competition, so the challenge doesn't need to duplicate that.
+`/tribe-admin challenge-clear` retires the current challenge without setting a new one.
+
+Throne guide (§12) updated a third time: mentions musters in the member section, `/tribe muster` in the
+head-only section. This closes the entire Phase 5 build order — every item from the original spec (economy,
+builder, nominate, shop, rituals) is now live.
 
 ## 9. Valith revamp (LOCKED to happen — MOVED TO BUILD ORDER #1, owner: "we should do it first")
 **Current-state audit (done 2026-08-02):** Valith was only ever adopted via `/tribe-admin register`, never
@@ -313,8 +336,19 @@ what's owned (`hasUnlock`/`addUnlock`/`removeUnlock`/`addStrongholdTier`).
 8. ~~Treasury / Glory meters + weekly crown cron + Offerings (§13)~~ — DONE 2026-08-02.
 9. ~~The land shop / `/tribe expand` + Stronghold Tier (§14)~~ — DONE 2026-08-02 (owner should click-through
    test it live once a tribe actually has treasury to spend).
-10. Rituals (§8) — design pass, then build. CURRENT NEXT STEP. Once built, wire ritual payouts + monthly
-    contest payouts to replace the `/tribe-admin grant` stopgap.
+10. ~~Rituals: muster + weekly challenge (§8)~~ — DONE 2026-08-02.
+
+## PHASE 5 BUILD ORDER COMPLETE (2026-08-02)
+Every item is live: economy (Treasury/Glory/weekly crown/Offerings), the guided tribe builder, nominate, the
+land shop + Stronghold Tier, and rituals. **Not yet done** — genuinely open items, not part of the build order:
+- Monthly server contests still pay out via the manual `/tribe-admin grant` stopgap, not automatically — there's
+  no code hook in the contest system for "pay the winner's tribe." Wire this if/when it becomes annoying to do
+  by hand, or leave it manual indefinitely, owner's call.
+- The launch announcement (see the dedicated section below) — genuinely worth writing now that the WHOLE
+  roadmap is live, not just a partial slice.
+- Click-through testing: the guided builder (§10), the shop (§14), and now musters/challenges have never been
+  exercised live by clicking real Discord buttons/modals — all reasoned through carefully and syntax/registration
+  verified, but this environment can't submit interactions. Worth a real test pass before leaning on them hard.
 
 ## Outstanding: launch announcement, revisited
 Still not written. Worth asking the owner if they want an announcement now — Valith has real land, tribes are

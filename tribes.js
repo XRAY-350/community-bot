@@ -223,6 +223,52 @@ function addStrongholdTier(key) {
   save(s); return t.strongholdTier;
 }
 
+// ---- Rituals (section 8): musters (member-participation roll-calls, per tribe) + a server-wide weekly
+// challenge (staff-authored, since arbitrary goals can't be auto-tracked; staff judges completion by hand). ----
+function startMuster(key, byId, durationMs) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null;
+  t.muster = { startedBy: byId, startedAt: Date.now(), expiresAt: Date.now() + durationMs, participants: [] };
+  t.lastMusterAt = Date.now();
+  save(s); return t.muster;
+}
+function getMuster(key) { return (get(key) || {}).muster || null; }
+function setMusterMessage(key, channelId, messageId) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !t.muster) return;
+  t.muster.channelId = channelId; t.muster.messageId = messageId; save(s);
+}
+function joinMuster(key, userId) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !t.muster) return false;
+  if (t.muster.participants.includes(userId)) return false;
+  t.muster.participants.push(userId); save(s); return true;
+}
+// Pays the tribe +3 treasury / +3 glory PER participant (uncapped, bounded naturally by real headcount),
+// clears the muster record. Returns the closed muster (with its final count + reward), or null if none active.
+function closeMuster(key) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !t.muster) return null;
+  const m = t.muster; const n = m.participants.length; const reward = n * 3;
+  t.treasury = (t.treasury || 0) + reward;
+  t.glory = (t.glory || 0) + reward;
+  delete t.muster;
+  save(s);
+  return { ...m, count: n, reward };
+}
+function setChallenge(text, byId) {
+  const s = load(); s.currentChallenge = { text, setBy: byId, setAt: Date.now(), completedBy: [] }; save(s); return s.currentChallenge;
+}
+function getChallenge() { return load().currentChallenge || null; }
+function clearChallenge() { const s = load(); delete s.currentChallenge; save(s); }
+// +200 treasury / +200 glory to a tribe for completing the CURRENT challenge. Not exclusive — multiple tribes
+// can complete the same challenge; a tribe just can't double-claim the same one twice.
+function completeChallengeForTribe(key) {
+  const s = load(); const ch = s.currentChallenge; const t = s.tribes && s.tribes[key];
+  if (!ch || !t) return false;
+  if (ch.completedBy.includes(key)) return false;
+  ch.completedBy.push(key);
+  t.treasury = (t.treasury || 0) + 200;
+  t.glory = (t.glory || 0) + 200;
+  save(s); return true;
+}
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
@@ -230,4 +276,6 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   createNomination, getNomination, updateNomination, clearNomination,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
-  hasUnlock, addUnlock, removeUnlock, addStrongholdTier };
+  hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
+  startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
+  setChallenge, getChallenge, clearChallenge, completeChallengeForTribe };

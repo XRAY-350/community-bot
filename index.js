@@ -151,8 +151,8 @@ function tribeThroneGuide(tribe) {
     content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
       + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
       + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks as you go: ${ranks}. Ranks only ever go up.\n`
-      + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n> \`/tribe offer <amount>\`: give up your OWN ${pts} to fill the tribe's treasury (1:1). Never demotes you, just slows your climb to your next rank.\n`
-      + `\n**${title} (or staff) only:**\n> \`/tribe invite\` \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n> \`/tribe expand\`: the land shop, spend treasury on unlocks once you hit their milestone. \`/tribe retheme\`: recolour, once unlocked.\n`
+      + `\n**Everyone in the tribe:**\n> \`/tribe info\` \`/tribe roster\` \`/tribe leaderboard\` \`/tribe list\`\n> \`/tribe nominate @user\`: propose someone to join. ${title} or staff approves, then THEY accept, nobody's added without saying yes.\n> \`/tribe offer <amount>\`: give up your OWN ${pts} to fill the tribe's treasury (1:1). Never demotes you, just slows your climb to your next rank.\n> When ${title} calls a **muster** in the hall, click the button to be counted, every answer earns the tribe treasury and glory.\n`
+      + `\n**${title} (or staff) only:**\n> \`/tribe invite\` \`/tribe banish\` \`/tribe announce\` \`/tribe note\` \`/tribe rank\` \`/tribe motto\`\n> \`/tribe expand\`: the land shop, spend treasury on unlocks once you hit their milestone. \`/tribe retheme\`: recolour, once unlocked.\n> \`/tribe muster\`: call a roll-call in the hall (once every ~20h). Every member who answers earns treasury and glory.\n`
       + `\n-# Once you join, you can't leave or switch on your own, a ${title} must \`/tribe banish\` you first. Your first tribe is a free pick, after that you need to be accepted.`,
     allowedMentions: { parse: [] },
   };
@@ -198,6 +198,26 @@ async function processWeeklyCrownIfDue(guild) {
     if (throne) await throne.send({ content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
 }
+// Closes any muster whose window has passed: pays out, edits the original call-to-arms message (disabling the
+// button) if it can still be found, and posts the final tally. Best-effort throughout — a missing channel or
+// deleted message never blocks the payout itself, which already happened in tribes.closeMuster.
+async function sweepExpiredMusters(guild) {
+  const now = Date.now();
+  for (const tribe of tribes.all()) {
+    const m = tribe.muster;
+    if (!m || m.expiresAt > now) continue;
+    const result = tribes.closeMuster(tribe.key);
+    if (!result) continue;
+    const chId = result.channelId || tribe.hallId;
+    const ch = chId ? await guild.channels.fetch(chId).catch(() => null) : null;
+    const summary = `🪖 Muster ended: **${result.count}** answered the call. **${tribe.shortName || tribe.name}** banks **+${result.reward}** treasury and **+${result.reward}** glory.`;
+    if (ch && result.messageId) {
+      const orig = await ch.messages.fetch(result.messageId).catch(() => null);
+      if (orig) await orig.edit({ components: [] }).catch(() => {});
+    }
+    if (ch) await ch.send({ content: summary, allowedMentions: { parse: [] } }).catch(() => {});
+  }
+}
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
 // a big one by recruiting. Costs/gates match the locked spec table exactly.
@@ -210,6 +230,8 @@ const TRIBE_UNLOCKS = [
   { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 120, crownGate: 25, cost: 2500 },
 ];
 const TRIBE_CHANNEL_CAP = 6;
+const MUSTER_DURATION_MS = 2 * 3600000;   // window to answer a muster
+const MUSTER_COOLDOWN_MS = 20 * 3600000;  // ~once a day, so it can't be spammed for glory/treasury
 function unlockGateMet(tribe, guild, u) {
   const memberCount = guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
   return memberCount >= u.memberGate || (tribe.crownsWon || 0) >= u.crownGate;
@@ -1148,6 +1170,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('offer').setDescription('Convert your OWN activity points into your tribe’s treasury (1:1, never demotes you)')
           .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
         .addSubcommand(s => s.setName('expand').setDescription('The land shop: spend treasury on unlocks (leaders only)'))
+        .addSubcommand(s => s.setName('muster').setDescription('Call a roll-call: members who answer earn the tribe treasury + glory (leaders only)'))
         .addSubcommand(s => s.setName('retheme').setDescription('Recolour your tribe (needs the Re-theme unlock; leaders only)')
           .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
           .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false)))
@@ -1186,11 +1209,16 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('rank2').setDescription('Second rank name').setRequired(true).setMaxLength(40))
           .addStringOption(o => o.setName('rank3').setDescription('Third rank name').setRequired(true).setMaxLength(40))
           .addStringOption(o => o.setName('rank4').setDescription('Highest rank name').setRequired(true).setMaxLength(40)))
-        .addSubcommand(s => s.setName('grant').setDescription('Manually award treasury or glory (stopgap until contests/rituals auto-wire)')
+        .addSubcommand(s => s.setName('grant').setDescription('Manually award treasury or glory (stopgap until contests auto-wire)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('meter').setDescription('Which meter').setRequired(true)
             .addChoices({ name: 'Treasury (permanent bank)', value: 'treasury' }, { name: 'Glory (this week, decides the crown)', value: 'glory' }))
           .addIntegerOption(o => o.setName('amount').setDescription('How much (negative to correct a mistake)').setRequired(true)))
+        .addSubcommand(s => s.setName('challenge-set').setDescription('Post a weekly challenge to every tribe’s throne (+200 treasury/glory per tribe that completes it)')
+          .addStringOption(o => o.setName('text').setDescription('The challenge').setRequired(true).setMaxLength(300)))
+        .addSubcommand(s => s.setName('challenge-complete').setDescription('Mark a tribe as having completed the current challenge')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('challenge-clear').setDescription('Clear the current weekly challenge without setting a new one'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // visible to the ADMINS-★ role; handler gates on canWLAdmin
 
       new SlashCommandBuilder().setName('strike').setDescription('Manage a member’s strikes: weighted units, bans at 10')
@@ -1378,6 +1406,9 @@ client.once('ready', async () => {
   // Weekly tribe crown: boot catch-up + hourly check (idempotent — see tribes.dueForWeeklyCrown).
   if (dguild) await processWeeklyCrownIfDue(dguild).catch(e => console.error(`[tribe crown] boot check: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => processWeeklyCrownIfDue(g)).catch(() => {}), 3600000);
+  // Muster auto-close: boot catch-up + every 5min (a muster's 2h window makes a tighter cadence worth it).
+  if (dguild) await sweepExpiredMusters(dguild).catch(e => console.error(`[tribe muster] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {
@@ -2867,6 +2898,18 @@ client.on('interactionCreate', async (interaction) => {
     await teardownTribeUnlock(interaction.guild, tribe, unlockKey);
     return interaction.editReply(tribeShopView(tribes.get(tribe.key), interaction.guild));
   }
+  // ---- Rituals: muster roll-call join button ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribemuster_join:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re not in **${tribe.shortName || tribe.name}**, this muster isn’t yours to answer.`, flags: MessageFlags.Ephemeral });
+    const muster = tribes.getMuster(tribeKey);
+    if (!muster) return interaction.reply({ content: 'This muster already ended.', flags: MessageFlags.Ephemeral });
+    const joined = tribes.joinMuster(tribeKey, interaction.user.id);
+    const count = tribes.getMuster(tribeKey)?.participants.length ?? muster.participants.length;
+    return interaction.reply({ content: joined ? `🪖 You're counted! **${count}** have answered so far.` : `You're already counted (**${count}** so far).`, flags: MessageFlags.Ephemeral });
+  }
   // Public member hub (from /dashboard and the pinned panel). Action buttons DO the thing: open a modal
   // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.
   if (interaction.isButton?.() && interaction.customId.startsWith('pub')) {
@@ -3822,6 +3865,26 @@ client.on('interactionCreate', async (interaction) => {
       tribes.update(tribe.key, { color });
       return interaction.reply(`🎨 **${tribe.shortName || tribe.name}** has been recoloured.`);
     }
+    if (sub === 'muster') {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can call a muster.`, flags: MessageFlags.Ephemeral });
+      if (tribes.getMuster(tribe.key)) return interaction.reply({ content: 'A muster is already running for this tribe.', flags: MessageFlags.Ephemeral });
+      if (tribe.lastMusterAt && Date.now() - tribe.lastMusterAt < MUSTER_COOLDOWN_MS) {
+        const nextAt = Math.floor((tribe.lastMusterAt + MUSTER_COOLDOWN_MS) / 1000);
+        return interaction.reply({ content: `This tribe already mustered recently. Next one can go out <t:${nextAt}:R>.`, flags: MessageFlags.Ephemeral });
+      }
+      if (!tribe.hallId) return interaction.reply({ content: 'This tribe has no hall to muster in.', flags: MessageFlags.Ephemeral });
+      const hall = await interaction.guild.channels.fetch(tribe.hallId).catch(() => null);
+      if (!hall) return interaction.reply({ content: 'Couldn’t find the hall channel.', flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      tribes.startMuster(tribe.key, interaction.user.id, MUSTER_DURATION_MS);
+      const endsAt = Math.floor((Date.now() + MUSTER_DURATION_MS) / 1000);
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribemuster_join:${tribe.key}`).setLabel('🪖 I’m here!').setStyle(ButtonStyle.Success));
+      const msg = await hall.send({ content: `## 🪖 Muster called!\n<@&${tribe.roleId}>\n> Called by <@${interaction.user.id}>. Click below to be counted, ends <t:${endsAt}:R>. Every member who answers earns the tribe treasury and glory.`, components: [row], allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(() => null);
+      if (!msg) return interaction.editReply('Couldn’t post to the hall.');
+      tribes.setMusterMessage(tribe.key, hall.id, msg.id);
+      return interaction.editReply(`🪖 Muster called in <#${hall.id}>. Ends <t:${endsAt}:R>.`);
+    }
     // ---- Warden's tools: leaders of THIS tribe (or staff) ----
     if (wardenSub) {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
@@ -3936,6 +3999,35 @@ client.on('interactionCreate', async (interaction) => {
       const amount = interaction.options.getInteger('amount');
       const newVal = meter === 'treasury' ? tribes.addTreasury(t.key, amount) : tribes.addGlory(t.key, amount);
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** ${meter} ${amount >= 0 ? '+' : ''}${amount} → now **${newVal}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'challenge-set') {
+      const text = interaction.options.getString('text').slice(0, 300);
+      tribes.setChallenge(text, interaction.user.id);
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      let posted = 0;
+      for (const t of tribes.all()) {
+        if (!t.throneId) continue;
+        const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null);
+        if (!throne) continue;
+        await throne.send({ content: `## 🗺️ This week's challenge\n> ${text}\n-# Completing it earns **+200 treasury and +200 glory**. Staff judges when it's done.`, allowedMentions: { parse: [] } }).catch(() => {});
+        posted++;
+      }
+      return interaction.editReply(`🗺️ Challenge set and posted to **${posted}** tribe throne${posted === 1 ? '' : 's'}:\n> ${text}`);
+    }
+    if (sub === 'challenge-complete') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Try `/tribe list`.', flags: MessageFlags.Ephemeral });
+      const ch = tribes.getChallenge();
+      if (!ch) return interaction.reply({ content: 'There’s no active challenge to complete.', flags: MessageFlags.Ephemeral });
+      const ok = tribes.completeChallengeForTribe(t.key);
+      if (!ok) return interaction.reply({ content: `**${t.shortName || t.name}** already completed this challenge.`, flags: MessageFlags.Ephemeral });
+      if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throne.send({ content: `## 🏆 Challenge complete!\n> ${ch.text}\n-# +200 treasury, +200 glory banked. Now **${tribes.getTreasury(t.key)}** treasury.`, allowedMentions: { parse: [] } }).catch(() => {}); }
+      return interaction.reply({ content: `✅ **${t.shortName || t.name}** marked complete, +200 treasury/+200 glory awarded.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'challenge-clear') {
+      if (!tribes.getChallenge()) return interaction.reply({ content: 'There’s no active challenge.', flags: MessageFlags.Ephemeral });
+      tribes.clearChallenge();
+      return interaction.reply({ content: '🗺️ Challenge cleared.', flags: MessageFlags.Ephemeral });
     }
   }
   if (name === 'roleselect-role') {
