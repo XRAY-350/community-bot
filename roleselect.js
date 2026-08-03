@@ -13,6 +13,7 @@ const fs = require('fs');
 const copy = require('./copy');
 const path = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
+const { ensureMembers } = require('./memberCache');
 
 const DIVIDER_IMAGE = path.join(__dirname, 'assets', 'roles_divider.png');
 const STATE_FILE = process.env.FUBU_ROLESELECT_FILE || '/home/ubuntu/.fubu_roleselect.json';
@@ -176,7 +177,7 @@ function buildBlocks(guild) {
 async function appendTribeBlock(guild, channelId) {
   const ch = await guild.channels.fetch(channelId).catch(() => null);
   if (!ch) return { ok: false, error: 'roles channel not found' };
-  await guild.members.fetch().catch(() => {});   // role.members only reflects the cache
+  await ensureMembers(guild);   // role.members only reflects the cache
   const block = tribeBlock(guild);
   if (!block) return { ok: false, error: 'no tribes registered' };
   const st = _load();
@@ -215,7 +216,7 @@ async function sweepDeadRoles(guild, channelId) {
 async function refreshTribeBlock(guild, channelId) {
   const ch = await guild.channels.fetch(channelId).catch(() => null);
   if (!ch) return { ok: false, error: 'roles channel not found' };
-  await guild.members.fetch().catch(() => {});   // role.members only reflects the cache
+  await ensureMembers(guild);   // role.members only reflects the cache
   const block = tribeBlock(guild);
   if (!block) return { ok: false, error: 'no tribes registered' };
   const existing = await ch.messages.fetch({ limit: 50 }).catch(() => null);
@@ -237,7 +238,7 @@ async function rebuild(guild, channelId) {
   const old = await ch.messages.fetch({ limit: 100 });
   for (const m of old.values()) { await m.delete().catch(() => {}); await new Promise(r => setTimeout(r, 350)); }
 
-  await guild.members.fetch().catch(() => {});   // role.members only reflects the cache
+  await ensureMembers(guild);   // role.members only reflects the cache
   const posted = [];
   for (const block of buildBlocks(guild)) {
     const m = await ch.send(block);
@@ -264,7 +265,7 @@ async function rebuildFromIndex(guild, channelId, fromIndex) {
     await new Promise(r => setTimeout(r, 350));
   }
 
-  await guild.members.fetch().catch(() => {});   // role.members only reflects the cache
+  await ensureMembers(guild);   // role.members only reflects the cache
   const blocks = buildBlocks(guild);
   const newIds = ids.slice(0, fromIndex);
   for (let i = fromIndex; i < blocks.length; i++) {

@@ -15,6 +15,7 @@ const reactresolve = require('./reactresolve');
 const corner = require('./corner');
 const { buildVerifyPanel, handleVerifyButton, isVerifyButton } = require('./verifypanel');
 const { activeThreads } = require('./threads');
+const { ensureMembers } = require('./memberCache');
 const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
 const wordfilter = require('./wordfilter');
@@ -86,7 +87,7 @@ async function findFounderPersonalRole(guild, member) {
   // role.members.size only reflects the CACHED member list — a cold cache could undercount a role's real
   // holders and wrongly call something "personal" that other people also have. Force a full fetch first;
   // this only runs at tribe-founding time (rare), so the cost is worth the correctness guarantee.
-  await guild.members.fetch().catch(() => {});
+  await ensureMembers(guild);
   const excluded = systemicRoleIds(guild);
   const candidates = [...member.roles.cache.values()].filter(r =>
     !excluded.has(r.id) && !r.managed && !r.tags?.premiumSubscriberRole && r.members.size === 1);
@@ -538,7 +539,7 @@ async function ensureCrownRole(guild) {
 async function processWeeklyCrownIfDue(guild) {
   if (!guild || !tribes.dueForWeeklyCrown(Date.now())) return;
   tribes.markWeeklyCrownDone(Date.now());   // mark BEFORE doing the work so an overlapping tick can't double-fire
-  await guild.members.fetch().catch(() => {});
+  await ensureMembers(guild);
   const result = tribes.resetWeeklyGlory(guild);
   const crownRole = await ensureCrownRole(guild);
   if (crownRole) for (const m of [...crownRole.members.values()]) await m.roles.remove(crownRole.id, 'Weekly crown reset').catch(() => {});
@@ -556,7 +557,7 @@ async function processWeeklyCrownIfDue(guild) {
 // mod/admin AFTER already being in a tribe, or demoted/banished afterward. Iterates every tribe's current
 // role-holders — needs the full member cache, so fetches it once up front rather than per-tribe.
 async function sweepStaffRanks(guild) {
-  await guild.members.fetch().catch(() => {});
+  await ensureMembers(guild);
   for (const tribe of tribes.all()) {
     if (!tribe.staffRankRoleId) continue;
     const role = guild.roles.cache.get(tribe.roleId);
@@ -1853,7 +1854,7 @@ client.once('ready', async () => {
     const resynced = await strikes.resyncTierRoles(guild, state);
     console.log(`[strikes] per-unit role resync: ${resynced} member(s) updated`);
     // Tier auto-nest sweep: owner⊇admin⊇mod, strip Trial Mod from mod+. Idempotent.
-    await guild.members.fetch().catch(() => {});
+    await ensureMembers(guild);
     let nested = 0;
     for (const m of guild.members.cache.values()) if (await enforceTierNesting(m)) nested++;
     console.log(`[tier-nest] boot sweep: ${nested} staff member(s) nested`);
@@ -1946,7 +1947,7 @@ client.once('ready', async () => {
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {
-    await dguild.members.fetch().catch(() => {});
+    await ensureMembers(dguild);
     for (const m of dguild.members.cache.values()) await enforceAgeExclusivity(m).catch(() => {});
     const seeded = await sweepRegistrationLocks(dguild).catch(e => { console.error(`[registration-lock] boot sweep: ${e.message}`); return 0; });
     console.log(`[registration-lock] boot sweep: ${seeded} member(s) grandfathered in`);
@@ -1954,7 +1955,7 @@ client.once('ready', async () => {
   setInterval(async () => {
     const g = await client.guilds.fetch(config.guildId).catch(() => null);
     if (!g) return;
-    await g.members.fetch().catch(() => {});
+    await ensureMembers(g);
     for (const m of g.members.cache.values()) await enforceAgeExclusivity(m).catch(() => {});
   }, 3600000);
 });
@@ -2017,7 +2018,7 @@ async function enforceMdni(member, { notify = true } = {}) {
 // Posts ONE summary of any minors stripped (vs. real-time enforcement's per-member notice) to avoid flooding.
 async function sweepMdni(guild) {
   if (!config.mdniEnforce || !config.mdniRoleId) return;
-  await guild.members.fetch().catch(() => {});   // role.members only reflects the cache
+  await ensureMembers(guild);   // role.members only reflects the cache
   const role = guild.roles.cache.get(config.mdniRoleId) || await guild.roles.fetch(config.mdniRoleId).catch(() => null);
   if (!role) return;
   const stripped = [];
@@ -2070,7 +2071,7 @@ async function enforceMdniStaffLock(member, { bless = true } = {}) {
 // holder is no longer a minor-staff). Re-snapshots MDNI once at the end so permguard treats the result as golden.
 async function sweepMdniStaffLock(guild) {
   if (!config.mdniChannelId || !config.minorAgeRoleId) return 0;
-  await guild.members.fetch().catch(() => {});
+  await ensureMembers(guild);
   const ch = guild.channels.cache.get(config.mdniChannelId) || await guild.channels.fetch(config.mdniChannelId).catch(() => null);
   if (!ch) return 0;
   const VIEW = PermissionsBitField.Flags.ViewChannel;
@@ -2185,7 +2186,7 @@ async function enforceRegistrationLock(member, notify = true) {
 // CURRENT state becomes their locked baseline — doesn't retroactively punish existing members).
 async function sweepRegistrationLocks(guild) {
   if (!config.verifiedRoleId) return 0;
-  await guild.members.fetch().catch(() => {});
+  await ensureMembers(guild);
   const role = guild.roles.cache.get(config.verifiedRoleId) || await guild.roles.fetch(config.verifiedRoleId).catch(() => null);
   if (!role) return 0;
   const locks = state.getMeta('registrationLock') || {};
@@ -3786,9 +3787,10 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     const text = interaction.fields.getTextInputValue('text');
     tribes.setMotto(tribe.key, text);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
     await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
-    return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    return interaction.editReply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
   }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_note_modal:')) {
     const [, tribeKey, targetId] = interaction.customId.split(':');
@@ -4201,7 +4203,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       fetched += batch.size; before = batch.last().id; if (batch.size < 100) break;
     }
-    await interaction.guild.members.fetch().catch(() => {});
+    await ensureMembers(interaction.guild);
     const missing = []; let fixed = 0, fixErr = 0;
     for (const [uid, lvl] of level) {
       const m = interaction.guild.members.cache.get(uid); if (!m || m.user.bot) continue;
@@ -4712,8 +4714,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'staff') {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can view the census.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const members = await interaction.guild.members.fetch().catch(() => null);
-    if (!members) return interaction.editReply('Couldn’t load the member list. Try again.').catch(() => {});
+    const members = await ensureMembers(interaction.guild);
     const trialId = modapps.loadConfig().trialModRoleId;
     // Counted by HIGHEST tier so nobody is double-counted (higher tiers absorb the lower). memberTier
     // returns owner→admin→mod (the bot's canonical tier); Trial Mod is only counted for people below mod.
@@ -4824,9 +4825,10 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its motto.`, flags: MessageFlags.Ephemeral });
       const text = interaction.options.getString('text');
       tribes.setMotto(tribe.key, text);
+      await interaction.deferReply();
       if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});   // the picker shows each tribe's motto — keep it in sync
       await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
-      return interaction.reply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
+      return interaction.editReply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
     }
     if (sub === 'nominate') {   // ANY member can propose; goes to the throne for approval, then the nominee accepts
       const target = interaction.options.getMember('user');

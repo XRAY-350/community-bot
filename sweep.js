@@ -15,6 +15,7 @@
 
 const config = require('./config');
 const { activeThreads, archivedThreads, allThreads, lastActivity, deleteThread, kickMember } = require('./threads');
+const { ensureMembers } = require('./memberCache');
 const digest = require('./digest');
 const reactresolve = require('./reactresolve');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
@@ -63,13 +64,7 @@ async function sweep(client, state, ctx) {
 
   // One bulk fetch — far cheaper on rate limits than per-thread member lookups, and it drives
   // every pass below. Needs the (privileged) GuildMembers intent.
-  let members;
-  try {
-    members = await guild.members.fetch();
-  } catch (err) {
-    console.error(`[sweep] members.fetch failed: ${err.message}`);
-    return;
-  }
+  const members = await ensureMembers(guild);
 
   // Fetch BOTH open and archived threads — archived (closed-but-not-deleted) threads must be
   // cleaned up too. `active` is used for nudges (only open threads make sense to nudge); `all`

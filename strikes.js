@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const config = require('./config');
 const rules = require('./rules');
+const { ensureMembers } = require('./memberCache');
 
 const BAN_THRESHOLD = 10;
 // A timeout adds bonus units LINEAR with its length (1h = 1 unit, 30m = 0.5), capped at 2 units so a
@@ -159,7 +160,7 @@ async function clearStrikes(guild, member, state, byTag) {
 async function migrateLegacyStrikes(guild, state) {
   const ids = (config.strikeRoleIds || []).filter(Boolean);
   if (!ids.length) return 0;
-  await guild.members.fetch().catch(() => {}); // ensure role.members is populated below
+  await ensureMembers(guild); // ensure role.members is populated below
   const all = state.getMeta('strikes') || {};
   let seeded = 0;
   for (let i = ids.length - 1; i >= 0; i--) {

@@ -8,6 +8,7 @@
 const fs = require('fs');
 const { EmbedBuilder } = require('discord.js');
 const config = require('./config');
+const { ensureMembers } = require('./memberCache');
 
 const STATE_FILE = process.env.FUBU_FRESHWATCH_STATE || '/home/ubuntu/.fubu_freshwatch.json';
 const DAY = 86400000, HOUR = 3600000;
@@ -31,7 +32,7 @@ function agoText(ms) {
 // on any error the previous cache stands (and auto simply produces no note until a good sample lands).
 async function recompute(guild) {
   try {
-    const members = await guild.members.fetch();
+    const members = await ensureMembers(guild);
     const now = Date.now();
     const joins = [...members.values()].map(m => m.joinedTimestamp).filter(Boolean).sort((a, b) => b - a); // newest first
     const n = joins.length;

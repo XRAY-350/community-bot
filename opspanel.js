@@ -8,6 +8,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelect
   UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
+const { ensureMembers } = require('./memberCache');
 
 const PANEL_FILE = process.env.FUBU_OPS_PANEL_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_ops_panel.json`;
 // Separate pinned message: a static staff command reference (the "what every command does" list that used
@@ -410,7 +411,7 @@ function termModal(customId, title) {
 // the dashboard entry to the same promote.start vote flow as /promote-trial and /promote-mod.
 async function buildPromotions() {
   const guild = D.client.guilds.cache.get(D.config.guildId) || D.client.guilds.cache.first();
-  await guild.members.fetch().catch(() => {});
+  await ensureMembers(guild);
   const trialRole = D.config.trialModRoleId && guild.roles.cache.get(D.config.trialModRoleId);
   const modRole = D.config.modRoleId && guild.roles.cache.get(D.config.modRoleId);
   const trials = trialRole ? [...trialRole.members.values()] : [];
@@ -930,7 +931,7 @@ async function handlePanel(interaction) {
     if (id === 'fops_conflicts_scan') {
       const unv = D.config.unverifiedRoleId, ver = D.config.verifiedRoleId;
       if (!unv) return interaction.editReply('No unverified role configured, nothing to check.');
-      const members = await interaction.guild.members.fetch();
+      const members = await ensureMembers(interaction.guild);
       const dual = [...members.filter(m => m.roles.cache.has(ver) && m.roles.cache.has(unv)).values()];
       if (!dual.length) return interaction.editReply('✅ No role conflicts.');
       const rows = [];
