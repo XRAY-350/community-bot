@@ -236,7 +236,10 @@ async function applyRetheme(guild, tribe, { color, color2, name, shortName }) {
   const role = guild.roles.cache.get(tribe.roleId);
   if (!role) return { ok: false, content: 'Couldn’t find the tribe role.' };
   const colors = color2 ? { primaryColor: color, secondaryColor: color2 } : { primaryColor: color };
-  for (const r of [role, tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId), tribe.staffRankRoleId && guild.roles.cache.get(tribe.staffRankRoleId)]) {
+  // Recolour the tribe role, leader role, General, AND every rank role, so a retheme keeps the whole set
+  // matched (owner, 2026-08-04: "all ranks themed to match" the tribe).
+  const rankRoleObjs = (tribe.ranks || []).map(x => guild.roles.cache.get(x.roleId)).filter(Boolean);
+  for (const r of [role, tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId), tribe.staffRankRoleId && guild.roles.cache.get(tribe.staffRankRoleId), ...rankRoleObjs]) {
     if (!r) continue;
     try { await r.edit({ colors, ...(name && r.id === role.id ? { name } : {}) }); }
     catch { await r.edit({ color, ...(name && r.id === role.id ? { name } : {}) }); }
@@ -326,8 +329,8 @@ async function buildTribe(guild, opts, config) {
   if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
   // "General" — any staff (mod/admin) who joins as a regular member sits above the whole rank ladder
   // automatically (owner, 2026-08-03). Sits just below the leader role in the hierarchy.
-  const staffRankRole = await guild.roles.create({ name: `${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
-    .catch(() => guild.roles.create({ name: `${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
+  const staffRankRole = await guild.roles.create({ name: `${emoji} ${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
+    .catch(() => guild.roles.create({ name: `${emoji} ${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
   if (staffRankRole && slotLeaderPos != null) await staffRankRole.setPosition(slotLeaderPos).catch(() => {});
   const corner = config.cornerRoleId;
   const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
@@ -364,9 +367,12 @@ async function buildTribe(guild, opts, config) {
   // Valith's rank roles already look. NOTE: this was previously MISSING entirely — buildTribe() registered a
   // tribe with no `ranks` array, so /tribe rank + auto-promotion silently did nothing for any tribe built
   // through this path (found via Kayena's Cute Crabs, the first tribe actually built end to end this way).
+  const rankColors = opts.color2 ? { primaryColor: opts.color, secondaryColor: opts.color2 } : { primaryColor: opts.color };
   const rankRoles = [];
   for (const r of tribes.RANK_LADDER) {
-    const rr = await guild.roles.create({ name: `${emoji} ${r.name}`, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` }).catch(() => null);
+    // Rank roles carry the tribe's colour + emoji (owner, 2026-08-04: "all ranks themed to match" the tribe).
+    const rr = await guild.roles.create({ name: `${emoji} ${r.name}`, colors: rankColors, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` })
+      .catch(() => guild.roles.create({ name: `${emoji} ${r.name}`, color: opts.color, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` }).catch(() => null));
     if (rr) await rr.setPosition(1).catch(() => {});
     rankRoles.push({ ...r, roleId: rr ? rr.id : null });
   }
