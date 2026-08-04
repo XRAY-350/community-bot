@@ -583,6 +583,22 @@ function countModLeaders(guild, tribe) {
   const leaders = [...role.members.values()].filter(m => ['mod', 'admin', 'owner'].includes(opspanel.memberTier(m)));
   return { count: leaders.length, leaders };
 }
+// Keep each tribe's rank ladder ordered (owner, 2026-08-04: ranks climb ascending, rank4 + General above the
+// member role). Permutes ONLY the tribe's own 6 roles (rank1-4, member, General) among the position-slots
+// they already occupy, into the order rank1<rank2<rank3<member<rank4<General — so no other server role ever
+// moves, and it's a no-op when already correct. This is the maintenance guard against a leader dragging a
+// rank role to the wrong side of the member role; the initial even "sprinkle" spacing was done once out-of-band.
+async function enforceRankOrder(guild, tribe) {
+  const ranks = (tribe.ranks || []).map(r => guild.roles.cache.get(r.roleId)).filter(Boolean);
+  const member = guild.roles.cache.get(tribe.roleId);
+  const general = tribe.staffRankRoleId && guild.roles.cache.get(tribe.staffRankRoleId);
+  if (!member || ranks.length < 4 || !general) return false;
+  const ordered = [ranks[0], ranks[1], ranks[2], member, ranks[3], general];   // ascending (bottom->top)
+  const slots = ordered.map(r => r.position).sort((a, b) => a - b);
+  if (ordered.every((r, i) => r.position === slots[i])) return false;           // already correct
+  await guild.roles.setPositions(ordered.map((r, i) => ({ role: r.id, position: slots[i] }))).catch(e => console.error(`[rank-order] ${tribe.key}:`, e.message));
+  return true;
+}
 // A tribe leader must be a mod or admin (owner, 2026-08-04: "take the leader away if the person is no longer
 // a mod or admin"). Strip the leader role from any holder who's lost their staff tier — applies to EVERY
 // tribe. The guild/bot owner reads as 'owner' tier, so they're never stripped. Returns who was stripped.
@@ -615,6 +631,8 @@ async function sweepLeaderRequirement(guild) {
     // the grace-entry branch below instead — which also catches a leader who keeps the role but loses mod, so
     // holder-count alone would miss it (and using both would double-grant). First observation just seeds the
     // count (no grant), so an existing tribe isn't handed one on boot.
+    // Keep the rank ladder ordered (rank1<rank2<rank3<member<rank4<General) — no-op unless a leader scrambled it.
+    if (await enforceRankOrder(guild, tribe)) console.log(`[rank-order] re-sorted ${tribe.key}`);
     // A leader who's no longer a mod/admin loses the leader role first (the shortfall/free-retheme logic below
     // then sees the corrected roster). Applies to every tribe.
     const demoted = await stripNonStaffLeaders(guild, tribe);
