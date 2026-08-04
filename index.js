@@ -4170,7 +4170,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'appeal-reset') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can reset a ban appeal.', flags: MessageFlags.Ephemeral });
-    const r = appeals.reset(interaction.options.getString('user'));
+    const r = await appeals.reset(interaction.options.getString('user'));
     if (!r.ok) return interaction.reply({ content: `❌ ${r.msg}`, flags: MessageFlags.Ephemeral });
     await ownerlog.log(interaction.guild, { emoji: '♻️', title: 'Ban appeal reset', color: 0x5865F2,
       detail: `**${r.bannedTag}**’s previously **${r.status}** appeal was cleared by <@${interaction.user.id}> — they can be appealed again. (Archived, not deleted.)` }).catch(() => {});

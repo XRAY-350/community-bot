@@ -9,6 +9,8 @@ const config = require('./config');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
 const threads = require('./threads');
+const { withLock } = require('./mutex');
+const LOCK_KEY = 'appeals';
 
 const CONFIG_FILE = process.env.FUBU_APPEALS_FILE || '/home/ubuntu/.fubu_appeals.json';
 const STATE_FILE = process.env.FUBU_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_appeals_state.json';
@@ -91,7 +93,8 @@ async function findBan(guild, username) {
   return bans.find(b => b.user.username.toLowerCase() === q) || bans.find(b => (b.user.tag || '').toLowerCase() === q) || null;
 }
 
-async function submit(guild, member, username, note) {
+async function submit(guild, member, username, note) { return withLock(LOCK_KEY, () => _submit(guild, member, username, note)); }
+async function _submit(guild, member, username, note) {
   const c = loadConfig();
   if (!c.channelId) return { ok: false, msg: 'Ban appeals aren’t set up yet. An admin needs to run `/appeal-setup`.' };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
@@ -171,7 +174,8 @@ async function vote(interaction, dir) {
 }
 
 // staff Approve/Deny — gated to owner+ in index.js (vote is admins+, see vote() above)
-async function handleButton(interaction) {
+async function handleButton(interaction) { return withLock(LOCK_KEY, () => _handleButton(interaction)); }
+async function _handleButton(interaction) {
   if (interaction.customId === 'appeal_vote_up') return vote(interaction, 'up');
   if (interaction.customId === 'appeal_vote_down') return vote(interaction, 'down');
   const state = loadState();
@@ -236,7 +240,8 @@ async function notifyNew(guild, ban, threadId) {
 // Admin reset: clear a DECIDED (denied/approved) appeal record so the person can be appealed again —
 // for when a denial was premature, or an approved person got re-banned. Archives the old record (keeps
 // any stored transcript) instead of hard-deleting, so history survives. id = bannedId or @username.
-function reset(identifier) {
+function reset(identifier) { return withLock(LOCK_KEY, () => _reset(identifier)); }
+function _reset(identifier) {
   const id = String(identifier || '').trim().replace(/^@/, '');
   if (!id) return { ok: false, msg: 'Give the banned person’s @username or user ID.' };
   const state = loadState();

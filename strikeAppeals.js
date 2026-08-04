@@ -9,6 +9,8 @@ const strikes = require('./strikes');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
 const threads = require('./threads');
+const { withLock } = require('./mutex');
+const LOCK_KEY = 'strikeAppeals';
 
 const CONFIG_FILE = process.env.FUBU_STRIKE_APPEALS_FILE || '/home/ubuntu/.fubu_strike_appeals.json';
 const STATE_FILE = process.env.FUBU_STRIKE_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_strike_appeals_state.json';
@@ -81,7 +83,8 @@ function appealEmbed(rec, resolution, byId) {
 }
 
 // Submit a new strike appeal. `state` is the bot's shared State instance (needed to read the ledger).
-async function submit(guild, member, state, strikeId, note) {
+async function submit(guild, member, state, strikeId, note) { return withLock(LOCK_KEY, () => _submit(guild, member, state, strikeId, note)); }
+async function _submit(guild, member, state, strikeId, note) {
   const c = loadConfig();
   if (!c.channelId) return { ok: false, msg: 'Strike appeals aren’t set up yet. An admin needs to run `/appeal-strike-setup`.' };
   const entry = strikes.ledger(state, member.id).find(e => e.id === strikeId);
@@ -140,7 +143,8 @@ async function vote(interaction, dir) {
 
 // staff Approve/Deny — gated to admins+ in index.js (vote is mods+, see vote() above). Needs `state` to
 // actually remove the strike.
-async function handleButton(interaction, state) {
+async function handleButton(interaction, state) { return withLock(LOCK_KEY, () => _handleButton(interaction, state)); }
+async function _handleButton(interaction, state) {
   if (interaction.customId === 'strikeappeal_vote_up') return vote(interaction, 'up');
   if (interaction.customId === 'strikeappeal_vote_down') return vote(interaction, 'down');
   const guild = interaction.guild;
