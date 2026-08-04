@@ -944,7 +944,13 @@ function clearArenaTimers() { for (const k of ['end', 'round']) if (_arenaTimers
 async function arenaChannel(guild) { const a = arena.get(); if (!a) return null; return guild.channels.fetch(a.channelId).catch(() => null); }
 function tribeName(key) { const t = tribes.get(key); return t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : key; }
 
-async function startArena(guild, channel, type, minutes, startedById) {
+async function startArena(guild, type, minutes, startedById) {
+  // Everything runs in the tribe-announcements channel (owner: keep the hub clean; announce it there). Race/
+  // trivia use buttons (fine in a read-only channel); scramble needs typing, so we temporarily let @everyone
+  // send during it and re-lock at the end (see endArena).
+  const channel = await ensureTribeAnnounce(guild, config);
+  if (!channel) throw new Error('no tribe-announcements channel');
+  if (type === 'scramble') await channel.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'arena scramble: allow answers' }).catch(() => {});
   const endsAt = Date.now() + minutes * 60000;
   const base = { type, channelId: channel.id, startedBy: startedById, startedAt: Date.now(), endsAt, scores: {}, participants: [] };
   if (type === 'race') {
@@ -1015,6 +1021,8 @@ async function endArena(guild) {
     const pm = tch && await tch.messages.fetch(p.messageId).catch(() => null);
     if (pm) await pm.delete().catch(() => {});
   }
+  // Re-lock the announcements channel if a scramble had opened it for typing.
+  if (a.type === 'scramble' && ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'arena scramble over: re-lock' }).catch(() => {});
   let resultText;
   if (win) {
     tribes.addTreasury(win.key, arena.WIN_TREASURY);
@@ -1024,12 +1032,10 @@ async function endArena(guild) {
   } else {
     resultText = `# 🏁 ${label} over\nNo tribe scored — no reward this time.`;
   }
-  if (ch) await ch.send({ content: resultText, allowedMentions: { parse: [] } }).catch(() => {});   // in the channel it was played
-  // Also announce the result in the tribe-announcements channel, pinging every tribe.
-  const announce = await ensureTribeAnnounce(guild, config).catch(() => null);
-  if (announce) {
+  // Result in the tribe-announcements channel (where it ran), pinging every tribe.
+  if (ch) {
     const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
-    await announce.send({ content: `${resultText}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
+    await ch.send({ content: `${resultText}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
   }
   arena.recordEnd();   // stamp end for the cooldown + daily cap
   arena.clear();
@@ -3952,8 +3958,9 @@ client.on('interactionCreate', async (interaction) => {
     { const blocked = arena.startBlocked(); if (blocked) return interaction.update({ content: blocked, components: [] }).catch(() => {}); }
     const type = interaction.values[0];
     const minutes = ARENA_DEFAULTS[type] || 5;
-    await interaction.update({ content: `🎪 Launching **${type}** for **${minutes} min** in this channel…`, components: [] }).catch(() => {});
-    try { await startArena(interaction.guild, interaction.channel, type, minutes, interaction.user.id); }
+    const announceCh = await ensureTribeAnnounce(interaction.guild, config).catch(() => null);
+    await interaction.update({ content: `🎪 Launching **${ARENA_LABEL[type] || type}** for **${minutes} min** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'}…`, components: [] }).catch(() => {});
+    try { await startArena(interaction.guild, type, minutes, interaction.user.id); }
     catch (e) { console.error('[arena] hub start:', e.message); await interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
     return;
   }
@@ -5617,8 +5624,9 @@ client.on('interactionCreate', async (interaction) => {
       { const blocked = arena.startBlocked(); if (blocked) return interaction.reply({ content: blocked, flags: MessageFlags.Ephemeral }); }
       const type = interaction.options.getString('type');
       const minutes = interaction.options.getInteger('minutes') || ARENA_DEFAULTS[type] || 5;
-      await interaction.reply({ content: `🎪 Launching **${type}** for **${minutes} min** in this channel…`, flags: MessageFlags.Ephemeral });
-      try { await startArena(interaction.guild, interaction.channel, type, minutes, interaction.user.id); }
+      const announceCh = await ensureTribeAnnounce(interaction.guild, config).catch(() => null);
+      await interaction.reply({ content: `🎪 Launching **${ARENA_LABEL[type] || type}** for **${minutes} min** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'}…`, flags: MessageFlags.Ephemeral });
+      try { await startArena(interaction.guild, type, minutes, interaction.user.id); }
       catch (e) { console.error('[arena] start:', e.message); return interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
       return;
     }
