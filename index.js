@@ -382,7 +382,8 @@ async function buildTribe(guild, opts, config) {
     pointsName: (opts.pointsName || 'points').slice(0, 20),
     leaderTitle: (opts.leaderTitle || tribes.DEFAULT_LEADER_TITLE).slice(0, 40), ranks: rankRoles,
     roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, staffRankRoleId: staffRankRole ? staffRankRole.id : null,
-    categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now() });
+    categoryId: cat.id, throneId: throne.id, hallId: hall.id, vcId: vc.id, createdAt: Date.now(),
+    treasury: STARTING_TREASURY });   // starting bonus so a new tribe can buy its first unlock right away (owner)
   // BUG FIXED 2026-08-03: the leader only ever got leaderRole above, never the tribe's own base role or a
   // `members` entry — found while backfilling co-leaders for a mod-founded tribe. The leader could still see
   // their own land (leaderRole carries its own channel overwrites), but never counted as a tribe member: no
@@ -1010,6 +1011,7 @@ const TRIBE_UNLOCKS = [
   { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 20, crownGate: 4, cost: 800 },
 ];
 const TRIBE_CHANNEL_CAP = 6;
+const STARTING_TREASURY = 250;   // new tribes start with this so they can grab a first shop unlock (owner, 2026-08-04)
 const MUSTER_DURATION_MS = 2 * 3600000;   // window to answer a muster
 const MUSTER_COOLDOWN_MS = 20 * 3600000;  // ~once a day, so it can't be spammed for glory/treasury
 function unlockGateMet(tribe, guild, u) {
