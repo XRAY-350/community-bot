@@ -2925,7 +2925,7 @@ function ruleRow(customId) {
 function cornerReasonModal(memberId, channelId, messageId, ruleN) {
   return new ModalBuilder().setCustomId(`corner_reason:${memberId}:${channelId}:${messageId}:${ruleN || 'x'}`).setTitle('Send to corner').addComponents(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = 15m; 30s, 10m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
-    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('timeout').setLabel('Also native timeout? (blank = no; 30m, 2h, 1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('timeout').setLabel('Native timeout too? (blank = no; 30m, 2h)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
 }
