@@ -590,6 +590,18 @@ async function sweepLeaderRequirement(guild) {
   await ensureMembers(guild);
   const now = Date.now();
   for (const tribe of tribes.all()) {
+    // Free-retheme on leader loss (owner: "when a tribe loses a leader they get a free retheme"). For NON-mod
+    // tribes, the trigger is a drop in leader-role holders (a leader left). Mod-founded tribes are handled by
+    // the grace-entry branch below instead — which also catches a leader who keeps the role but loses mod, so
+    // holder-count alone would miss it (and using both would double-grant). First observation just seeds the
+    // count (no grant), so an existing tribe isn't handed one on boot.
+    const leaderRole = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
+    const holderCount = leaderRole ? leaderRole.members.size : 0;
+    if (!tribes.isModFounded(tribe) && typeof tribe.lastLeaderCount === 'number' && holderCount < tribe.lastLeaderCount) {
+      tribes.grantFreeRetheme(tribe.key);
+      await alertModTribe(guild, `🎨 ${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}** lost a leader — it's been granted a **free retheme** (usable on \`/tribe retheme\` even without the Shop unlock).`, tribe.leaderRoleId);
+    }
+    if (holderCount !== tribe.lastLeaderCount) tribes.update(tribe.key, { lastLeaderCount: holderCount });
     if (!tribes.isModFounded(tribe)) continue;
     const { count } = countModLeaders(guild, tribe);
     const short = tribes.MIN_MOD_LEADERS - count;
@@ -609,7 +621,8 @@ async function sweepLeaderRequirement(guild) {
       const graceUntil = now + tribes.LEADER_GRACE_MS;
       const freezeAt = now + Math.floor(tribes.LEADER_GRACE_MS / 2);
       tribes.setLeaderEnforce(tribe.key, { stage: 'grace', since: now, freezeAt, graceUntil });
-      await alertModTribe(guild, `⚠️ ${name} is **${short} leader(s) short** (has ${count}/${tribes.MIN_MOD_LEADERS}). A mod-founded tribe must keep ${tribes.MIN_MOD_LEADERS} leaders. Add one with \`/tribe-admin set-leader\`: its perks (war, alliances, shop) **freeze** <t:${Math.floor(freezeAt / 1000)}:R> if unfixed, and it's disband-pending <t:${Math.floor(graceUntil / 1000)}:R>. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
+      tribes.grantFreeRetheme(tribe.key);   // lost a leader → free retheme (owner), even without the Shop unlock
+      await alertModTribe(guild, `⚠️ ${name} is **${short} leader(s) short** (has ${count}/${tribes.MIN_MOD_LEADERS}). A mod-founded tribe must keep ${tribes.MIN_MOD_LEADERS} leaders. Add one with \`/tribe-admin set-leader\`: its perks (war, alliances, shop) **freeze** <t:${Math.floor(freezeAt / 1000)}:R> if unfixed, and it's disband-pending <t:${Math.floor(graceUntil / 1000)}:R>. It's also been granted a **free retheme**. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
     } else if (enf.stage === 'grace' && now >= (enf.freezeAt || 0)) {
       tribes.setLeaderEnforce(tribe.key, { ...enf, stage: 'frozen', frozenAt: now });
       await alertModTribe(guild, `🧊 ${name} is still **${short} leader(s) short** — its perks (war, alliances, shop) are now **frozen**. Fix it with \`/tribe-admin set-leader\` before <t:${Math.floor((enf.graceUntil || now) / 1000)}:R>, or it will be queued for **disband**. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
@@ -3722,7 +3735,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply(r.content);
     }
     if (act === 'retheme') {
-      if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button.`, flags: MessageFlags.Ephemeral });
+      if (!tribes.hasUnlock(tribe, 'retheme') && !tribes.hasFreeRetheme(tribe)) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button.`, flags: MessageFlags.Ephemeral });
       const colorInput = new TextInputBuilder().setCustomId('color').setLabel('Primary colour hex, e.g. #2A426A').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(7);
       if (tribe.color != null) colorInput.setValue('#' + tribe.color.toString(16).padStart(6, '0'));
       const color2Input = new TextInputBuilder().setCustomId('color2').setLabel('Second hex for a gradient (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(7);
@@ -3878,7 +3891,13 @@ client.on('interactionCreate', async (interaction) => {
     const name = interaction.fields.getTextInputValue('name').trim() || null;
     const shortName = interaction.fields.getTextInputValue('short_name').trim() || null;
     const r = await applyRetheme(interaction.guild, tribe, { color, color2, name, shortName });
-    return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral });
+    // If they don't own the paid unlock, this used a free (leader-loss) retheme token — burn one.
+    let freeNote = '';
+    if (r.ok !== false && !tribes.hasUnlock(tribe, 'retheme') && tribes.consumeFreeRetheme(tribe.key)) {
+      const left = (tribes.get(tribe.key).freeRethemes || 0);
+      freeNote = `\n-# Used a **free retheme** (leader-loss grant).${left ? ` ${left} left.` : ''}`;
+    }
+    return interaction.reply({ content: r.content + freeNote, flags: MessageFlags.Ephemeral });
   }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_announce_modal:')) {
     const tribeKey = interaction.customId.split(':')[1];
@@ -5033,14 +5052,19 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'retheme') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can retheme the tribe.`, flags: MessageFlags.Ephemeral });
-      if (!tribes.hasUnlock(tribe, 'retheme')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
+      if (!tribes.hasUnlock(tribe, 'retheme') && !tribes.hasFreeRetheme(tribe)) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
       const color = parseTribeHex(interaction.options.getString('color'));
       if (color === null) return interaction.reply(badHexReply('primary'));
       const c2raw = interaction.options.getString('color2');
       const color2 = c2raw ? parseTribeHex(c2raw) : null;
       if (c2raw && color2 === null) return interaction.reply(badHexReply('second'));
       const r = await applyRetheme(interaction.guild, tribe, { color, color2, name: interaction.options.getString('name'), shortName: interaction.options.getString('short_name') });
-      return interaction.reply(r.content);
+      let freeNote = '';
+      if (r.ok !== false && !tribes.hasUnlock(tribe, 'retheme') && tribes.consumeFreeRetheme(tribe.key)) {
+        const left = (tribes.get(tribe.key).freeRethemes || 0);
+        freeNote = `\n-# Used a **free retheme** (leader-loss grant).${left ? ` ${left} left.` : ''}`;
+      }
+      return interaction.reply(r.content + freeNote);
     }
     if (sub === 'muster') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))

@@ -473,9 +473,16 @@ function isFrozen(tribe) { const e = tribe && tribe.leaderEnforce; return !!(e &
 // Remove a tribe's record entirely (disband). Returns the removed record so the caller can clean up the
 // Discord roles/channels — this only touches the framework's own state.
 function removeTribe(key) { const s = load(); const rec = s.tribes && s.tribes[key]; if (!rec) return null; delete s.tribes[key]; save(s); return rec; }
+// Free retheme tokens (owner, 2026-08-04: "when a tribe loses a leader they get a free retheme"). Granted
+// when a tribe drops a leader, spendable on /tribe retheme even without the paid Re-theme unlock. A counter,
+// so losing leaders more than once accrues more (each consumed one at a time).
+function grantFreeRetheme(key) { const t = get(key); if (!t) return; update(key, { freeRethemes: (t.freeRethemes || 0) + 1 }); }
+function hasFreeRetheme(tribe) { return !!(tribe && (tribe.freeRethemes || 0) > 0); }
+function consumeFreeRetheme(key) { const t = get(key); if (!t || !(t.freeRethemes > 0)) return false; update(key, { freeRethemes: t.freeRethemes - 1 }); return true; }
 
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
   MIN_MOD_LEADERS, LEADER_GRACE_MS, isModFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
+  grantFreeRetheme, hasFreeRetheme, consumeFreeRetheme,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
