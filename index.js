@@ -5206,10 +5206,11 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'tribe-admin') {
     const sub = interaction.options.getSubcommand();
-    // 'create' has its own, looser gate below (admins as before, PLUS mods founding their own tribe). Every
-    // other subcommand (register/points/title/ranks/grant/challenge-*) stays admin-only, unchanged.
+    // 'create' has its own looser gate (admins, PLUS mods founding their own tribe); 'set-leader' is
+    // gated inside its own handler (a tribe's OWN leader can use it, not just admins). Every other
+    // subcommand (register/points/title/ranks/grant/challenge-*) stays admin-only, unchanged.
     const modSelfFounding = sub === 'create' && opspanel.tierOf(interaction) === 'mod';
-    if (!canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
+    if (sub !== 'set-leader' && !canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
     if (sub === 'hub-setup') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await ensureTribesHub(interaction.guild, config);
@@ -5265,6 +5266,9 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'set-leader') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
       if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
+      // A tribe's OWN leader can restructure it; admins can do it for any tribe (owner, 2026-08-04).
+      if (!canWLAdmin(interaction) && !tribes.isLeader(interaction.member, t))
+        return interaction.reply({ content: `Only **${t.shortName || t.name}**’s ${tribes.leaderTitle(t)} or an admin can set its leaders.`, flags: MessageFlags.Ephemeral });
       if (!t.leaderRoleId) return interaction.reply({ content: `**${t.shortName || t.name}** has no leader role configured, can’t set a leader.`, flags: MessageFlags.Ephemeral });
       const newLeader = interaction.options.getMember('member');
       if (!newLeader) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
