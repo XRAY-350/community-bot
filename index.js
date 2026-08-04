@@ -3597,14 +3597,17 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can approve this.`, flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    // Delete the throne prompt on resolution instead of editing it in place (owner, 2026-08-04: nominations +
+    // leave requests shouldn't linger in the throne — they clutter it). The clicker gets an ephemeral confirm.
     if (!target || target.roles.cache.has(tribe.roleId) || tribes.memberTribe(target)) {
       tribes.clearNomination(targetId);
-      return interaction.update({ content: `${interaction.message.content}\n\n_No longer valid — the member left, or already joined a tribe._`, components: [] });
+      await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
+      return interaction.followUp({ content: 'That nomination is no longer valid — the member left or already joined a tribe.', flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     tribes.updateNomination(targetId, { status: 'pending_accept', approvedBy: interaction.user.id });
-    await interaction.update({ content: `${interaction.message.content}\n\n✅ **Approved** by <@${interaction.user.id}>. Waiting on <@${targetId}> to accept.`, components: [], allowedMentions: { parse: [] } });
+    await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
     await postAcceptPrompt(interaction.guild, tribe, targetId);
-    return;
+    return interaction.followUp({ content: `✅ Approved — sent <@${targetId}> an invite to accept.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribenom_deny:')) {
     const targetId = interaction.customId.split(':')[1];
@@ -3614,7 +3617,8 @@ client.on('interactionCreate', async (interaction) => {
     if (tribe && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can deny this.`, flags: MessageFlags.Ephemeral });
     tribes.clearNomination(targetId);
-    return interaction.update({ content: `${interaction.message.content}\n\n❌ **Denied** by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } });
+    await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
+    return interaction.followUp({ content: `❌ Denied the nomination for <@${targetId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribenom_accept:')) {
     const targetId = interaction.customId.split(':')[1];
@@ -3683,10 +3687,11 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(memberId).catch(() => null);
     tribes.clearLeaveRequest(memberId);
-    if (!target || !target.roles.cache.has(tribe.roleId)) return interaction.update({ content: 'They’re already out of the tribe.', components: [] });
-    await interaction.deferUpdate();
+    // Delete the throne prompt on resolution (owner: don't let leave requests clutter the throne).
+    await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
+    if (!target || !target.roles.cache.has(tribe.roleId)) return interaction.followUp({ content: 'They’re already out of the tribe.', flags: MessageFlags.Ephemeral }).catch(() => {});
     const r = await releaseTribeMember(interaction.guild, tribe, target, `Leave request approved by ${interaction.user.tag}`);
-    return interaction.editReply({ content: r.ok ? `✅ <@${memberId}> was released from **${tribe.shortName || tribe.name}** by <@${interaction.user.id}>. They can be accepted into a new tribe now.` : 'Couldn’t remove the role. Check my role position.', components: [], allowedMentions: { parse: [] } });
+    return interaction.followUp({ content: r.ok ? `✅ Released <@${memberId}> from **${tribe.shortName || tribe.name}**. They can join a new tribe now.` : 'Couldn’t remove the role. Check my role position.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribeleave_deny:')) {
     const memberId = interaction.customId.split(':')[1];
@@ -3696,7 +3701,8 @@ client.on('interactionCreate', async (interaction) => {
     if (tribe && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribe ? tribes.leaderTitle(tribe) : 'the leader'} or staff can decide this.`, flags: MessageFlags.Ephemeral });
     tribes.clearLeaveRequest(memberId);
-    return interaction.update({ content: `❌ <@${memberId}>'s request to leave **${tribe ? (tribe.shortName || tribe.name) : 'the tribe'}** was denied by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } });
+    await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
+    return interaction.followUp({ content: `❌ Denied <@${memberId}>'s request to leave **${tribe ? (tribe.shortName || tribe.name) : 'the tribe'}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
   }
   // ---- Tribes Hub buttons — same underlying logic as the typed commands, just one click instead ----
   if (interaction.isButton?.() && interaction.customId === 'tribehub_standings') {
