@@ -938,7 +938,6 @@ async function sweepExpiredAllianceVotes(guild) {
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
 const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30 };   // default minutes per type
 const _arenaTimers = { end: null, round: null };
-const _blitzCooldown = new Map();   // per-member rate-limit for blitz message counting
 function clearArenaTimers() { for (const k of ['end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
 
 async function arenaChannel(guild) { const a = arena.get(); if (!a) return null; return guild.channels.fetch(a.channelId).catch(() => null); }
@@ -994,6 +993,42 @@ function arenaScoreboard(a) {
 function scrambleContent(word, a) {
   return `# 🔤 Word Scramble — round ${a.round || 1}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(word).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${arenaScoreboard(a)}`;
 }
+// Tally an Activity Blitz from message history over [startMs, endMs] (owner: count at the end, not live).
+// A message anywhere by a tribe member scores for their tribe, with the same 8s per-member cooldown. Because
+// it reads history, it's zero per-message overhead AND immune to restarts mid-blitz. Returns {tribeKey: n}.
+async function computeBlitzScores(guild, startMs, endMs) {
+  await ensureMembers(guild).catch(() => {});
+  const channels = await guild.channels.fetch().catch(() => null);
+  if (!channels) return {};
+  const hits = [];
+  for (const ch of channels.values()) {
+    if (!ch || ![0, 5].includes(ch.type)) continue;   // text + announcement channels
+    let before, done = false;
+    for (let b = 0; b < 5 && !done; b++) {             // up to 500 msgs back per channel
+      const msgs = await ch.messages.fetch({ limit: 100, before }).catch(() => null);
+      if (!msgs || !msgs.size) break;
+      for (const m of msgs.values()) {
+        const ts = m.createdTimestamp;
+        if (ts < startMs) { done = true; continue; }
+        if (ts > endMs || m.author.bot) continue;
+        const mem = m.member || guild.members.cache.get(m.author.id);
+        const mine = mem && tribes.memberTribe(mem);
+        if (mine) hits.push({ ts, key: mine.key, uid: m.author.id });
+      }
+      before = msgs.last().id;
+      if (msgs.size < 100) break;
+    }
+  }
+  hits.sort((a, b) => a.ts - b.ts);
+  const last = new Map(), scores = {};
+  for (const h of hits) {
+    const k = `${h.key}:${h.uid}`;
+    if (last.get(k) > h.ts - 8000) continue;
+    last.set(k, h.ts);
+    scores[h.key] = (scores[h.key] || 0) + 1;
+  }
+  return scores;
+}
 async function askNextTrivia(guild) {
   const a = arena.get(); if (!a || a.type !== 'trivia') return;
   // Lock the previous question so a late click (or the 25s timeout advancing) can't score a stale question.
@@ -1011,7 +1046,9 @@ async function askNextTrivia(guild) {
 }
 async function endArena(guild) {
   clearArenaTimers();
-  const a = arena.get(); if (!a) return;
+  let a = arena.get(); if (!a) return;
+  // Blitz is tallied now, from message history over the whole window (owner: count at the end).
+  if (a.type === 'blitz') { const scores = await computeBlitzScores(guild, a.startedAt, a.endsAt).catch(() => ({})); arena.update({ scores }); a = arena.get(); }
   const win = arena.winner();
   const ch = await arenaChannel(guild);
   const label = ARENA_LABEL[a.type] || 'challenge';
@@ -3183,31 +3220,22 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author?.bot || !msg.guild) return;
-    // Arena challenges (scramble answers + activity blitz) — checked first, cheap when no challenge is running.
+    // Arena SCRAMBLE — the only type that watches messages live (it needs the typed answer). Blitz is NOT
+    // counted here anymore (owner: "why not count at the end?") — it's tallied from message history when the
+    // event ends (see computeBlitzScores/endArena), which is zero per-message overhead and restart-proof.
     try {
       const ax = arena.get();
-      if (ax) {
-        if (ax.type === 'scramble' && msg.channelId === ax.channelId && ax.answer &&
-            msg.content.trim().toLowerCase() === ax.answer.toLowerCase()) {
-          const mine = tribes.memberTribe(msg.member);
-          if (mine) {
-            arena.addScore(mine.key, 1);
-            const nextRound = (ax.round || 1) + 1;
-            const word = arena.nextWord(ax.usedWords || []);   // no in-game repeats (owner)
-            arena.update({ answer: word, round: nextRound, usedWords: [...(ax.usedWords || []), word] });
-            await msg.react('✅').catch(() => {});
-            const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
-            if (ch) await ch.send({ content: scrambleContent(word, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
-          }
-        } else if (ax.type === 'blitz') {
-          // A message ANYWHERE in the server by a tribe member scores for their tribe (owner, 2026-08-04:
-          // blitz should reward whole-server activity, not just the hall — the hall is already how Tides
-          // are earned normally). Per-member 8s cooldown so it's activity, not spam.
-          const home = tribes.memberTribe(msg.member);
-          if (home) {
-            const ck = `${home.key}:${msg.author.id}`, now = Date.now();
-            if (!(_blitzCooldown.get(ck) > now - 8000)) { _blitzCooldown.set(ck, now); arena.addScore(home.key, 1); }
-          }
+      if (ax && ax.type === 'scramble' && msg.channelId === ax.channelId && ax.answer &&
+          msg.content.trim().toLowerCase() === ax.answer.toLowerCase()) {
+        const mine = tribes.memberTribe(msg.member);
+        if (mine) {
+          arena.addScore(mine.key, 1);
+          const nextRound = (ax.round || 1) + 1;
+          const word = arena.nextWord(ax.usedWords || []);   // no in-game repeats (owner)
+          arena.update({ answer: word, round: nextRound, usedWords: [...(ax.usedWords || []), word] });
+          await msg.react('✅').catch(() => {});
+          const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
+          if (ch) await ch.send({ content: scrambleContent(word, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
         }
       }
     } catch (e) { console.error('[arena] messageCreate:', e.message); }

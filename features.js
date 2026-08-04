@@ -69,8 +69,12 @@ const REGISTRY = [
 // 'strikeReason' (weight+reason are core to every strike now) and 'fiveStrikes' (replaced by the
 // 10-unit ban threshold, which always shows a Confirm button, never auto-bans).
 
-const load = () => { try { return JSON.parse(fs.readFileSync(FLAGS_FILE, 'utf8')); } catch { return {}; } };
-const save = f => { try { fs.writeFileSync(FLAGS_FILE, JSON.stringify(f, null, 2)); } catch (e) { console.error('[features] save:', e.message); } };
+// enabled() is called on every message (word-filter + smart-watch gates), so a sync readFileSync each time
+// saturates the event loop in busy channels (this starved interactions like Send-to-corner). 2s TTL cache;
+// save() refreshes it immediately, so a toggle takes effect at once and reads between toggles are cheap.
+let _cache = null, _cacheAt = 0;
+const load = () => { const n = Date.now(); if (_cache && n - _cacheAt < 2000) return _cache; try { _cache = JSON.parse(fs.readFileSync(FLAGS_FILE, 'utf8')); } catch { _cache = {}; } _cacheAt = n; return _cache; };
+const save = f => { _cache = f; _cacheAt = Date.now(); try { fs.writeFileSync(FLAGS_FILE, JSON.stringify(f, null, 2)); } catch (e) { console.error('[features] save:', e.message); } };
 
 // FAIL-OFF: on only when explicitly true.
 function enabled(key) { return load()[key] === true; }

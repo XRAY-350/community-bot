@@ -4,13 +4,22 @@
 const fs = require('fs');
 const TERMS_FILE = process.env.FUBU_WATCHLIST_TERMS_FILE || '/home/ubuntu/.fubu_watchlist_terms.json';
 
-function loadTerms() {
-  try { const a = JSON.parse(fs.readFileSync(TERMS_FILE, 'utf8')); return Array.isArray(a) ? a : []; }
-  catch { return []; }                                   // missing/empty file → no terms → monitor is dormant
+// The watched-IDs + term lists are read on EVERY message (isWatched, loadTerms/loadLoose/loadWelfare), so a
+// sync readFileSync each time saturates the event loop in busy channels (which starved interactions like
+// Send-to-corner). 2s TTL cache per file; the save functions refresh it, so an edit takes effect at once.
+const _tc = new Map();
+function _cachedArr(file) {
+  const c = _tc.get(file), n = Date.now();
+  if (c && n - c.t < 2000) return c.v;
+  let v = []; try { const a = JSON.parse(fs.readFileSync(file, 'utf8')); v = Array.isArray(a) ? a : []; } catch { /* missing = empty */ }
+  _tc.set(file, { v, t: n }); return v;
 }
+function _fresh(file, v) { _tc.set(file, { v, t: Date.now() }); }
+
+function loadTerms() { return _cachedArr(TERMS_FILE); }   // missing/empty file → no terms → monitor is dormant
 function saveTerms(terms) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
-  try { fs.writeFileSync(TERMS_FILE, JSON.stringify(clean)); return clean; }
+  try { fs.writeFileSync(TERMS_FILE, JSON.stringify(clean)); _fresh(TERMS_FILE, clean); return clean; }
   catch (e) { console.error('[watchlist] save:', e.message); return loadTerms(); }
 }
 function addTerm(term) {
@@ -60,8 +69,8 @@ function matchTerms(content, terms) {
 // event, but ID-keyed state just persists on its own regardless of guild membership — add/remove takes
 // effect immediately, unban-with-watch no longer needs to defer anything.
 const WATCHED_FILE = process.env.FUBU_WATCHLIST_WATCHED_FILE || '/home/ubuntu/.fubu_watchlist_watched.json';
-function loadWatched() { try { const a = JSON.parse(fs.readFileSync(WATCHED_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
-function saveWatched(ids) { try { fs.writeFileSync(WATCHED_FILE, JSON.stringify([...new Set(ids)])); } catch (e) { console.error('[watchlist] watched save:', e.message); } }
+function loadWatched() { return _cachedArr(WATCHED_FILE); }
+function saveWatched(ids) { const clean = [...new Set(ids)]; try { fs.writeFileSync(WATCHED_FILE, JSON.stringify(clean)); _fresh(WATCHED_FILE, clean); } catch (e) { console.error('[watchlist] watched save:', e.message); } }
 function isWatched(id) { return !!id && loadWatched().includes(id); }
 function addWatch(id) { const w = loadWatched(); if (!w.includes(id)) { w.push(id); saveWatched(w); } }
 function removeWatch(id) { saveWatched(loadWatched().filter(x => x !== id)); }
@@ -69,10 +78,10 @@ function removeWatch(id) { saveWatched(loadWatched().filter(x => x !== id)); }
 // Loose "day-to-day" term list — a second, softer set matched against everyone-except-staff, reported
 // quietly to #watch-log (no ping). Same matcher; its own editable file.
 const LOOSE_FILE = process.env.FUBU_WATCHLIST_LOOSE_FILE || '/home/ubuntu/.fubu_watchlist_loose.json';
-function loadLoose() { try { const a = JSON.parse(fs.readFileSync(LOOSE_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
+function loadLoose() { return _cachedArr(LOOSE_FILE); }
 function saveLoose(terms) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
-  try { fs.writeFileSync(LOOSE_FILE, JSON.stringify(clean)); return clean; } catch (e) { console.error('[watchlist] loose save:', e.message); return loadLoose(); }
+  try { fs.writeFileSync(LOOSE_FILE, JSON.stringify(clean)); _fresh(LOOSE_FILE, clean); return clean; } catch (e) { console.error('[watchlist] loose save:', e.message); return loadLoose(); }
 }
 function addLoose(term) { const t = loadLoose(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return saveLoose(t); }
 function removeLoose(term) { const v = String(term).trim().toLowerCase(); return saveLoose(loadLoose().filter(x => x.toLowerCase() !== v)); }
@@ -80,10 +89,10 @@ function removeLoose(term) { const v = String(term).trim().toLowerCase(); return
 // Welfare list — distress signals ("i want to die", "sh") matched against everyone-except-staff, reported
 // to #watch-log as a SUPPORT check-in (soft, no ban button), kept separate so it reads differently.
 const WELFARE_FILE = process.env.FUBU_WATCHLIST_WELFARE_FILE || '/home/ubuntu/.fubu_watchlist_welfare.json';
-function loadWelfare() { try { const a = JSON.parse(fs.readFileSync(WELFARE_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
+function loadWelfare() { return _cachedArr(WELFARE_FILE); }
 function saveWelfare(terms) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
-  try { fs.writeFileSync(WELFARE_FILE, JSON.stringify(clean)); return clean; } catch (e) { console.error('[watchlist] welfare save:', e.message); return loadWelfare(); }
+  try { fs.writeFileSync(WELFARE_FILE, JSON.stringify(clean)); _fresh(WELFARE_FILE, clean); return clean; } catch (e) { console.error('[watchlist] welfare save:', e.message); return loadWelfare(); }
 }
 function addWelfare(term) { const t = loadWelfare(); const v = String(term).trim(); if (v && !t.some(x => x.toLowerCase() === v.toLowerCase())) t.push(v); return saveWelfare(t); }
 function removeWelfare(term) { const v = String(term).trim().toLowerCase(); return saveWelfare(loadWelfare().filter(x => x.toLowerCase() !== v)); }
@@ -94,10 +103,10 @@ function removeWelfare(term) { const v = String(term).trim().toLowerCase(); retu
 // see whether it correctly hides the false positives and surfaces the real ones. Same matcher, own files.
 const LAB_STRICT_FILE = process.env.FUBU_WATCHLIST_LAB_STRICT_FILE || '/home/ubuntu/.fubu_watchlist_lab_strict.json';
 const LAB_LOOSE_FILE = process.env.FUBU_WATCHLIST_LAB_LOOSE_FILE || '/home/ubuntu/.fubu_watchlist_lab_loose.json';
-function _loadArr(file) { try { const a = JSON.parse(fs.readFileSync(file, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
+function _loadArr(file) { return _cachedArr(file); }
 function _saveArr(file, terms, label) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
-  try { fs.writeFileSync(file, JSON.stringify(clean)); return clean; } catch (e) { console.error(`[watchlist] ${label} save:`, e.message); return _loadArr(file); }
+  try { fs.writeFileSync(file, JSON.stringify(clean)); _fresh(file, clean); return clean; } catch (e) { console.error(`[watchlist] ${label} save:`, e.message); return _loadArr(file); }
 }
 const LAB_WELFARE_FILE = process.env.FUBU_WATCHLIST_LAB_WELFARE_FILE || '/home/ubuntu/.fubu_watchlist_lab_welfare.json';
 function loadLabStrict() { return _loadArr(LAB_STRICT_FILE); }
