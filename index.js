@@ -38,6 +38,7 @@ const appeals = require('./appeals');
 const strikeAppeals = require('./strikeAppeals');
 const features = require('./features');
 const contest = require('./contest');
+const arena = require('./arena');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js / COPY-REGISTRY.md)
@@ -877,6 +878,83 @@ async function resolveAllianceVoteRecord(guild, vote) {
 }
 async function sweepExpiredAllianceVotes(guild) {
   for (const vote of tribes.expiredAllianceVotes(Date.now())) await resolveAllianceVoteRecord(guild, vote).catch(e => console.error('[tribe alliance] resolve:', e.message));
+}
+
+// ── Interactive tribe challenges — "the Arena" (owner, 2026-08-04: "add interactive challenges") ──────
+// One active challenge at a time. Admin launches one into a public channel; the bot runs + scores it and the
+// winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
+// on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
+const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30 };   // default minutes per type
+const _arenaTimers = { end: null, round: null };
+const _blitzCooldown = new Map();   // per-member rate-limit for blitz message counting
+function clearArenaTimers() { for (const k of ['end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
+
+async function arenaChannel(guild) { const a = arena.get(); if (!a) return null; return guild.channels.fetch(a.channelId).catch(() => null); }
+function tribeName(key) { const t = tribes.get(key); return t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : key; }
+
+async function startArena(guild, channel, type, minutes, startedById) {
+  const endsAt = Date.now() + minutes * 60000;
+  const base = { type, channelId: channel.id, startedBy: startedById, startedAt: Date.now(), endsAt, scores: {}, participants: [] };
+  if (type === 'race') {
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('arena_claim').setEmoji('🏁').setLabel('Claim for your tribe!').setStyle(ButtonStyle.Success));
+    const msg = await channel.send({ content: `# 🏁 Reaction Race!\nFirst tribe to **${arena.RACE_TARGET}** claims wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. One claim per member. Ends <t:${Math.floor(endsAt / 1000)}:R> if nobody hits the target.\n\n${arenaScoreboard({ ...base })}`, components: [row] });
+    arena.set({ ...base, messageId: msg.id });
+  } else if (type === 'blitz') {
+    const msg = await channel.send({ content: `# ⚡ Activity Blitz!\nFor the next **${minutes} minutes**, every message in your tribe's hall scores a point. The most active tribe wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. Ends <t:${Math.floor(endsAt / 1000)}:R>. Go!` });
+    arena.set({ ...base, messageId: msg.id });
+  } else if (type === 'scramble') {
+    const word = arena.nextWord();
+    const msg = await channel.send({ content: scrambleContent(word, {}) });
+    arena.set({ ...base, messageId: msg.id, answer: word, round: 1 });
+  } else if (type === 'trivia') {
+    arena.set({ ...base, asked: [], qNum: 0 });
+    await askNextTrivia(guild);
+  }
+  _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), minutes * 60000);
+  return arena.get();
+}
+function arenaScoreboard(a) {
+  const rows = Object.entries(a.scores || {}).sort((x, y) => y[1] - x[1]);
+  return rows.length ? rows.map(([k, v]) => `> ${tribeName(k)} — **${v}**`).join('\n') : '> _No points yet._';
+}
+function scrambleContent(word, a) {
+  return `# 🔤 Word Scramble — round ${a.round || 1}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(word).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${arenaScoreboard(a)}`;
+}
+async function askNextTrivia(guild) {
+  const a = arena.get(); if (!a || a.type !== 'trivia') return;
+  // Lock the previous question so a late click (or the 25s timeout advancing) can't score a stale question.
+  if (a.messageId) { const pch = await arenaChannel(guild); const pm = pch && await pch.messages.fetch(a.messageId).catch(() => null); if (pm) await pm.edit({ components: [] }).catch(() => {}); }
+  if (a.qNum >= arena.TRIVIA_QUESTIONS) return endArena(guild);
+  const { q, idx } = arena.nextTrivia(a.asked);
+  const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
+    new ButtonBuilder().setCustomId(`arena_ans:${i}`).setLabel(String(o).slice(0, 80)).setStyle(ButtonStyle.Secondary)));
+  const ch = await arenaChannel(guild); if (!ch) return;
+  const msg = await ch.send({ content: `# ❓ Trivia — Q${a.qNum + 1}/${arena.TRIVIA_QUESTIONS}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
+  arena.update({ answer: q.answer, curQ: idx, asked: [...(a.asked || []), idx], qNum: a.qNum + 1, messageId: msg.id, answeredThisQ: [] });
+  if (_arenaTimers.round) clearTimeout(_arenaTimers.round);
+  _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // 25s per question, then advance
+}
+async function endArena(guild) {
+  clearArenaTimers();
+  const a = arena.get(); if (!a) return;
+  const win = arena.winner();
+  const ch = await arenaChannel(guild);
+  if (win) {
+    tribes.addTreasury(win.key, arena.WIN_TREASURY);
+    tribes.addGlory(win.key, arena.WIN_GLORY);
+    if (ch) await ch.send({ content: `# 🏆 Challenge over — ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${arena.WIN_GLORY} Glory** and **+${arena.WIN_TREASURY} Treasury**.\n\n${arenaScoreboard(a)}`, allowedMentions: { parse: [] } }).catch(() => {});
+    await refreshThronePanel(guild, tribes.get(win.key)).catch(() => {});
+  } else if (ch) {
+    await ch.send({ content: `# 🏁 Challenge over\nNo tribe scored — no reward this time.` }).catch(() => {});
+  }
+  arena.clear();
+}
+// Called on boot: an active challenge from before a restart is ended immediately (a restart ends it early)
+// so it can't get stuck, and any dangling timer is cleared.
+async function reconcileArena(guild) {
+  if (!arena.isActive()) return;
+  console.log('[arena] active challenge found on boot — resolving it early');
+  await endArena(guild).catch(e => console.error('[arena] boot resolve:', e.message));
 }
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
@@ -1893,6 +1971,10 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('leader_role').setDescription('The leader role (optional)').setRequired(false))
           .addChannelOption(o => o.setName('hall').setDescription('Main tribe channel (optional)').setRequired(false))
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
+        .addSubcommand(s => s.setName('arena').setDescription('Launch an interactive cross-tribe challenge in this channel (winner banks Glory + Treasury)')
+          .addStringOption(o => o.setName('type').setDescription('Which challenge').setRequired(true)
+            .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' }))
+          .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
@@ -2135,6 +2217,8 @@ client.once('ready', async () => {
   if (dguild && tribes.getHubInfo()) await ensureTribesHub(dguild, config).catch(e => console.error(`[tribe hub] boot refresh: ${e.message}`));
   // Refresh every tribe's throne panel on boot too, so button/layout changes go live on deploy.
   if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
+  // An arena challenge left active by a pre-restart crash is resolved early (see reconcileArena).
+  if (dguild) await reconcileArena(dguild).catch(e => console.error(`[arena] boot reconcile: ${e.message}`));
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
@@ -2990,6 +3074,31 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author?.bot || !msg.guild) return;
+    // Arena challenges (scramble answers + activity blitz) — checked first, cheap when no challenge is running.
+    try {
+      const ax = arena.get();
+      if (ax) {
+        if (ax.type === 'scramble' && msg.channelId === ax.channelId && ax.answer &&
+            msg.content.trim().toLowerCase() === ax.answer.toLowerCase()) {
+          const mine = tribes.memberTribe(msg.member);
+          if (mine) {
+            arena.addScore(mine.key, 1);
+            const nextRound = (ax.round || 1) + 1;
+            const word = arena.nextWord();
+            arena.update({ answer: word, round: nextRound });
+            await msg.react('✅').catch(() => {});
+            const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
+            if (ch) await ch.send({ content: scrambleContent(word, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
+          }
+        } else if (ax.type === 'blitz') {
+          const home = tribes.all().find(t => (t.hallId === msg.channelId || t.text2Id === msg.channelId) && msg.member?.roles.cache.has(t.roleId));
+          if (home) {
+            const ck = `${home.key}:${msg.author.id}`, now = Date.now();
+            if (!(_blitzCooldown.get(ck) > now - 8000)) { _blitzCooldown.set(ck, now); arena.addScore(home.key, 1); }
+          }
+        }
+      }
+    } catch (e) { console.error('[arena] messageCreate:', e.message); }
     // Monthly contest channels: record entries (auto-🩷), enforce one-per-person, delete chatter/dupes.
     // If it removed the message there's nothing left to scan, so stop here.
     if (contest.isContestChannel(msg.channelId)) { const r = await contest.onMessage(msg); if (r.deleted) return; }
@@ -4250,6 +4359,36 @@ client.on('interactionCreate', async (interaction) => {
     tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
     return interaction.update({ content: `## 🤝 Alliance vote cancelled\nCalled off by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
+  // Arena: race claim button.
+  if (interaction.isButton?.() && interaction.customId === 'arena_claim') {
+    const a = arena.get();
+    if (!a || a.type !== 'race') return interaction.reply({ content: 'No race is running.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine) return interaction.reply({ content: 'You’re not in a tribe — join one in #roles to play.', flags: MessageFlags.Ephemeral });
+    if (!arena.markOnce('participants', interaction.user.id)) return interaction.reply({ content: 'You already claimed. One per member!', flags: MessageFlags.Ephemeral });
+    const total = arena.addScore(mine.key, 1);
+    const fresh = arena.get();
+    await interaction.update({ content: `# 🏁 Reaction Race!\nFirst tribe to **${arena.RACE_TARGET}** claims wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. One claim per member. Ends <t:${Math.floor(a.endsAt / 1000)}:R> if nobody hits the target.\n\n${arenaScoreboard(fresh)}`, components: interaction.message.components }).catch(() => {});
+    if (total >= arena.RACE_TARGET) await endArena(interaction.guild).catch(() => {});
+    return;
+  }
+  // Arena: trivia answer button. The current-question message id guards against stale clicks on an
+  // already-advanced question — and since interaction handlers run to completion single-threaded, the first
+  // correct click scores + advances (changing messageId) before any concurrent click's handler runs.
+  if (interaction.isButton?.() && interaction.customId.startsWith('arena_ans:')) {
+    const a = arena.get();
+    if (!a || a.type !== 'trivia') return interaction.reply({ content: 'No trivia is running.', flags: MessageFlags.Ephemeral });
+    if (interaction.message.id !== a.messageId) return interaction.reply({ content: 'That question is already over.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine) return interaction.reply({ content: 'You’re not in a tribe — join one in #roles to play.', flags: MessageFlags.Ephemeral });
+    if ((a.answeredThisQ || []).includes(interaction.user.id)) return interaction.reply({ content: 'You already answered this one.', flags: MessageFlags.Ephemeral });
+    arena.update({ answeredThisQ: [...(a.answeredThisQ || []), interaction.user.id] });
+    if (Number(interaction.customId.split(':')[1]) !== a.answer) return interaction.reply({ content: '❌ Not quite.', flags: MessageFlags.Ephemeral });
+    arena.addScore(mine.key, 1);
+    await interaction.update({ components: [] }).catch(() => {});   // ack + lock this question
+    await interaction.followUp({ content: `✅ Correct! Point for ${tribeName(mine.key)}.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
+    return askNextTrivia(interaction.guild).catch(() => {});
+  }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_approve:')) {
     const voteId = interaction.customId.split(':')[1];
     const vote = tribes.getAllianceVote(voteId);
@@ -5365,6 +5504,16 @@ client.on('interactionCreate', async (interaction) => {
         emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
       return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in #tribes-hub Standings and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'arena') {
+      if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can launch a challenge.', flags: MessageFlags.Ephemeral });
+      if (arena.isActive()) return interaction.reply({ content: 'A challenge is already running — let it finish first.', flags: MessageFlags.Ephemeral });
+      const type = interaction.options.getString('type');
+      const minutes = interaction.options.getInteger('minutes') || ARENA_DEFAULTS[type] || 5;
+      await interaction.reply({ content: `🎪 Launching **${type}** for **${minutes} min** in this channel…`, flags: MessageFlags.Ephemeral });
+      try { await startArena(interaction.guild, interaction.channel, type, minutes, interaction.user.id); }
+      catch (e) { console.error('[arena] start:', e.message); return interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
+      return;
     }
     if (sub === 'set-leader') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
