@@ -198,6 +198,14 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   if (byId && byId === member.id) {
     return { ok: false, error: "you can't corner yourself." };
   }
+  // The server owner is never cornerable, full stop — centralized here (not left to each of the ~8
+  // callers to remember) after finding one caller (the Send-to-corner reason-modal submit handler) with
+  // NO owner check at all: the upstream command that opens the modal validates the target, but the modal
+  // submit step that actually strips roles trusted the embedded id with no re-check. One guard here closes
+  // every entry point, present and future, regardless of what each caller does or forgets to do upstream.
+  if (member.id === guild.ownerId) {
+    return { ok: false, error: "you can't corner the server owner." };
+  }
   // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
   // use PUT semantics computed off the LOCAL cache — a stale/partial member (e.g. from a message event,
   // or roles changed since it was last fetched) would (a) store an incomplete snapshot AND (b) silently
@@ -214,9 +222,12 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
   }
   // Guard: the bot can't touch roles positioned at/above its OWN highest role — trying would fail with a
-  // raw "Missing Permissions". Only roles we'd actually STRIP matter here — a KEPT role above the bot
-  // (e.g. OWNER⚜️, an identifying role) is fine, because we never touch it. So an owner can still be
-  // cornered — their owner role stays (identifying) and everything else is stripped.
+  // raw "Missing Permissions". Only roles we'd actually STRIP matter here — a KEPT role above the bot is
+  // fine, because we never touch it. The actual guild owner is already fully blocked above; this covers
+  // the separate case of someone who merely HOLDS the OWNER⚜️ role without being guild.ownerId (owner
+  // tier also requires the Administrator permission — see opspanel.memberTier) — they're still
+  // cornerable by an equal-or-higher tier actor, but OWNER⚜️ itself stays via identifyingRoleIds so their
+  // visible owner-role/color survives even though everything else gets stripped.
   const me = await guild.members.fetchMe();
   const stripIds = new Set(rolesToStrip(guild, member));
   const blockers = member.roles.cache.filter(r => stripIds.has(r.id) && r.position >= me.roles.highest.position);
