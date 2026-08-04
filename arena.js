@@ -16,6 +16,8 @@ const WIN_GLORY = 100;
 const RACE_TARGET = 10;     // clicks to win a race
 const TRIVIA_QUESTIONS = 5; // questions per trivia sprint
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
+const COOLDOWN_MS = 3 * 60 * 60 * 1000;   // min gap between challenges (owner: cooldown)
+const DAILY_CAP = 3;                       // max challenges per UTC day (owner: daily cap)
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.
@@ -35,6 +37,23 @@ function markOnce(bucket, id) { const a = get(); if (!a) return false; a[bucket]
 function resetBucket(bucket) { const a = get(); if (!a) return; a[bucket] = []; set(a); }
 // Highest-scoring tribe, or null if nobody scored.
 function winner() { const a = get(); if (!a) return null; let best = null, bs = 0; for (const [k, v] of Object.entries(a.scores || {})) if (v > bs) { bs = v; best = k; } return best ? { key: best, score: bs } : null; }
+
+// Cooldown + daily cap (owner). recordEnd() stamps the end of a challenge and bumps today's count (reset on
+// a new UTC day). startBlocked() returns a reason string if a new one can't start yet, or null if it can.
+function utcDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
+function recordEnd(nowMs) {
+  const s = load(); const now = nowMs || Date.now(); const day = utcDay(now);
+  if (s.day !== day) { s.day = day; s.count = 0; }
+  s.count = (s.count || 0) + 1; s.lastEndedAt = now; save(s);
+}
+function startBlocked(nowMs) {
+  const s = load(); const now = nowMs || Date.now();
+  if (s.active) return 'A challenge is already running — let it finish first.';
+  const count = (s.day === utcDay(now)) ? (s.count || 0) : 0;
+  if (count >= DAILY_CAP) return `The daily challenge limit (**${DAILY_CAP}**) is reached — try again tomorrow.`;
+  if (s.lastEndedAt && now - s.lastEndedAt < COOLDOWN_MS) return `On cooldown — the next challenge can start <t:${Math.floor((s.lastEndedAt + COOLDOWN_MS) / 1000)}:R>.`;
+  return null;
+}
 
 // --- banks -------------------------------------------------------------------------------------------
 function randInt(n) { return Math.floor(Math.random() * n); }
@@ -104,7 +123,8 @@ async function fetchTrivia(n) {
 }
 
 module.exports = {
-  STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS,
+  STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
   get, isActive, set, clear, update, addScore, markOnce, resetBucket, winner,
+  recordEnd, startBlocked,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
 };

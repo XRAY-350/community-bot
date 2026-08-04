@@ -19,6 +19,9 @@ function getByRole(roleId) { return all().find(t => t.roleId === roleId) || null
 // a restart or a content refresh can find + edit it without re-creating the channel each time.
 function getHubInfo() { return load().hub || null; }
 function setHubInfo(channelId, messageId) { const s = load(); s.hub = { channelId, messageId }; save(s); }
+// Tribe-announcements channel (owner, 2026-08-04) — sits above the hub, shows challenge results + tribe news.
+function getAnnounceInfo() { return load().announce || null; }
+function setAnnounceInfo(channelId) { const s = load(); s.announce = { channelId }; save(s); }
 // Resolve a tribe from a free-text arg: exact key, or case-insensitive name/shortName contains.
 function resolve(query) {
   if (!query) return null;
@@ -472,7 +475,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
-  startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo,
+  startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,

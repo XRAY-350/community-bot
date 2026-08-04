@@ -539,6 +539,29 @@ async function ensureTribesHub(guild, config) {
   tribes.setHubInfo(ch.id, sent.id);
   return { ok: true, channelId: ch.id, messageId: sent.id, created: true };
 }
+// Tribe-announcements channel (owner, 2026-08-04) — sits just ABOVE the hub, everyone can read but not post
+// (staff can, for general announcements); the bot posts challenge results here (pinging every tribe). Idempotent.
+async function ensureTribeAnnounce(guild, config) {
+  const info = tribes.getAnnounceInfo();
+  let ch = info && await guild.channels.fetch(info.channelId).catch(() => null);
+  if (ch) return ch;
+  const hubInfo = tribes.getHubInfo();
+  const hub = hubInfo && await guild.channels.fetch(hubInfo.channelId).catch(() => null);
+  const P = PermissionsBitField.Flags;
+  ch = await guild.channels.create({
+    name: '📣┆ᴛʀɪʙᴇ-ᴀɴɴᴏᴜɴᴄᴇᴍᴇɴᴛs', type: ChannelType.GuildText, parent: hub?.parentId || undefined,
+    topic: 'Tribe-wide announcements + challenge results.',
+    permissionOverwrites: [
+      { id: guild.id, allow: [P.ViewChannel, P.ReadMessageHistory], deny: [P.SendMessages] },
+      ...(config.adminRoleId ? [{ id: config.adminRoleId, allow: [P.SendMessages] }] : []),
+      ...(config.modRoleId ? [{ id: config.modRoleId, allow: [P.SendMessages] }] : []),
+    ],
+    reason: 'Tribe announcements (owner request)',
+  });
+  if (hub) await ch.setPosition(Math.max(0, hub.position)).catch(() => {});   // slot it just above the hub
+  tribes.setAnnounceInfo(ch.id);
+  return ch;
+}
 // ---- Weekly crown cycle (see TRIBE_PHASE5_SPEC.md section 6) ----
 // A single server-wide role, granted to every CURRENT member of the highest-Glory tribe each week, stripped
 // from whoever held it before. Bragging rights only (owner: "the reward should just be a role/bragging
@@ -943,9 +966,21 @@ async function startArena(guild, channel, type, minutes, startedById) {
     arena.set({ ...base, questions, qNum: 0, source: fetched ? 'online' : 'local' });
     await askNextTrivia(guild);
   }
+  // Start ping: message every tribe in its OWN throne, pinging the tribe role (owner). Stored so endArena can
+  // delete them when the event's over ("delete the message after the duration").
+  const thronePings = {};
+  for (const t of tribes.all()) {
+    if (!t.throneId || !t.roleId) continue;
+    const throne = await guild.channels.fetch(t.throneId).catch(() => null);
+    if (!throne) continue;
+    const p = await throne.send({ content: `🎪 <@&${t.roleId}> — a **${ARENA_LABEL[type] || type}** challenge just started in <#${channel.id}>! Play and score for your tribe. Ends <t:${Math.floor(endsAt / 1000)}:R>.`, allowedMentions: { roles: [t.roleId] } }).catch(() => null);
+    if (p) thronePings[t.key] = { channelId: t.throneId, messageId: p.id };
+  }
+  arena.update({ thronePings });
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), minutes * 60000);
   return arena.get();
 }
+const ARENA_LABEL = { race: 'Reaction Race', trivia: 'Trivia Sprint', scramble: 'Word Scramble', blitz: 'Activity Blitz' };
 function arenaScoreboard(a) {
   const rows = Object.entries(a.scores || {}).sort((x, y) => y[1] - x[1]);
   return rows.length ? rows.map(([k, v]) => `> ${tribeName(k)} — **${v}**`).join('\n') : '> _No points yet._';
@@ -973,14 +1008,30 @@ async function endArena(guild) {
   const a = arena.get(); if (!a) return;
   const win = arena.winner();
   const ch = await arenaChannel(guild);
+  const label = ARENA_LABEL[a.type] || 'challenge';
+  // Remove the per-throne start pings now that the event is over.
+  for (const p of Object.values(a.thronePings || {})) {
+    const tch = await guild.channels.fetch(p.channelId).catch(() => null);
+    const pm = tch && await tch.messages.fetch(p.messageId).catch(() => null);
+    if (pm) await pm.delete().catch(() => {});
+  }
+  let resultText;
   if (win) {
     tribes.addTreasury(win.key, arena.WIN_TREASURY);
     tribes.addGlory(win.key, arena.WIN_GLORY);
-    if (ch) await ch.send({ content: `# 🏆 Challenge over — ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${arena.WIN_GLORY} Glory** and **+${arena.WIN_TREASURY} Treasury**.\n\n${arenaScoreboard(a)}`, allowedMentions: { parse: [] } }).catch(() => {});
+    resultText = `# 🏆 ${label} — ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${arena.WIN_GLORY} Glory** and **+${arena.WIN_TREASURY} Treasury**.\n\n${arenaScoreboard(a)}`;
     await refreshThronePanel(guild, tribes.get(win.key)).catch(() => {});
-  } else if (ch) {
-    await ch.send({ content: `# 🏁 Challenge over\nNo tribe scored — no reward this time.` }).catch(() => {});
+  } else {
+    resultText = `# 🏁 ${label} over\nNo tribe scored — no reward this time.`;
   }
+  if (ch) await ch.send({ content: resultText, allowedMentions: { parse: [] } }).catch(() => {});   // in the channel it was played
+  // Also announce the result in the tribe-announcements channel, pinging every tribe.
+  const announce = await ensureTribeAnnounce(guild, config).catch(() => null);
+  if (announce) {
+    const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
+    await announce.send({ content: `${resultText}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
+  }
+  arena.recordEnd();   // stamp end for the cooldown + daily cap
   arena.clear();
 }
 // Called on boot: an active challenge from before a restart is ended immediately (a restart ends it early)
@@ -2248,6 +2299,8 @@ client.once('ready', async () => {
   // Refresh the Tribes Hub pinned message on boot so its content stays in sync with the code (idempotent —
   // edits the same tracked message; no-op if the channel/message is gone until someone re-runs hub-setup).
   if (dguild && tribes.getHubInfo()) await ensureTribesHub(dguild, config).catch(e => console.error(`[tribe hub] boot refresh: ${e.message}`));
+  // Ensure the tribe-announcements channel exists (created once, above the hub).
+  if (dguild && tribes.getHubInfo()) await ensureTribeAnnounce(dguild, config).catch(e => console.error(`[tribe announce] boot ensure: ${e.message}`));
   // Refresh every tribe's throne panel on boot too, so button/layout changes go live on deploy.
   if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
   // An arena challenge left active by a pre-restart crash is resolved early (see reconcileArena).
@@ -3886,7 +3939,7 @@ client.on('interactionCreate', async (interaction) => {
   // Hub: Start a Challenge — any tribe leader or admin picks a type; the Arena runs right in the hub channel.
   if (interaction.isButton?.() && interaction.customId === 'tribehub_arena') {
     if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can start a challenge.', flags: MessageFlags.Ephemeral });
-    if (arena.isActive()) return interaction.reply({ content: 'A challenge is already running — let it finish first.', flags: MessageFlags.Ephemeral });
+    { const blocked = arena.startBlocked(); if (blocked) return interaction.reply({ content: blocked, flags: MessageFlags.Ephemeral }); }
     const menu = new StringSelectMenuBuilder().setCustomId('tribehub_arena_pick').setPlaceholder('Pick a challenge…').addOptions(
       { label: 'Reaction Race', value: 'race', emoji: '🏁', description: 'First tribe to 10 claims wins' },
       { label: 'Trivia Sprint', value: 'trivia', emoji: '❓', description: '5 questions, first correct scores' },
@@ -3896,7 +3949,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribehub_arena_pick') {
     if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can start a challenge.', flags: MessageFlags.Ephemeral });
-    if (arena.isActive()) return interaction.update({ content: 'A challenge is already running — let it finish first.', components: [] }).catch(() => {});
+    { const blocked = arena.startBlocked(); if (blocked) return interaction.update({ content: blocked, components: [] }).catch(() => {}); }
     const type = interaction.values[0];
     const minutes = ARENA_DEFAULTS[type] || 5;
     await interaction.update({ content: `🎪 Launching **${type}** for **${minutes} min** in this channel…`, components: [] }).catch(() => {});
@@ -5561,7 +5614,7 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'arena') {
       // Any tribe LEADER or an admin may start one (owner, 2026-08-04).
       if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can launch a challenge.', flags: MessageFlags.Ephemeral });
-      if (arena.isActive()) return interaction.reply({ content: 'A challenge is already running — let it finish first.', flags: MessageFlags.Ephemeral });
+      { const blocked = arena.startBlocked(); if (blocked) return interaction.reply({ content: blocked, flags: MessageFlags.Ephemeral }); }
       const type = interaction.options.getString('type');
       const minutes = interaction.options.getInteger('minutes') || ARENA_DEFAULTS[type] || 5;
       await interaction.reply({ content: `🎪 Launching **${type}** for **${minutes} min** in this channel…`, flags: MessageFlags.Ephemeral });
