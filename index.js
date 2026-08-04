@@ -421,6 +421,7 @@ function tribeThronePanel(tribe) {
     new ButtonBuilder().setCustomId(`tribethrone_roster:${k}`).setEmoji('📋').setLabel('Roster').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`tribethrone_leaderboard:${k}`).setEmoji('🏆').setLabel('Leaderboard').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`tribethrone_shop:${k}`).setEmoji('🛒').setLabel('Shop').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_tithe:${k}`).setEmoji('🪙').setLabel('Tithe').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`tribethrone_leave:${k}`).setEmoji('🚪').setLabel('Leave').setStyle(ButtonStyle.Danger));
   const leaderRow1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribethrone_invite:${k}`).setEmoji('👥').setLabel('Invite').setStyle(ButtonStyle.Success),
@@ -2132,6 +2133,8 @@ client.once('ready', async () => {
   // Refresh the Tribes Hub pinned message on boot so its content stays in sync with the code (idempotent —
   // edits the same tracked message; no-op if the channel/message is gone until someone re-runs hub-setup).
   if (dguild && tribes.getHubInfo()) await ensureTribesHub(dguild, config).catch(e => console.error(`[tribe hub] boot refresh: ${e.message}`));
+  // Refresh every tribe's throne panel on boot too, so button/layout changes go live on deploy.
+  if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
@@ -3799,6 +3802,16 @@ client.on('interactionCreate', async (interaction) => {
       const body = top.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${t.userId}> · \`${t.points} ${pts}\``).join('\n');
       return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts} Leaderboard`, embeds: [new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
+    if (act === 'tithe') {
+      // Tithe = convert your OWN activity points into this tribe's treasury (same as /tribe offer). Members only.
+      if (!interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re not in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral });
+      const pts = tribe.pointsName || 'points';
+      const mine = tribes.getTides(tribe.key, interaction.user.id);
+      if (mine < 1) return interaction.reply({ content: `You have no ${pts} to tithe yet — earn some by chatting in the hall.`, flags: MessageFlags.Ephemeral });
+      const input = new TextInputBuilder().setCustomId('amount').setLabel(`How many ${pts} to tithe? (you have ${mine})`.slice(0, 45)).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(9);
+      const modal = new ModalBuilder().setCustomId(`tribethrone_tithe_modal:${tribeKey}`).setTitle('Tithe to the treasury').addComponents(new ActionRowBuilder().addComponents(input));
+      return safeShowModal(interaction, modal);
+    }
     if (act === 'shop') return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
     if (act === 'leave') {
       if (tribes.isLeader(interaction.member, tribe)) return interaction.reply({ content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).', flags: MessageFlags.Ephemeral });
@@ -3996,6 +4009,22 @@ client.on('interactionCreate', async (interaction) => {
       freeNote = `\n-# Used a **free retheme** (leader-loss grant).${left ? ` ${left} left.` : ''}`;
     }
     return interaction.reply({ content: r.content + freeNote, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_tithe_modal:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
+    if (!interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re not in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral });
+    const pts = tribe.pointsName || 'points';
+    const amount = parseInt((interaction.fields.getTextInputValue('amount') || '').replace(/[^0-9]/g, ''), 10);
+    if (!Number.isFinite(amount) || amount < 1) return interaction.reply({ content: 'Give a whole number of 1 or more.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.getTides(tribe.key, interaction.user.id);
+    if (mine < amount) return interaction.reply({ content: `You only have **${mine} ${pts}**.`, flags: MessageFlags.Ephemeral });
+    // Convert 1:1, own points -> tribe treasury. Ranks never demote, so this only slows your NEXT promotion.
+    tribes.addTides(tribe.key, interaction.user.id, -amount);
+    tribes.addTreasury(tribe.key, amount);
+    await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
+    return interaction.reply({ content: `🪙 You tithed **${amount} ${pts}** to **${tribe.shortName || tribe.name}**. Treasury is now **${tribes.getTreasury(tribe.key)}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_announce_modal:')) {
     const tribeKey = interaction.customId.split(':')[1];
