@@ -86,8 +86,11 @@ const config = {
     '1516185172213628989,1516185300492222618,1516185358415433739,1516209186839466113,' + // age 15-17,18-21,21-25,25-30+
     '1517716868650242098,1517717292392251483,1517717104399220856,1526939765667008615,' + // gender she/they/he/others
     '1501649800968278192,1501649801677111508,1501649802642063380,1501649802759508235,1501649803774267422,1501649805045141694,' + // country EU/NA/SA/ASIA/OCE/AFR
-    '1519408206370308197,' + // MDNI
-    '1527430885287264438' // OWNER⚜️ - the actual guild owner is fully un-cornerable (guarded in corner.corner()); this only matters for someone who merely HOLDS the role without being guild owner — kept visible even if the rest of their roles get stripped
+    '1519408206370308197' // MDNI
+    // OWNER⚜️ was here as a workaround for an old role-position limitation (the bot couldn't strip a role
+    // above its own). That's resolved — OWNER⚜️ grants real channel access, it's not a self-ID role like
+    // the ones above, so it now strips normally like everything else. The actual guild owner is separately
+    // fully un-cornerable regardless (guarded in corner.corner()).
   ).split(',').map(s => s.trim()).filter(Boolean),
 
   // Backfill: give the Unverified role to members who have NEITHER verified nor unverified. Their

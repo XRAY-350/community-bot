@@ -223,11 +223,11 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   }
   // Guard: the bot can't touch roles positioned at/above its OWN highest role — trying would fail with a
   // raw "Missing Permissions". Only roles we'd actually STRIP matter here — a KEPT role above the bot is
-  // fine, because we never touch it. The actual guild owner is already fully blocked above; this covers
-  // the separate case of someone who merely HOLDS the OWNER⚜️ role without being guild.ownerId (owner
-  // tier also requires the Administrator permission — see opspanel.memberTier) — they're still
-  // cornerable by an equal-or-higher tier actor, but OWNER⚜️ itself stays via identifyingRoleIds so their
-  // visible owner-role/color survives even though everything else gets stripped.
+  // fine, because we never touch it. (The bot's role sits at the very top by design, so this is mostly a
+  // backstop.) The actual guild owner is already fully blocked above; someone who merely HOLDS the
+  // OWNER⚜️ role without being guild.ownerId (owner tier also requires the Administrator permission — see
+  // opspanel.memberTier) is still cornerable by an equal-or-higher tier actor, and OWNER⚜️ strips along
+  // with everything else — it's an access-granting role, not a kept identifying one.
   const me = await guild.members.fetchMe();
   const stripIds = new Set(rolesToStrip(guild, member));
   const blockers = member.roles.cache.filter(r => stripIds.has(r.id) && r.position >= me.roles.highest.position);
