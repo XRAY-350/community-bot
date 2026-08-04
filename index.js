@@ -6009,6 +6009,11 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
+// TEMP diagnostic (2026-08-04): log when the event loop is blocked > 300ms — this is what would make an
+// interaction hang on "Sending command…". A timer scheduled for +1000ms that fires much later means something
+// ran synchronously and starved the loop; the lag size + timestamp lets us correlate it to a cause.
+let _elpTick = Date.now();
+setInterval(() => { const now = Date.now(); const lag = now - _elpTick - 1000; if (lag > 300) console.error(`[eventloop] blocked ${lag}ms`); _elpTick = now; }, 1000);
 client.on('error', err => console.error(`[client] ${err.message}\n${err.stack || ''}`));
 client.on('shardError', err => console.error(`[shard] ${err.message}\n${err.stack || ''}`));
 process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
