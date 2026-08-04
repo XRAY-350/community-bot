@@ -5637,8 +5637,8 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.on('error', err => console.error(`[client] ${err.message}`));
-client.on('shardError', err => console.error(`[shard] ${err.message}`));
+client.on('error', err => console.error(`[client] ${err.message}\n${err.stack || ''}`));
+client.on('shardError', err => console.error(`[shard] ${err.message}\n${err.stack || ''}`));
 process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
 
 client.login(config.token);
