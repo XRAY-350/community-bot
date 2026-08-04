@@ -14,10 +14,10 @@ const STATE_FILE = process.env.FUBU_ARENA_FILE || '/home/ubuntu/.fubu_arena.json
 const WIN_TREASURY = 150;   // the winning tribe banks this
 const WIN_GLORY = 100;
 const RACE_TARGET = 10;     // clicks to win a race
-const TRIVIA_QUESTIONS = 5; // questions per trivia sprint
+const TRIVIA_QUESTIONS = 10; // questions per trivia sprint (owner: the online bank is huge, so ask more)
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
-const COOLDOWN_MS = 3 * 60 * 60 * 1000;   // min gap between challenges (owner: cooldown)
-const DAILY_CAP = 3;                       // max challenges per UTC day (owner: daily cap)
+const COOLDOWN_MS = 3 * 60 * 60 * 1000;   // min gap between challenges (owner: cooldown, kept at 3h)
+const DAILY_CAP = 4;                       // max challenges per UTC day (owner: 4 so you can run 1 of each type)
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.

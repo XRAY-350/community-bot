@@ -938,21 +938,59 @@ async function sweepExpiredAllianceVotes(guild) {
 // winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
 const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30 };   // default minutes per type
-const _arenaTimers = { end: null, round: null };
-function clearArenaTimers() { for (const k of ['end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
+const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
+const _arenaTimers = { start: null, end: null, round: null };
+function clearArenaTimers() { for (const k of ['start', 'end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
 
 async function arenaChannel(guild) { const a = arena.get(); if (!a) return null; return guild.channels.fetch(a.channelId).catch(() => null); }
 function tribeName(key) { const t = tribes.get(key); return t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : key; }
 
-async function startArena(guild, type, minutes, startedById) {
-  // Everything runs in the tribe-announcements channel (owner: keep the hub clean; announce it there). Race/
-  // trivia use buttons (fine in a read-only channel); scramble needs typing, so we temporarily let @everyone
-  // send during it and re-lock at the end (see endArena).
+// A challenge no longer starts the instant the button is clicked. Instead we announce a 5-minute "get ready"
+// LOBBY (owner) — a general ping in tribe-announcements + a per-tribe heads-up in each throne — then beginArena
+// actually launches the game. The lobby throne pings double as the event pings and are cleaned up at endArena.
+async function startArenaCountdown(guild, type, minutes, startedById) {
   const channel = await ensureTribeAnnounce(guild, config);
   if (!channel) throw new Error('no tribe-announcements channel');
+  const startsAt = Date.now() + ARENA_LOBBY_MS;
+  const label = ARENA_LABEL[type] || type;
+  const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
+  // General heads-up in tribe-announcements, pinging every tribe so the whole server can gather in time.
+  const lobby = await channel.send({
+    content: `# 🎪 ${label} — starting soon!\nGet ready: a **${label}** arena begins <t:${Math.floor(startsAt / 1000)}:R> (in about ${Math.round(ARENA_LOBBY_MS / 60000)} minutes). Round up your tribe and be here in <#${channel.id}> when it starts.\n${roleIds.map(r => `<@&${r}>`).join(' ')}`,
+    allowedMentions: { roles: roleIds },
+  }).catch(() => null);
+  // Per-tribe heads-up in each throne (stored; endArena deletes them). These double as the event pings.
+  const thronePings = {};
+  for (const t of tribes.all()) {
+    if (!t.throneId || !t.roleId) continue;
+    const throne = await guild.channels.fetch(t.throneId).catch(() => null);
+    if (!throne) continue;
+    const p = await throne.send({ content: `🎪 <@&${t.roleId}> — a **${label}** arena begins <t:${Math.floor(startsAt / 1000)}:R>! Get ready and gather in <#${channel.id}>.`, allowedMentions: { roles: [t.roleId] } }).catch(() => null);
+    if (p) thronePings[t.key] = { channelId: t.throneId, messageId: p.id };
+  }
+  arena.set({ type, minutes, phase: 'lobby', channelId: channel.id, startedBy: startedById, startsAt,
+    lobbyMessageId: lobby ? lobby.id : null, thronePings, scores: {}, participants: [] });
+  _arenaTimers.start = setTimeout(() => beginArena(guild).catch(e => console.error('[arena] begin:', e.message)), ARENA_LOBBY_MS);
+  return arena.get();
+}
+
+// Actually launch the game once the 5-min lobby elapses (or on boot if it lapsed while the bot was down).
+// Reads the pending lobby state, posts the game in tribe-announcements, and flips the heads-up pings to LIVE.
+async function beginArena(guild) {
+  const pending = arena.get();
+  if (!pending || pending.phase !== 'lobby') return;   // nothing waiting, or already live
+  const { type } = pending;
+  const minutes = pending.minutes || ARENA_DEFAULTS[type] || 5;
+  const label = ARENA_LABEL[type] || type;
+  const thronePings = pending.thronePings || {};
+  const channel = await guild.channels.fetch(pending.channelId).catch(() => null) || await ensureTribeAnnounce(guild, config);
+  if (!channel) { console.error('[arena] begin: no tribe-announcements channel'); return; }
   if (type === 'scramble') await channel.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'arena scramble: allow answers' }).catch(() => {});
   const endsAt = Date.now() + minutes * 60000;
-  const base = { type, channelId: channel.id, startedBy: startedById, startedAt: Date.now(), endsAt, scores: {}, participants: [] };
+  // Preserve the lobby-created state (throne pings, lobby message, base scores) into the LIVE state.
+  const base = { type, minutes, phase: 'live', channelId: channel.id, startedBy: pending.startedBy,
+    startedAt: Date.now(), endsAt, scores: pending.scores || {}, participants: pending.participants || [],
+    thronePings, lobbyMessageId: pending.lobbyMessageId || null };
   if (type === 'race') {
     const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('arena_claim').setEmoji('🏁').setLabel('Claim for your tribe!').setStyle(ButtonStyle.Success));
     const msg = await channel.send({ content: `# 🏁 Reaction Race!\nFirst tribe to **${arena.RACE_TARGET}** claims wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. One claim per member. Ends <t:${Math.floor(endsAt / 1000)}:R> if nobody hits the target.\n\n${arenaScoreboard({ ...base })}`, components: [row] });
@@ -972,17 +1010,18 @@ async function startArena(guild, type, minutes, startedById) {
     arena.set({ ...base, questions, qNum: 0, source: fetched ? 'online' : 'local' });
     await askNextTrivia(guild);
   }
-  // Start ping: message every tribe in its OWN throne, pinging the tribe role (owner). Stored so endArena can
-  // delete them when the event's over ("delete the message after the duration").
-  const thronePings = {};
-  for (const t of tribes.all()) {
-    if (!t.throneId || !t.roleId) continue;
-    const throne = await guild.channels.fetch(t.throneId).catch(() => null);
-    if (!throne) continue;
-    const p = await throne.send({ content: `🎪 <@&${t.roleId}> — a **${ARENA_LABEL[type] || type}** challenge just started in <#${channel.id}>! Play and score for your tribe. Ends <t:${Math.floor(endsAt / 1000)}:R>.`, allowedMentions: { roles: [t.roleId] } }).catch(() => null);
-    if (p) thronePings[t.key] = { channelId: t.throneId, messageId: p.id };
+  // Flip the per-tribe heads-up pings to "LIVE now — play!".
+  for (const [k, p] of Object.entries(thronePings)) {
+    const t = tribes.resolve(k);
+    const tch = await guild.channels.fetch(p.channelId).catch(() => null);
+    const pm = tch && await tch.messages.fetch(p.messageId).catch(() => null);
+    if (pm) await pm.edit({ content: `🎪 ${t && t.roleId ? `<@&${t.roleId}> ` : ''}— the **${label}** arena is **LIVE now** in <#${channel.id}>! Play and score for your tribe. Ends <t:${Math.floor(endsAt / 1000)}:R>.`, allowedMentions: { roles: t && t.roleId ? [t.roleId] : [] } }).catch(() => {});
   }
-  arena.update({ thronePings });
+  // Flip the general lobby announcement to "LIVE now".
+  if (base.lobbyMessageId) {
+    const lm = await channel.messages.fetch(base.lobbyMessageId).catch(() => null);
+    if (lm) await lm.edit({ content: `# 🎪 ${label} — LIVE now!\nThe arena has begun in <#${channel.id}>. Play and score for your tribe — ends <t:${Math.floor(endsAt / 1000)}:R>.`, allowedMentions: { parse: [] } }).catch(() => {});
+  }
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), minutes * 60000);
   return arena.get();
 }
@@ -1059,6 +1098,8 @@ async function endArena(guild) {
     const pm = tch && await tch.messages.fetch(p.messageId).catch(() => null);
     if (pm) await pm.delete().catch(() => {});
   }
+  // Remove the general "starting soon / LIVE now" lobby announcement too (the result post replaces it).
+  if (a.lobbyMessageId && ch) { const lm = await ch.messages.fetch(a.lobbyMessageId).catch(() => null); if (lm) await lm.delete().catch(() => {}); }
   // Re-lock the announcements channel if a scramble had opened it for typing.
   if (a.type === 'scramble' && ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'arena scramble over: re-lock' }).catch(() => {});
   let resultText;
@@ -1083,6 +1124,15 @@ async function endArena(guild) {
 async function reconcileArena(guild) {
   const a = arena.get();
   if (!a) return;
+  // Lobby (pre-start countdown) in progress: begin now if the 5-min window already elapsed while we were down,
+  // otherwise re-arm the start timer for whatever's left (owner: a restart mustn't drop a scheduled arena).
+  if (a.phase === 'lobby') {
+    if (Date.now() >= (a.startsAt || 0)) { console.log('[arena] lobby countdown elapsed during downtime — starting now'); return beginArena(guild).catch(e => console.error('[arena] boot begin:', e.message)); }
+    const wait = a.startsAt - Date.now();
+    console.log(`[arena] resuming lobby countdown (${Math.round(wait / 1000)}s left)`);
+    _arenaTimers.start = setTimeout(() => beginArena(guild).catch(e => console.error('[arena] begin:', e.message)), wait);
+    return;
+  }
   // If the window already passed while the bot was down, resolve it. Otherwise CONTINUE the live challenge
   // (owner: a restart must not kill a real event) — re-arm the end timer and re-announce that it's still on.
   if (Date.now() >= a.endsAt) {
@@ -4139,7 +4189,7 @@ client.on('interactionCreate', async (interaction) => {
     { const blocked = arena.startBlocked(); if (blocked) return interaction.reply({ content: blocked, flags: MessageFlags.Ephemeral }); }
     const menu = new StringSelectMenuBuilder().setCustomId('tribehub_arena_pick').setPlaceholder('Pick a challenge…').addOptions(
       { label: 'Reaction Race', value: 'race', emoji: '🏁', description: 'First tribe to 10 claims wins' },
-      { label: 'Trivia Sprint', value: 'trivia', emoji: '❓', description: '5 questions, first correct scores' },
+      { label: 'Trivia Sprint', value: 'trivia', emoji: '❓', description: '10 questions, first correct scores' },
       { label: 'Word Scramble', value: 'scramble', emoji: '🔤', description: 'Type the unscrambled word to score' },
       { label: 'Activity Blitz', value: 'blitz', emoji: '⚡', description: 'Most hall activity wins' });
     return interaction.reply({ content: '🎪 Which challenge? It runs here in the hub, and the winning tribe banks Glory + Treasury.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
@@ -4150,8 +4200,8 @@ client.on('interactionCreate', async (interaction) => {
     const type = interaction.values[0];
     const minutes = ARENA_DEFAULTS[type] || 5;
     const announceCh = await ensureTribeAnnounce(interaction.guild, config).catch(() => null);
-    await interaction.update({ content: `🎪 Launching **${ARENA_LABEL[type] || type}** for **${minutes} min** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'}…`, components: [] }).catch(() => {});
-    try { await startArena(interaction.guild, type, minutes, interaction.user.id); }
+    await interaction.update({ content: `🎪 Announced **${ARENA_LABEL[type] || type}** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'} — it begins in **5 minutes** so everyone can gather, then runs for **${minutes} min**.`, components: [] }).catch(() => {});
+    try { await startArenaCountdown(interaction.guild, type, minutes, interaction.user.id); }
     catch (e) { console.error('[arena] hub start:', e.message); await interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
     return;
   }
@@ -5811,8 +5861,8 @@ client.on('interactionCreate', async (interaction) => {
       const type = interaction.options.getString('type');
       const minutes = interaction.options.getInteger('minutes') || ARENA_DEFAULTS[type] || 5;
       const announceCh = await ensureTribeAnnounce(interaction.guild, config).catch(() => null);
-      await interaction.reply({ content: `🎪 Launching **${ARENA_LABEL[type] || type}** for **${minutes} min** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'}…`, flags: MessageFlags.Ephemeral });
-      try { await startArena(interaction.guild, type, minutes, interaction.user.id); }
+      await interaction.reply({ content: `🎪 Announced **${ARENA_LABEL[type] || type}** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'} — it begins in **5 minutes** so everyone can gather, then runs for **${minutes} min**.`, flags: MessageFlags.Ephemeral });
+      try { await startArenaCountdown(interaction.guild, type, minutes, interaction.user.id); }
       catch (e) { console.error('[arena] start:', e.message); return interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
       return;
     }
