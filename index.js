@@ -835,6 +835,7 @@ const TRIBE_UNLOCKS = [
   { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 26, crownGate: 4, cost: 900 },
   { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 30, crownGate: 5, cost: 800 },
   { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 35, crownGate: 7, cost: 2500 },
+  { key: 'icon', emoji: '🖼️', label: 'Tribe Icon', desc: 'Set an emoji icon on your tribe role with `/tribe icon`.', memberGate: 40, crownGate: 8, cost: 3000 },
 ];
 const TRIBE_CHANNEL_CAP = 6;
 const MUSTER_DURATION_MS = 2 * 3600000;   // window to answer a muster
@@ -879,7 +880,8 @@ async function applyTribeUnlock(guild, tribe, u) {
   } else if (u.key === 'fastertides') {
     tribes.update(tribe.key, { tideCooldownMs: 45000 });
   }
-  // 'retheme' has no purchase-time effect — it just flips on the /tribe retheme command below.
+  // 'retheme' and 'icon' have no purchase-time effect — they just flip on the /tribe retheme and
+  // /tribe icon commands respectively.
 }
 // Tears down a BOUGHT channel (text2/voice2 only, per spec — no refund). Other unlocks aren't reversible.
 async function teardownTribeUnlock(guild, tribe, unlockKey) {
@@ -1805,6 +1807,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false))
           .addStringOption(o => o.setName('name').setDescription('New full tribe name (optional)').setRequired(false).setMaxLength(80))
           .addStringOption(o => o.setName('short_name').setDescription('New short name for cards (optional)').setRequired(false).setMaxLength(40)))
+        .addSubcommand(s => s.setName('icon').setDescription('Set an emoji icon on your tribe role (needs the Tribe Icon unlock; leaders only)')
+          .addStringOption(o => o.setName('emoji').setDescription('An emoji for the icon (or "none" to clear)').setRequired(true).setMaxLength(60)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
@@ -5089,6 +5093,26 @@ client.on('interactionCreate', async (interaction) => {
         freeNote = `\n-# Used a **free retheme** (leader-loss grant).${left ? ` ${left} left.` : ''}`;
       }
       return interaction.reply(r.content + freeNote);
+    }
+    if (sub === 'icon') {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can set the tribe icon.`, flags: MessageFlags.Ephemeral });
+      if (!tribes.hasUnlock(tribe, 'icon')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked the **Tribe Icon** yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
+      const raw = interaction.options.getString('emoji').trim();
+      const role = interaction.guild.roles.cache.get(tribe.roleId);
+      if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
+      if (/^(none|clear|off)$/i.test(raw)) {
+        await role.edit({ unicodeEmoji: null, icon: null }, `Tribe icon cleared by ${interaction.user.tag}`).catch(() => {});
+        return interaction.reply({ content: `🖼️ Cleared **${tribe.shortName || tribe.name}**’s role icon.`, flags: MessageFlags.Ephemeral });
+      }
+      // A single unicode emoji is the accepted input (role icons take one emoji; custom-server-emoji images
+      // need an upload flow we don't do here). Grab the first emoji-looking glyph.
+      const m = raw.match(/\p{Extended_Pictographic}/u);
+      if (!m) return interaction.reply({ content: 'Give a single emoji (e.g. 🔥), or `none` to clear. Custom server emojis aren’t supported as role icons here.', flags: MessageFlags.Ephemeral });
+      const ok = await role.edit({ unicodeEmoji: m[0] }, `Tribe icon set by ${interaction.user.tag}`).then(() => true).catch(() => false);
+      if (!ok) return interaction.reply({ content: 'Couldn’t set that as the role icon. (Emoji may not be supported.)', flags: MessageFlags.Ephemeral });
+      await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
+      return interaction.reply({ content: `🖼️ Set **${tribe.shortName || tribe.name}**’s role icon to ${m[0]}.`, flags: MessageFlags.Ephemeral });
     }
     if (sub === 'muster') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
