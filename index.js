@@ -39,6 +39,7 @@ const strikeAppeals = require('./strikeAppeals');
 const features = require('./features');
 const contest = require('./contest');
 const arena = require('./arena');
+const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js / COPY-REGISTRY.md)
@@ -173,7 +174,7 @@ async function submitLeaveRequest(guild, member) {
     new ButtonBuilder().setCustomId(`tribeleave_deny:${member.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
   if (mine.throneId) {
     const throne = await guild.channels.fetch(mine.throneId).catch(() => null);
-    if (throne) await throne.send({ content: `## 🚪 Leave request\n<@${member.id}> is asking to leave **${mine.shortName || mine.name}**.${mine.leaderRoleId ? ` <@&${mine.leaderRoleId}>` : ''}`, components: [row], allowedMentions: { users: [member.id], roles: mine.leaderRoleId ? [mine.leaderRoleId] : [] } }).catch(() => {});
+    if (throne) await throneSend(throne, { content: `## 🚪 Leave request\n<@${member.id}> is asking to leave **${mine.shortName || mine.name}**.${mine.leaderRoleId ? ` <@&${mine.leaderRoleId}>` : ''}`, components: [row], allowedMentions: { users: [member.id], roles: mine.leaderRoleId ? [mine.leaderRoleId] : [] } }).catch(() => {});
   }
   return { ok: true, content: `🚪 Sent to ${tribes.leaderTitle(mine)}${mine.throneId ? ` in <#${mine.throneId}>` : ''}. You'll stay in **${mine.shortName || mine.name}** until it's approved.` };
 }
@@ -192,7 +193,7 @@ async function submitJoinRequest(guild, member, tribe) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribenom_approve:${member.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tribenom_deny:${member.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
-  await throne.send({ content: `## 🪶 Join request\n> <@${member.id}> is asking to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to let them in.`, components: [row], allowedMentions: { users: [member.id] } }).catch(() => {});
+  await throneSend(throne, { content: `## 🪶 Join request\n> <@${member.id}> is asking to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to let them in.`, components: [row], allowedMentions: { users: [member.id] } }).catch(() => {});
   return { ok: true, content: `🪶 Sent to <#${tribe.throneId}> for approval.` };
 }
 // ---- Shared leader-tool actions — used by BOTH the typed /tribe subcommands and the per-tribe Throne Hub
@@ -590,7 +591,7 @@ async function processWeeklyCrownIfDue(guild) {
   if (crownRole && tribeRole) for (const m of [...tribeRole.members.values()]) await m.roles.add(crownRole.id, `Weekly crown: ${tribe.key}`).catch(() => {});
   if (tribe.throneId) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
-    if (throne) await throne.send({ content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
+    if (throne) await throneSend(throne, { content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
 }
 // Catches "General" (staff auto-rank) drift that join-time syncing alone would miss: a member promoted to
@@ -788,7 +789,7 @@ async function postWarVote(guild, war, attacker, defender) {
     new ButtonBuilder().setCustomId(`tribewar_vote:${war.id}:no`).setEmoji('🕊️').setLabel('Against').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`tribewar_cancel:${war.id}`).setEmoji('🛑').setLabel('Cancel (leader)').setStyle(ButtonStyle.Secondary));
   const endsAt = Math.floor(war.voteEndsAt / 1000);
-  const msg = await throne.send({ content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender.emoji || '🏴'} ${defender.shortName || defender.name}**?\nVoting ends <t:${endsAt}:R> (or as soon as the result is locked).\n${voteTallyLine(war.votes, memberCount, 'declare war')}`, components: [row], allowedMentions: { roles: [attacker.roleId] } }).catch(() => null);
+  const msg = await throneSend(throne, { content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender.emoji || '🏴'} ${defender.shortName || defender.name}**?\nVoting ends <t:${endsAt}:R> (or as soon as the result is locked).\n${voteTallyLine(war.votes, memberCount, 'declare war')}`, components: [row], allowedMentions: { roles: [attacker.roleId] } }).catch(() => null);
   if (msg) tribes.resolveWarRecord(war.id, { channelId: throne.id, messageId: msg.id });
   return msg;
 }
@@ -807,7 +808,7 @@ async function resolveWarVoteRecord(guild, war) {
     if (!war.channelId || !war.messageId) return;
     const ch = await guild.channels.fetch(war.channelId).catch(() => null);
     const msg = ch && await ch.messages.fetch(war.messageId).catch(() => null);
-    if (msg) await msg.edit({ content, components }).catch(() => {});
+    if (msg) { await msg.edit({ content, components }).catch(() => {}); throneTouch(war.channelId, war.messageId); }
   };
   if (!passed) {
     tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() });
@@ -822,7 +823,7 @@ async function resolveWarVoteRecord(guild, war) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribewar_accept:${war.id}`).setEmoji('⚔️').setLabel('Accept the war').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`tribewar_declchance:${war.id}`).setEmoji('🎲').setLabel('Decline → coin flip').setStyle(ButtonStyle.Secondary));
-  await dthrone.send({ content: `## ⚔️ War declared on ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n**${attacker.emoji || '🏴'} ${attacker.shortName || attacker.name}**'s members voted to war you. ${tribes.leaderTitle(defender)} or staff: **Accept** and fight it out, or **Decline** and a coin flip decides whether it happens anyway.`, components: [row], allowedMentions: { roles: defender.leaderRoleId ? [defender.leaderRoleId] : [] } }).catch(() => {});
+  await throneSend(dthrone, { content: `## ⚔️ War declared on ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n**${attacker.emoji || '🏴'} ${attacker.shortName || attacker.name}**'s members voted to war you. ${tribes.leaderTitle(defender)} or staff: **Accept** and fight it out, or **Decline** and a coin flip decides whether it happens anyway.`, components: [row], allowedMentions: { roles: defender.leaderRoleId ? [defender.leaderRoleId] : [] } }).catch(() => {});
 }
 // The actual battle: simulation + every consequence (treasury raid, glory, captured members, cooldowns on both
 // sides). Called after the defender accepts, or after a declined-war coin flip lands on "war". `note` prefixes
@@ -849,7 +850,7 @@ async function executeWar(guild, war, note = '') {
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
-    if (throne) await throne.send({ content: summary, allowedMentions: { parse: [] } }).catch(() => {});
+    if (throne) await throneSend(throne, { content: summary, allowedMentions: { parse: [] } });
   }
   await refreshThronePanel(guild, tribes.get(attacker.key)).catch(() => {});
   await refreshThronePanel(guild, tribes.get(defender.key)).catch(() => {});
@@ -866,7 +867,7 @@ async function resolveWarByChance(guild, war, declineNote) {
   if (warHappens) { await executeWar(guild, war, `-# ${declineNote} Fate chose war.\n`).catch(() => {}); return { warHappened: true }; }
   tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() });
   const athrone = attacker.throneId && await guild.channels.fetch(attacker.throneId).catch(() => null);
-  if (athrone) await athrone.send({ content: `🕊️ Fate spared **${defender.shortName || defender.name}** — the declared war on them fizzled on a coin flip. No battle, no spoils.`, allowedMentions: { parse: [] } }).catch(() => {});
+  if (athrone) await throneSend(athrone, { content: `🕊️ Fate spared **${defender.shortName || defender.name}** — the declared war on them fizzled on a coin flip. No battle, no spoils.`, allowedMentions: { parse: [] } }).catch(() => {});
   return { warHappened: false };
 }
 // A defender who never answers the Accept/Decline prompt shouldn't veto by inaction (owner, 2026-08-04:
@@ -893,7 +894,7 @@ async function postAllianceVote(guild, vote, proposer, target) {
     new ButtonBuilder().setCustomId(`tribealliance_vote:${vote.id}:no`).setEmoji('❌').setLabel('Against').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`tribealliance_cancel:${vote.id}`).setEmoji('🛑').setLabel('Cancel (leader)').setStyle(ButtonStyle.Secondary));
   const endsAt = Math.floor(vote.voteEndsAt / 1000);
-  const msg = await throne.send({ content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target.emoji || '🏴'} ${target.shortName || target.name}**?\nVoting ends <t:${endsAt}:R> (or as soon as the result is locked).\n${voteTallyLine(vote.votes, memberCount, 'propose')}`, components: [row], allowedMentions: { roles: [proposer.roleId] } }).catch(() => null);
+  const msg = await throneSend(throne, { content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target.emoji || '🏴'} ${target.shortName || target.name}**?\nVoting ends <t:${endsAt}:R> (or as soon as the result is locked).\n${voteTallyLine(vote.votes, memberCount, 'propose')}`, components: [row], allowedMentions: { roles: [proposer.roleId] } }).catch(() => null);
   if (msg) tribes.resolveAllianceVoteRecord(vote.id, { channelId: throne.id, messageId: msg.id });
   return msg;
 }
@@ -909,7 +910,7 @@ async function resolveAllianceVoteRecord(guild, vote) {
     if (!vote.channelId || !vote.messageId) return;
     const ch = await guild.channels.fetch(vote.channelId).catch(() => null);
     const msg = ch && await ch.messages.fetch(vote.messageId).catch(() => null);
-    if (msg) await msg.edit({ content, components }).catch(() => {});
+    if (msg) { await msg.edit({ content, components }).catch(() => {}); throneTouch(vote.channelId, vote.messageId); }
   };
   if (!passed) {
     tribes.resolveAllianceVoteRecord(vote.id, { status: 'failed', resolvedAt: Date.now() });
@@ -926,7 +927,7 @@ async function resolveAllianceVoteRecord(guild, vote) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribealliance_approve:${vote.id}`).setLabel('✅ Accept').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tribealliance_deny:${vote.id}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
-  await throne.send({ content: `## 🤝 Alliance proposal\n**${proposer.emoji || '🏴'} ${proposer.shortName || proposer.name}**'s members voted to propose an alliance. ${tribes.leaderTitle(target)} or staff: accept?`, components: [row] }).catch(() => {});
+  await throneSend(throne, { content: `## 🤝 Alliance proposal\n**${proposer.emoji || '🏴'} ${proposer.shortName || proposer.name}**'s members voted to propose an alliance. ${tribes.leaderTitle(target)} or staff: accept?`, components: [row] }).catch(() => {});
 }
 async function sweepExpiredAllianceVotes(guild) {
   for (const vote of tribes.expiredAllianceVotes(Date.now())) await resolveAllianceVoteRecord(guild, vote).catch(e => console.error('[tribe alliance] resolve:', e.message));
@@ -1664,6 +1665,49 @@ const client = new Client({
   partials: [Partials.GuildMember, Partials.Message, Partials.Reaction, Partials.User],
 });
 
+// --- Throne message auto-expiry (owner: each transient throne message gets its own 24h timer) -----------
+// Use throneSend() instead of throne.send() for TRANSIENT throne posts (requests, vote prompts, notices):
+// it sends, then schedules the message to self-delete 24h later. The persistent throne panel and the arena
+// start-pings deliberately keep raw throne.send() so they're never expired here. Deadlines persist to disk,
+// and armThroneExpire re-arms them after a restart, so nothing is orphaned.
+const _throneTimers = new Map();
+async function deleteThroneExpired(channelId, messageId) {
+  _throneTimers.delete(messageId);
+  try {
+    const ch = await client.channels.fetch(channelId).catch(() => null);
+    const m = ch && await ch.messages.fetch(messageId).catch(() => null);
+    if (m) await m.delete().catch(() => {});
+  } finally { throneExpire.remove(messageId); }
+}
+function armThroneExpire(channelId, messageId, ms) {
+  if (_throneTimers.has(messageId)) return;
+  const t = setTimeout(() => deleteThroneExpired(channelId, messageId), Math.max(0, ms));
+  if (t.unref) t.unref();   // don't keep the process alive just for a cleanup timer
+  _throneTimers.set(messageId, t);
+}
+async function throneSend(channel, payload) {
+  const msg = await channel.send(payload).catch(() => null);
+  if (msg) { const at = Date.now() + throneExpire.TTL_MS; throneExpire.add(channel.id, msg.id, at); armThroneExpire(channel.id, msg.id, throneExpire.TTL_MS); }
+  return msg;
+}
+// Reset a throne message's 24h timer — call after EDITING a throne message (vote tally / result) so it
+// expires 24h after the last edit, not 24h after it was first posted (owner: a war vote can run up to 24h;
+// it should clean up 24h after the result is determined).
+function throneTouch(channelId, messageId) {
+  if (!channelId || !messageId) return;
+  throneExpire.add(channelId, messageId, Date.now() + throneExpire.TTL_MS);   // upsert -> push deadline
+  const existing = _throneTimers.get(messageId);
+  if (existing) { clearTimeout(existing); _throneTimers.delete(messageId); }
+  armThroneExpire(channelId, messageId, throneExpire.TTL_MS);
+}
+// Re-arm persisted throne expiries after a restart (past-due ones fire immediately via ms<=0).
+function rearmThroneExpiries() {
+  const now = Date.now();
+  const q = throneExpire.all();
+  for (const e of q) armThroneExpire(e.channelId, e.messageId, e.deleteAt - now);
+  if (q.length) console.log(`[throneExpire] re-armed ${q.length} pending throne message expiry(ies)`);
+}
+
 let verifyChannel = null;
 let alertChannel = null;
 let warnChannel = null;
@@ -2365,6 +2409,7 @@ client.once('ready', async () => {
   if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
   // An arena challenge left active by a pre-restart crash is resolved early (see reconcileArena).
   if (dguild) await reconcileArena(dguild).catch(e => console.error(`[arena] boot reconcile: ${e.message}`));
+  try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
@@ -3318,6 +3363,18 @@ client.on('messageDelete', async (msg) => {
 
 // Button routing (verify panel · corner controls · conflict resolve) + /corner /uncorner below.
 client.on('interactionCreate', async (interaction) => {
+  // TEMP diag (hang investigation 2026-08-04): log every non-autocomplete interaction at entry so we can
+  // prove whether "Send to corner" / /corner interactions even ARRIVE at the handler. Remove once resolved.
+  if (!interaction.isAutocomplete?.()) {
+    const kind = interaction.isChatInputCommand?.() ? `slash:${interaction.commandName}`
+      : interaction.isMessageContextMenuCommand?.() ? `ctxmsg:${interaction.commandName}`
+      : interaction.isUserContextMenuCommand?.() ? `ctxuser:${interaction.commandName}`
+      : interaction.isButton?.() ? `btn:${interaction.customId}`
+      : interaction.isStringSelectMenu?.() ? `select:${interaction.customId}`
+      : interaction.isModalSubmit?.() ? `modal:${interaction.customId}`
+      : `other:${interaction.type}`;
+    console.error(`[idiag] IN ${kind} by ${interaction.user?.id} in #${interaction.channelId}`);
+  }
   // /unban's user_id: autocomplete search over the actual ban list (see the names, don't paste a raw ID blind).
   if (interaction.isAutocomplete?.()) {
     if (interaction.commandName === 'unban') {
@@ -4311,7 +4368,7 @@ client.on('interactionCreate', async (interaction) => {
     const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
     if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
     const msg = interaction.fields.getTextInputValue('message').slice(0, 1500).replace(/\n/g, '\n> ');
-    await throne.send({ content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name}: Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(() => {});
+    await throneSend(throne, { content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name}: Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(() => {});
     return interaction.reply({ content: `📣 Posted to <#${tribe.throneId}> and rallied the tribe.`, flags: MessageFlags.Ephemeral });
   }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tribethrone_motto_modal:')) {
@@ -4772,7 +4829,11 @@ client.on('interactionCreate', async (interaction) => {
     if (target.author.id === interaction.guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
     // Show the rule picker IMMEDIATELY — no member fetch here (that await was blowing the 3s ack window under
     // load, so nothing appeared). The tier-hierarchy check runs at modal submit, where the member is fetched.
-    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`corner_rule_pick:${target.author.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
+    try {
+      await interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`corner_rule_pick:${target.author.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
+      console.error('[idiag] corner ctx reply OK');
+    } catch (e) { console.error(`[idiag] corner ctx reply FAIL: ${e.message}`); }
+    return;
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Strike') {
     if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
@@ -5477,7 +5538,7 @@ client.on('interactionCreate', async (interaction) => {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`tribenom_approve:${target.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`tribenom_deny:${target.id}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
-      await throne.send({ content: `## 🪶 Nomination\n-# proposed by <@${interaction.user.id}>\n> <@${interaction.user.id}> nominates <@${target.id}> to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to send them an invite to accept.`, components: [row], allowedMentions: { users: [target.id] } }).catch(() => {});
+      await throneSend(throne, { content: `## 🪶 Nomination\n-# proposed by <@${interaction.user.id}>\n> <@${interaction.user.id}> nominates <@${target.id}> to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to send them an invite to accept.`, components: [row], allowedMentions: { users: [target.id] } }).catch(() => {});
       return interaction.reply({ content: `🪶 Sent to <#${tribe.throneId}> for approval. If ${tribes.leaderTitle(tribe)} or staff approve, ${target.displayName} will get an invite to accept.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     // A self-service petition — reuses the EXACT nomination machinery (nominatorId === targetId), so leader/
@@ -5577,7 +5638,7 @@ client.on('interactionCreate', async (interaction) => {
         const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
         if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
         const msg = interaction.options.getString('message').slice(0, 1500).replace(/\n/g, '\n> ');
-        await throne.send({ content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name}: Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(e => console.error('[tribe announce]', e.message));
+        await throneSend(throne, { content: `## ${tribe.emoji || '🏰'} ${tribe.shortName || tribe.name}: Proclamation\n-# by <@${interaction.user.id}> · <@&${tribe.roleId}>\n> ${msg}`, allowedMentions: { roles: [tribe.roleId], users: [interaction.user.id] } }).catch(e => console.error('[tribe announce]', e.message));
         return interaction.reply({ content: `📣 Posted to <#${tribe.throneId}> and rallied the tribe.`, flags: MessageFlags.Ephemeral });
       }
       if (sub === 'note') {
@@ -5705,7 +5766,7 @@ client.on('interactionCreate', async (interaction) => {
       const reqNote = tribes.isModFounded(t) ? ` Now **${count}/${tribes.MIN_MOD_LEADERS}** leaders.` : '';
       await ownerlog.log(interaction.guild, { emoji: '👑', title: 'Tribe leader set', color: 0x5865F2,
         detail: `<@${newLeader.id}> made a ${tribes.leaderTitle(t)} of **${t.shortName || t.name}** by <@${interaction.user.id}>.${stepDownNote}${reqNote}` }).catch(() => {});
-      if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throne.send({ content: `## ${t.emoji || '🏴'} New ${tribes.leaderTitle(t)}\n<@${newLeader.id}> now leads **${t.shortName || t.name}**.${stepDownNote}`, allowedMentions: { users: [newLeader.id] } }).catch(() => {}); }
+      if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throneSend(throne, { content: `## ${t.emoji || '🏴'} New ${tribes.leaderTitle(t)}\n<@${newLeader.id}> now leads **${t.shortName || t.name}**.${stepDownNote}`, allowedMentions: { users: [newLeader.id] } }).catch(() => {}); }
       await refreshThronePanel(interaction.guild, tribes.get(t.key)).catch(() => {});
       return interaction.editReply(`👑 <@${newLeader.id}> is now a ${tribes.leaderTitle(t)} of **${t.shortName || t.name}**.${stepDownNote}${reqNote}`);
     }
