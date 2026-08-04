@@ -495,8 +495,10 @@ function tribeHubEmbed() {
     + `A leader can call a **muster**, a roll-call in the hall (about once a day). Answer it and the tribe banks treasury + glory for every member who shows up.\n\n`
     + `## War & Alliances\n`
     + `A leader can **Declare War**: your OWN members vote first (24h, needs real turnout and a majority), the target gets no say in whether it starts. It resolves instantly by a strength simulation weighted by your tribe's Tides (not a guaranteed win, not rank-based), and there's a 72h cooldown after. The loser gets raided for ~25% treasury and can lose a few regular members for 36h (never the leader, never wiped out). **Alliances** (capped at 1 per tribe) need your members' vote too, then the other tribe's leader accepts — allies defend each other in wars and can gift treasury to each other.\n\n`
+    + `## Challenges — the Arena\n`
+    + `Any tribe **leader** (or an admin) can hit **🎪 Start a Challenge** below to run a live cross-tribe game right here — **Reaction Race**, **Trivia Sprint**, **Word Scramble**, or **Activity Blitz**. The bot runs and scores it automatically; the winning tribe banks **Glory + Treasury**. One at a time.\n\n`
     + `## Every tribe's Throne\n`
-    + `Each tribe's throne channel has its own pinned control panel. Members get Roster / Leaderboard / Shop / Leave. Leaders (or staff) get the full toolkit: Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Muster, Declare War, and Alliances, click a button instead of typing.\n\n`
+    + `Each tribe's throne channel has its own pinned control panel. Members get Roster / Leaderboard / Shop / Tithe / Leave. Leaders (or staff) get the full toolkit: Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Muster, Declare War, and Alliances, click a button instead of typing.\n\n`
     + `-# Use the buttons below instead of typing commands out.`;
   return new EmbedBuilder().setColor(0x2A426A).setDescription(desc.slice(0, 4096));
 }
@@ -513,6 +515,8 @@ function tribeHubButtons() {
       new ButtonBuilder().setCustomId('tribehub_shop').setEmoji('🛒').setLabel('My Shop').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('tribehub_join').setEmoji('🪶').setLabel('Join Request').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('tribehub_leave').setEmoji('🚪').setLabel('Leave').setStyle(ButtonStyle.Danger)),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('tribehub_arena').setEmoji('🎪').setLabel('Start a Challenge (leaders/admins)').setStyle(ButtonStyle.Primary)),
   ];
 }
 // Idempotent create-or-refresh: makes the channel once, edits the SAME message on every later call (a hub
@@ -924,7 +928,7 @@ async function startArena(guild, channel, type, minutes, startedById) {
     const msg = await channel.send({ content: `# 🏁 Reaction Race!\nFirst tribe to **${arena.RACE_TARGET}** claims wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. One claim per member. Ends <t:${Math.floor(endsAt / 1000)}:R> if nobody hits the target.\n\n${arenaScoreboard({ ...base })}`, components: [row] });
     arena.set({ ...base, messageId: msg.id });
   } else if (type === 'blitz') {
-    const msg = await channel.send({ content: `# ⚡ Activity Blitz!\nFor the next **${minutes} minutes**, every message in your tribe's hall scores a point. The most active tribe wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. Ends <t:${Math.floor(endsAt / 1000)}:R>. Go!` });
+    const msg = await channel.send({ content: `# ⚡ Activity Blitz!\nFor the next **${minutes} minutes**, every message you send **anywhere in the server** scores a point for your tribe. The most active tribe wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. Ends <t:${Math.floor(endsAt / 1000)}:R>. Go!` });
     arena.set({ ...base, messageId: msg.id });
   } else if (type === 'scramble') {
     const word = arena.nextWord([]);
@@ -3118,7 +3122,10 @@ client.on('messageCreate', async (msg) => {
             if (ch) await ch.send({ content: scrambleContent(word, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
           }
         } else if (ax.type === 'blitz') {
-          const home = tribes.all().find(t => (t.hallId === msg.channelId || t.text2Id === msg.channelId) && msg.member?.roles.cache.has(t.roleId));
+          // A message ANYWHERE in the server by a tribe member scores for their tribe (owner, 2026-08-04:
+          // blitz should reward whole-server activity, not just the hall — the hall is already how Tides
+          // are earned normally). Per-member 8s cooldown so it's activity, not spam.
+          const home = tribes.memberTribe(msg.member);
           if (home) {
             const ck = `${home.key}:${msg.author.id}`, now = Date.now();
             if (!(_blitzCooldown.get(ck) > now - 8000)) { _blitzCooldown.set(ck, now); arena.addScore(home.key, 1); }
@@ -3873,6 +3880,27 @@ client.on('interactionCreate', async (interaction) => {
       return new EmbedBuilder().setColor(t.color || 0x2A426A).setTitle(`${t.emoji || '🏴'} ${t.shortName || t.name}`).setDescription(body).setFooter({ text: `top 5 by ${pts}` });
     });
     return interaction.reply({ content: '## 🏆 Every tribe’s leaderboard', embeds, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  }
+  // Hub: Start a Challenge — any tribe leader or admin picks a type; the Arena runs right in the hub channel.
+  if (interaction.isButton?.() && interaction.customId === 'tribehub_arena') {
+    if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can start a challenge.', flags: MessageFlags.Ephemeral });
+    if (arena.isActive()) return interaction.reply({ content: 'A challenge is already running — let it finish first.', flags: MessageFlags.Ephemeral });
+    const menu = new StringSelectMenuBuilder().setCustomId('tribehub_arena_pick').setPlaceholder('Pick a challenge…').addOptions(
+      { label: 'Reaction Race', value: 'race', emoji: '🏁', description: 'First tribe to 10 claims wins' },
+      { label: 'Trivia Sprint', value: 'trivia', emoji: '❓', description: '5 questions, first correct scores' },
+      { label: 'Word Scramble', value: 'scramble', emoji: '🔤', description: 'Type the unscrambled word to score' },
+      { label: 'Activity Blitz', value: 'blitz', emoji: '⚡', description: 'Most hall activity wins' });
+    return interaction.reply({ content: '🎪 Which challenge? It runs here in the hub, and the winning tribe banks Glory + Treasury.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribehub_arena_pick') {
+    if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can start a challenge.', flags: MessageFlags.Ephemeral });
+    if (arena.isActive()) return interaction.update({ content: 'A challenge is already running — let it finish first.', components: [] }).catch(() => {});
+    const type = interaction.values[0];
+    const minutes = ARENA_DEFAULTS[type] || 5;
+    await interaction.update({ content: `🎪 Launching **${type}** for **${minutes} min** in this channel…`, components: [] }).catch(() => {});
+    try { await startArena(interaction.guild, interaction.channel, type, minutes, interaction.user.id); }
+    catch (e) { console.error('[arena] hub start:', e.message); await interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
+    return;
   }
   if (interaction.isButton?.() && interaction.customId === 'tribehub_shop') {
     const tribe = tribes.myTribe(interaction.member);
@@ -5475,7 +5503,7 @@ client.on('interactionCreate', async (interaction) => {
     // gated inside its own handler (a tribe's OWN leader can use it, not just admins). Every other
     // subcommand (register/points/title/ranks/grant/challenge-*) stays admin-only, unchanged.
     const modSelfFounding = sub === 'create' && opspanel.tierOf(interaction) === 'mod';
-    if (sub !== 'set-leader' && !canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
+    if (!['set-leader', 'arena'].includes(sub) && !canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
     if (sub === 'hub-setup') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await ensureTribesHub(interaction.guild, config);
@@ -5529,7 +5557,8 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in #tribes-hub Standings and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'arena') {
-      if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can launch a challenge.', flags: MessageFlags.Ephemeral });
+      // Any tribe LEADER or an admin may start one (owner, 2026-08-04).
+      if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can launch a challenge.', flags: MessageFlags.Ephemeral });
       if (arena.isActive()) return interaction.reply({ content: 'A challenge is already running — let it finish first.', flags: MessageFlags.Ephemeral });
       const type = interaction.options.getString('type');
       const minutes = interaction.options.getInteger('minutes') || ARENA_DEFAULTS[type] || 5;
