@@ -1154,9 +1154,13 @@ async function handleCornerButton(interaction) {
   if (interaction.customId.startsWith('corner_recorner:')) {
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) return interaction.editReply(copy.common.noMemberInServer);
-    if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === guild.ownerId) {
-      return interaction.editReply('You cannot corner an admin.');
-    }
+    // Same tier hierarchy as /corner (own tier or lower, never higher) — see wl_corner's comment above for
+    // why this can't be a blanket "no admins ever" block.
+    if (member.id === guild.ownerId) return interaction.editReply('You cannot corner the server owner.');
+    const recornerActorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
+    const recornerTargetTier = opspanel.memberTier(member);
+    const recornerTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[recornerTargetTier] || 0;
+    if (recornerTargetRank > recornerActorRank) return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${recornerTargetTier}**).`);
     const r = await corner.corner(guild, member, null, state, interaction.user.id);
     if (!r.ok) return interaction.editReply(`Failed to re-corner: ${r.error}`);
     try {
@@ -2689,8 +2693,15 @@ async function handleWatchlistButton(interaction) {
   if (action === 'wl_corner') {   // lighter than Strike: a casual, timed cool-off straight from the flag
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
     if (!member) return interaction.update({ content: `⛓️ <@${userId}> already left. Can’t corner.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
-    if (member.permissions.has(PermissionsBitField.Flags.Administrator) || member.id === interaction.guild.ownerId)
-      return interaction.reply({ content: 'You can’t corner an admin or the owner.', flags: MessageFlags.Ephemeral });
+    // Same tier hierarchy as /corner and Send-to-corner (own tier or lower, never higher) — this used to be
+    // a blanket "no admins/owner ever" block that didn't check the ACTOR's tier, so even the owner couldn't
+    // corner an admin from here even though the slash command correctly allows it.
+    if (member.id === interaction.guild.ownerId)
+      return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
+    const wlActorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
+    const wlTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.memberTier(member)] || 0;
+    if (wlTargetRank > wlActorRank)
+      return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`, flags: MessageFlags.Ephemeral });
     const durationMs = config.cornerDefaultDurationMs;
     const r = await corner.corner(interaction.guild, member, durationMs, state, interaction.user.id);
     if (!r.ok) return interaction.reply({ content: `Failed to corner: ${r.error}`, flags: MessageFlags.Ephemeral });
