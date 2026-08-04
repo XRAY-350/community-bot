@@ -927,11 +927,15 @@ async function startArena(guild, channel, type, minutes, startedById) {
     const msg = await channel.send({ content: `# ⚡ Activity Blitz!\nFor the next **${minutes} minutes**, every message in your tribe's hall scores a point. The most active tribe wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. Ends <t:${Math.floor(endsAt / 1000)}:R>. Go!` });
     arena.set({ ...base, messageId: msg.id });
   } else if (type === 'scramble') {
-    const word = arena.nextWord();
-    const msg = await channel.send({ content: scrambleContent(word, {}) });
-    arena.set({ ...base, messageId: msg.id, answer: word, round: 1 });
+    const word = arena.nextWord([]);
+    const msg = await channel.send({ content: scrambleContent(word, { round: 1 }) });
+    arena.set({ ...base, messageId: msg.id, answer: word, round: 1, usedWords: [word] });
   } else if (type === 'trivia') {
-    arena.set({ ...base, asked: [], qNum: 0 });
+    // Pre-fetch the whole batch from the online bank at launch (owner: "an online list that's virtually
+    // infinite") so mid-game network hiccups can't stall a round; fall back to the local bank if it fails.
+    const fetched = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS);
+    const questions = (fetched && fetched.length >= arena.TRIVIA_QUESTIONS) ? fetched : arena.localTrivia(arena.TRIVIA_QUESTIONS, []);
+    arena.set({ ...base, questions, qNum: 0, source: fetched ? 'online' : 'local' });
     await askNextTrivia(guild);
   }
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), minutes * 60000);
@@ -948,13 +952,14 @@ async function askNextTrivia(guild) {
   const a = arena.get(); if (!a || a.type !== 'trivia') return;
   // Lock the previous question so a late click (or the 25s timeout advancing) can't score a stale question.
   if (a.messageId) { const pch = await arenaChannel(guild); const pm = pch && await pch.messages.fetch(a.messageId).catch(() => null); if (pm) await pm.edit({ components: [] }).catch(() => {}); }
-  if (a.qNum >= arena.TRIVIA_QUESTIONS) return endArena(guild);
-  const { q, idx } = arena.nextTrivia(a.asked);
+  const questions = a.questions || [];
+  if (a.qNum >= questions.length) return endArena(guild);
+  const q = questions[a.qNum];
   const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
-    new ButtonBuilder().setCustomId(`arena_ans:${i}`).setLabel(String(o).slice(0, 80)).setStyle(ButtonStyle.Secondary)));
+    new ButtonBuilder().setCustomId(`arena_ans:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
   const ch = await arenaChannel(guild); if (!ch) return;
-  const msg = await ch.send({ content: `# ❓ Trivia — Q${a.qNum + 1}/${arena.TRIVIA_QUESTIONS}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
-  arena.update({ answer: q.answer, curQ: idx, asked: [...(a.asked || []), idx], qNum: a.qNum + 1, messageId: msg.id, answeredThisQ: [] });
+  const msg = await ch.send({ content: `# ❓ Trivia — Q${a.qNum + 1}/${questions.length}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
+  arena.update({ answer: q.answer, qNum: a.qNum + 1, messageId: msg.id, answeredThisQ: [] });
   if (_arenaTimers.round) clearTimeout(_arenaTimers.round);
   _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // 25s per question, then advance
 }
@@ -3111,8 +3116,8 @@ client.on('messageCreate', async (msg) => {
           if (mine) {
             arena.addScore(mine.key, 1);
             const nextRound = (ax.round || 1) + 1;
-            const word = arena.nextWord();
-            arena.update({ answer: word, round: nextRound });
+            const word = arena.nextWord(ax.usedWords || []);   // no in-game repeats (owner)
+            arena.update({ answer: word, round: nextRound, usedWords: [...(ax.usedWords || []), word] });
             await msg.react('✅').catch(() => {});
             const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
             if (ch) await ch.send({ content: scrambleContent(word, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
