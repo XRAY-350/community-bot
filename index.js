@@ -479,19 +479,23 @@ function tribeHubEmbed() {
   const desc = `**The server's tribe system:** member factions, each with its own private territory, roles, ranks, and economy. Pledge your allegiance, rise through the ranks, represent your people.\n\n`
     + `## What a tribe is\n`
     + `Every tribe has its own hoisted role and colour, a private land (throne, hall, voice), an internal rank ladder, and a leader who runs it (each tribe names its own title, Warden, Warlord, whatever fits).\n\n`
+    + `## How tribes are founded\n`
+    + `An admin can found a tribe. A mod can found one too, but only backed by **two other mods**, all three lead it together, and a mod-founded tribe must keep **three leaders** to stay standing. Got an idea? Bring it to an admin, or rally two mods.\n\n`
     + `## How to join\n`
     + `Pick a tribe from the Tribes section in #roles. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a tribe's leader must release you (staff can Leave below instantly), and any new tribe has to accept you, by nomination, invite, or your own Join Request below.\n\n`
     + `## Rising through the ranks\n`
-    + `Being active in your tribe's hall moves you up its rank ladder automatically (Initiate → Member → Veteran → Elder by default, each tribe can rename its own), ranks only ever go up, never down. Staff who join as regular members automatically hold **General**, above the whole ladder.\n\n`
+    + `Being active in your tribe's hall moves you up its rank ladder automatically (each tribe names its own four rungs), ranks only ever go up, never down. Staff who join as regular members automatically hold **General**, above the whole ladder.\n\n`
     + `## Treasury, Glory, and the Weekly Crown\n`
     + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`, war raids, ally gifts).\n\n`
     + `## The Shop\n`
-    + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, and faster Tides earning. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for prestige.\n\n`
+    + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, faster Tides earning, and a **custom tribe icon**. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for prestige.\n\n`
     + `## Musters\n`
     + `A leader can call a **muster**, a roll-call in the hall (about once a day). Answer it and the tribe banks treasury + glory for every member who shows up.\n\n`
     + `## War & Alliances\n`
     + `A leader can **Declare War**: your OWN members vote first (24h, needs real turnout and a majority), the target gets no say in whether it starts. It resolves instantly by a strength simulation weighted by your tribe's Tides (not a guaranteed win, not rank-based), and there's a 72h cooldown after. The loser gets raided for ~25% treasury and can lose a few regular members for 36h (never the leader, never wiped out). **Alliances** (capped at 1 per tribe) need your members' vote too, then the other tribe's leader accepts — allies defend each other in wars and can gift treasury to each other.\n\n`
-    + `-# Use the buttons below instead of typing commands out. Leader-only tools (banish, invite, retheme, war, etc.) are on your tribe's own throne panel.`;
+    + `## Every tribe's Throne\n`
+    + `Each tribe's throne channel has its own pinned control panel. Members get Roster / Leaderboard / Shop / Leave. Leaders (or staff) get the full toolkit: Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Muster, Declare War, and Alliances, click a button instead of typing.\n\n`
+    + `-# Use the buttons below instead of typing commands out.`;
   return new EmbedBuilder().setColor(0x2A426A).setDescription(desc.slice(0, 4096));
 }
 function tribeHubButtons() {
@@ -2087,6 +2091,9 @@ client.once('ready', async () => {
   if (dguild) await roleselectSweep(dguild).catch(e => console.error(`[roleselect] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(roleselectSweep).catch(() => {}), 3600000);
   // Tribe "General" (staff auto-rank) drift: boot catch-up + hourly (catches later promotions/demotions).
+  // Refresh the Tribes Hub pinned message on boot so its content stays in sync with the code (idempotent —
+  // edits the same tracked message; no-op if the channel/message is gone until someone re-runs hub-setup).
+  if (dguild && tribes.getHubInfo()) await ensureTribesHub(dguild, config).catch(e => console.error(`[tribe hub] boot refresh: ${e.message}`));
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
