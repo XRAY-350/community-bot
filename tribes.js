@@ -7,8 +7,13 @@
 const fs = require('fs');
 const STATE_FILE = process.env.FUBU_TRIBES_FILE || '/home/ubuntu/.fubu_tribes.json';
 
-function load() { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { tribes: {} }; } }
-function save(s) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('[tribes] save:', e.message); } }
+// In-memory cache — load() is called MANY times per message (memberTribe, the Tides hall lookup, the arena
+// blitz, etc.), so a sync fs.readFileSync each time saturates the event loop under high message volume (this
+// is what lagged interactions during a blitz). The bot is the only writer, so caching is safe; save() keeps
+// it fresh. NOTE: an external process that edits the file needs a bot restart to be seen (rare — recovery ops).
+let _cache = null;
+function load() { if (_cache) return _cache; try { _cache = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { _cache = { tribes: {} }; } return _cache; }
+function save(s) { _cache = s; try { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('[tribes] save:', e.message); } }
 
 function all() { return Object.values(load().tribes || {}); }
 function get(key) { return (load().tribes || {})[key] || null; }

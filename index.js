@@ -3600,6 +3600,11 @@ client.on('interactionCreate', async (interaction) => {
       const guild = interaction.guild;
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply('That member isn’t in the server anymore.');
+      // Tier hierarchy check (moved here from the context menu so the rule picker can show instantly): you
+      // can't corner someone of a higher staff tier than you.
+      const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+      if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
+        return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`);
       const ch = await guild.channels.fetch(channelId).catch(() => null);
       const target = ch && await ch.messages.fetch(messageId).catch(() => null);
       if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
@@ -4735,28 +4740,19 @@ client.on('interactionCreate', async (interaction) => {
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't corner a bot.", flags: MessageFlags.Ephemeral });
-    const guild = interaction.guild;
-    const member = await guild.members.fetch(target.author.id).catch(() => null);
-    if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
-    if (member.id === client.user.id) return interaction.reply({ content: 'I can’t corner myself.', flags: MessageFlags.Ephemeral });
-    const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-    const actorRank = RANK[opspanel.tierOf(interaction)] || 0;
-    const targetTier = opspanel.memberTier(member);
-    if (member.id === guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
-    if ((RANK[targetTier] || 0) > actorRank) return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
-    // Rule → duration/reason/sweep modal (two steps — a modal can't hold the rule dropdown). Blank
-    // duration = the 15m default; the rule is optional ("Other / no specific rule").
-    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`corner_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
+    if (target.author.id === client.user.id) return interaction.reply({ content: 'I can’t corner myself.', flags: MessageFlags.Ephemeral });
+    if (target.author.id === interaction.guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
+    // Show the rule picker IMMEDIATELY — no member fetch here (that await was blowing the 3s ack window under
+    // load, so nothing appeared). The tier-hierarchy check runs at modal submit, where the member is fetched.
+    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`corner_rule_pick:${target.author.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Strike') {
     if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
     if (target.author?.bot) return interaction.reply({ content: "Can't strike a bot.", flags: MessageFlags.Ephemeral });
-    const member = await interaction.guild.members.fetch(target.author.id).catch(() => null);
-    if (!member) return interaction.reply({ content: copy.common.notInServer, flags: MessageFlags.Ephemeral });
-    // Rule → reason+weight modal (two steps — a modal can't hold the rule dropdown).
-    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${member.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
+    // Show the rule picker immediately — no member fetch (the member is fetched at the strike modal submit).
+    return interaction.reply({ content: copy.common.whichRule, components: [ruleRow(`strike_rule_pick:${target.author.id}:${target.channelId}:${target.id}`)], flags: MessageFlags.Ephemeral });
   }
   if (!interaction.isChatInputCommand()) return;
   const name = interaction.commandName;
