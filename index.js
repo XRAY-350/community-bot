@@ -1043,9 +1043,26 @@ async function endArena(guild) {
 // Called on boot: an active challenge from before a restart is ended immediately (a restart ends it early)
 // so it can't get stuck, and any dangling timer is cleared.
 async function reconcileArena(guild) {
-  if (!arena.isActive()) return;
-  console.log('[arena] active challenge found on boot — resolving it early');
-  await endArena(guild).catch(e => console.error('[arena] boot resolve:', e.message));
+  const a = arena.get();
+  if (!a) return;
+  // If the window already passed while the bot was down, resolve it. Otherwise CONTINUE the live challenge
+  // (owner: a restart must not kill a real event) — re-arm the end timer and re-announce that it's still on.
+  if (Date.now() >= a.endsAt) {
+    console.log('[arena] challenge window already passed on boot — resolving');
+    return endArena(guild).catch(e => console.error('[arena] boot resolve:', e.message));
+  }
+  console.log('[arena] resuming live challenge after restart');
+  const remaining = a.endsAt - Date.now();
+  const channel = await guild.channels.fetch(a.channelId).catch(() => null);
+  if (channel) {
+    const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
+    const line = a.type === 'blitz'
+      ? `# ⚡ Activity Blitz — still on!\nEvery message you send **anywhere in the server** scores for your tribe. Ends <t:${Math.floor(a.endsAt / 1000)}:R>.`
+      : `▶️ The **${ARENA_LABEL[a.type] || a.type}** is still running — ends <t:${Math.floor(a.endsAt / 1000)}:R>.`;
+    await channel.send({ content: `${line}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
+  }
+  _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), remaining);
+  if (a.type === 'trivia') _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // don't stall the current question
 }
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
