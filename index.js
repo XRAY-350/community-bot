@@ -1825,8 +1825,9 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false))
           .addStringOption(o => o.setName('name').setDescription('New full tribe name (optional)').setRequired(false).setMaxLength(80))
           .addStringOption(o => o.setName('short_name').setDescription('New short name for cards (optional)').setRequired(false).setMaxLength(40)))
-        .addSubcommand(s => s.setName('icon').setDescription('Set an emoji icon on your tribe role (needs the Tribe Icon unlock; leaders only)')
-          .addStringOption(o => o.setName('emoji').setDescription('An emoji for the icon (or "none" to clear)').setRequired(true).setMaxLength(60)))
+        .addSubcommand(s => s.setName('icon').setDescription('Set an emoji OR image icon on your tribe role (needs the Tribe Icon unlock; leaders only)')
+          .addStringOption(o => o.setName('emoji').setDescription('An emoji for the icon (or "none" to clear)').setRequired(false).setMaxLength(60))
+          .addAttachmentOption(o => o.setName('image').setDescription('A square image (PNG/JPG, under 256KB) to use as the icon').setRequired(false)))
         .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
@@ -5116,18 +5117,34 @@ client.on('interactionCreate', async (interaction) => {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can set the tribe icon.`, flags: MessageFlags.Ephemeral });
       if (!tribes.hasUnlock(tribe, 'icon')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked the **Tribe Icon** yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
-      const raw = interaction.options.getString('emoji').trim();
       const role = interaction.guild.roles.cache.get(tribe.roleId);
       if (!role) return interaction.reply({ content: 'Couldn’t find the tribe role.', flags: MessageFlags.Ephemeral });
-      if (/^(none|clear|off)$/i.test(raw)) {
+      const image = interaction.options.getAttachment('image');
+      const raw = (interaction.options.getString('emoji') || '').trim();
+      if (!image && !raw) return interaction.reply({ content: 'Give an **emoji**, upload an **image**, or pass `none` to clear.', flags: MessageFlags.Ephemeral });
+      // Clear
+      if (!image && /^(none|clear|off)$/i.test(raw)) {
         await role.edit({ unicodeEmoji: null, icon: null }, `Tribe icon cleared by ${interaction.user.tag}`).catch(() => {});
         return interaction.reply({ content: `🖼️ Cleared **${tribe.shortName || tribe.name}**’s role icon.`, flags: MessageFlags.Ephemeral });
       }
-      // A single unicode emoji is the accepted input (role icons take one emoji; custom-server-emoji images
-      // need an upload flow we don't do here). Grab the first emoji-looking glyph.
+      // Image upload wins if both are given. Validate type + size (Discord: image, ≤256KB), download to a
+      // buffer, set as the role icon (image role icons need boost tier 2+; this server is tier 3).
+      if (image) {
+        if (!/^image\/(png|jpe?g|webp)$/i.test(image.contentType || '')) return interaction.reply({ content: 'The image must be a PNG, JPG, or WebP.', flags: MessageFlags.Ephemeral });
+        if ((image.size || 0) > 256 * 1024) return interaction.reply({ content: `That image is ${Math.round((image.size || 0) / 1024)}KB — role icons must be under **256KB**.`, flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        let buf;
+        try { const res = await fetch(image.url); buf = Buffer.from(await res.arrayBuffer()); }
+        catch (e) { return interaction.editReply('Couldn’t download that image. Try again.'); }
+        const ok = await role.edit({ icon: buf, unicodeEmoji: null }, `Tribe icon (image) set by ${interaction.user.tag}`).then(() => true).catch(e => { console.error('[tribe icon]', e.message); return false; });
+        if (!ok) return interaction.editReply('Couldn’t set that image as the role icon. It may not be square, or Discord rejected it.');
+        await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
+        return interaction.editReply(`🖼️ Set **${tribe.shortName || tribe.name}**’s role icon to your uploaded image.`);
+      }
+      // Emoji path — grab the first emoji glyph.
       const m = raw.match(/\p{Extended_Pictographic}/u);
-      if (!m) return interaction.reply({ content: 'Give a single emoji (e.g. 🔥), or `none` to clear. Custom server emojis aren’t supported as role icons here.', flags: MessageFlags.Ephemeral });
-      const ok = await role.edit({ unicodeEmoji: m[0] }, `Tribe icon set by ${interaction.user.tag}`).then(() => true).catch(() => false);
+      if (!m) return interaction.reply({ content: 'Give a single emoji (e.g. 🔥), upload an image, or `none` to clear.', flags: MessageFlags.Ephemeral });
+      const ok = await role.edit({ unicodeEmoji: m[0], icon: null }, `Tribe icon set by ${interaction.user.tag}`).then(() => true).catch(() => false);
       if (!ok) return interaction.reply({ content: 'Couldn’t set that as the role icon. (Emoji may not be supported.)', flags: MessageFlags.Ephemeral });
       await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
       return interaction.reply({ content: `🖼️ Set **${tribe.shortName || tribe.name}**’s role icon to ${m[0]}.`, flags: MessageFlags.Ephemeral });
