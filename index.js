@@ -884,14 +884,18 @@ async function sweepExpiredAllianceVotes(guild) {
 // bigger, more mature server than this one actually is: real tribes today top out at 22 members and the
 // crown (one winner a week, server-wide, brand new) hadn't been won even once — nobody could EVER have
 // unlocked anything at the old gates. Rescaled so the ladder is a real, climbable goal instead of static.
+// Rebalanced 2026-08-04 (owner: "reevaluate the prices") — old prices (400-3000) were months of saving
+// against ~100-300 treasury/week of realistic earning, so nothing got bought. New ladder: basics in ~1 week,
+// mid-tier in 2-4, premium in ~a month. Tribe Icon moved to the MIDDLE (owner) — a mid-tier reward, not the
+// endgame. Order here IS the shop display order; gates lowered to be reachable by real tribe sizes.
 const TRIBE_UNLOCKS = [
-  { key: 'text2', emoji: '📝', label: '2nd text channel', desc: 'A second text channel added to your land.', memberGate: 15, crownGate: 1, cost: 500 },
-  { key: 'retheme', emoji: '🎨', label: 'Re-theme', desc: 'Recolour your tribe’s role gradient anytime with `/tribe retheme`.', memberGate: 18, crownGate: 2, cost: 400 },
-  { key: 'extsounds', emoji: '🔊', label: 'External Sounds', desc: 'Soundboard + external sounds in your tribe voice channel.', memberGate: 22, crownGate: 3, cost: 700 },
-  { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 26, crownGate: 4, cost: 900 },
-  { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 30, crownGate: 5, cost: 800 },
-  { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 35, crownGate: 7, cost: 2500 },
-  { key: 'icon', emoji: '🖼️', label: 'Tribe Icon', desc: 'Set an emoji icon on your tribe role with `/tribe icon`.', memberGate: 40, crownGate: 8, cost: 3000 },
+  { key: 'retheme', emoji: '🎨', label: 'Re-theme', desc: 'Recolour your tribe’s role gradient anytime with `/tribe retheme`.', memberGate: 5, crownGate: 1, cost: 150 },
+  { key: 'text2', emoji: '📝', label: '2nd text channel', desc: 'A second text channel added to your land.', memberGate: 8, crownGate: 1, cost: 250 },
+  { key: 'extsounds', emoji: '🔊', label: 'External Sounds', desc: 'Soundboard + external sounds in your tribe voice channel.', memberGate: 10, crownGate: 2, cost: 350 },
+  { key: 'icon', emoji: '🖼️', label: 'Tribe Icon', desc: 'Set an emoji or image icon on your tribe role with `/tribe icon`.', memberGate: 12, crownGate: 2, cost: 450 },
+  { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 14, crownGate: 3, cost: 500 },
+  { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 16, crownGate: 3, cost: 600 },
+  { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 20, crownGate: 4, cost: 800 },
 ];
 const TRIBE_CHANNEL_CAP = 6;
 const MUSTER_DURATION_MS = 2 * 3600000;   // window to answer a muster
@@ -900,7 +904,7 @@ function unlockGateMet(tribe, guild, u) {
   const memberCount = guild.roles.cache.get(tribe.roleId)?.members.size ?? 0;
   return memberCount >= u.memberGate || (tribe.crownsWon || 0) >= u.crownGate;
 }
-function strongholdCost(tribe) { return 1000 * ((tribe.strongholdTier || 0) + 1); }
+function strongholdCost(tribe) { return 750 * ((tribe.strongholdTier || 0) + 1); }
 function tribeChannelCount(tribe) { return [tribe.throneId, tribe.hallId, tribe.vcId, tribe.text2Id, tribe.vc2Id].filter(Boolean).length; }
 // Actually DOES the unlock (channel creation, permission grant, etc). Throws on failure so the caller can
 // refund the treasury spend — nothing here should ever leave a tribe charged for something it didn't get.
