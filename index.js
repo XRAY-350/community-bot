@@ -577,6 +577,20 @@ function countModLeaders(guild, tribe) {
   const leaders = [...role.members.values()].filter(m => ['mod', 'admin', 'owner'].includes(opspanel.memberTier(m)));
   return { count: leaders.length, leaders };
 }
+// A tribe leader must be a mod or admin (owner, 2026-08-04: "take the leader away if the person is no longer
+// a mod or admin"). Strip the leader role from any holder who's lost their staff tier — applies to EVERY
+// tribe. The guild/bot owner reads as 'owner' tier, so they're never stripped. Returns who was stripped.
+async function stripNonStaffLeaders(guild, tribe) {
+  const role = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
+  if (!role) return [];
+  const stripped = [];
+  for (const m of [...role.members.values()]) {
+    if (['mod', 'admin', 'owner'].includes(opspanel.memberTier(m))) continue;
+    const ok = await m.roles.remove(role.id, 'Tribe leader must be a mod or admin — no longer staff').then(() => true).catch(() => false);
+    if (ok) { stripped.push(m); await syncStaffRank(guild, m, tribe).catch(() => {}); }
+  }
+  return stripped;
+}
 async function alertModTribe(guild, content, pingRoleId) {
   if (!config.modAnnounceChannelId) return;
   const ch = await guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
@@ -595,6 +609,10 @@ async function sweepLeaderRequirement(guild) {
     // the grace-entry branch below instead — which also catches a leader who keeps the role but loses mod, so
     // holder-count alone would miss it (and using both would double-grant). First observation just seeds the
     // count (no grant), so an existing tribe isn't handed one on boot.
+    // A leader who's no longer a mod/admin loses the leader role first (the shortfall/free-retheme logic below
+    // then sees the corrected roster). Applies to every tribe.
+    const demoted = await stripNonStaffLeaders(guild, tribe);
+    if (demoted.length) await alertModTribe(guild, `👑 Removed the leader role from ${demoted.map(m => `<@${m.id}>`).join(', ')} in ${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}** — a tribe leader must be a mod or admin.`, tribe.leaderRoleId);
     const leaderRole = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
     const holderCount = leaderRole ? leaderRole.members.size : 0;
     if (!tribes.isModFounded(tribe) && typeof tribe.lastLeaderCount === 'number' && holderCount < tribe.lastLeaderCount) {
