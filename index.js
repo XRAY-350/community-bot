@@ -787,7 +787,7 @@ async function resolveWarVoteRecord(guild, war) {
     return;
   }
   // Passed — hand it to the defender's leader for consent.
-  tribes.resolveWarRecord(war.id, { status: 'awaiting_target' });
+  tribes.resolveWarRecord(war.id, { status: 'awaiting_target', awaitingSince: Date.now() });
   await editOriginal(`## ⚔️ War vote passed\n**${attacker.shortName || attacker.name}**'s members voted for war on **${defender.shortName || defender.name}** (${voteTallyLine(votes, memberCount, 'declare war')}). Waiting on their leader to accept, or leave it to fate.`);
   const dthrone = defender.throneId && await guild.channels.fetch(defender.throneId).catch(() => null);
   if (!dthrone) return executeWar(guild, war);   // no throne to ask through → proceed straight to battle
@@ -828,6 +828,30 @@ async function executeWar(guild, war, note = '') {
 }
 async function sweepExpiredWarVotes(guild) {
   for (const war of tribes.expiredWarVotes(Date.now())) await resolveWarVoteRecord(guild, war).catch(e => console.error('[tribe war] resolve:', e.message));
+}
+// Coin flip that decides a DECLINED (or timed-out) war — 50/50 war vs peace. Shared by the defender's
+// Decline button and the 24h stuck-war sweep, so a leader who just ignores the prompt can't veto forever.
+async function resolveWarByChance(guild, war, declineNote) {
+  const attacker = tribes.get(war.attackerKey), defender = tribes.get(war.defenderKey);
+  if (!attacker || !defender) { tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() }); return { warHappened: false }; }
+  const warHappens = Math.random() < 0.5;
+  if (warHappens) { await executeWar(guild, war, `-# ${declineNote} Fate chose war.\n`).catch(() => {}); return { warHappened: true }; }
+  tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() });
+  const athrone = attacker.throneId && await guild.channels.fetch(attacker.throneId).catch(() => null);
+  if (athrone) await athrone.send({ content: `🕊️ Fate spared **${defender.shortName || defender.name}** — the declared war on them fizzled on a coin flip. No battle, no spoils.`, allowedMentions: { parse: [] } }).catch(() => {});
+  return { warHappened: false };
+}
+// A defender who never answers the Accept/Decline prompt shouldn't veto by inaction (owner, 2026-08-04:
+// "24 hours"). After 24h in awaiting_target, auto-resolve it via the same coin flip. Boot + hourly.
+const WAR_CONSENT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+async function sweepStuckWars(guild) {
+  const now = Date.now();
+  for (const war of Object.values(tribes.load().wars || {})) {
+    if (war.status !== 'awaiting_target') continue;
+    if (now - (war.awaitingSince || war.resolvedAt || 0) < WAR_CONSENT_TIMEOUT_MS) continue;
+    console.log(`[tribe war] consent timed out for ${war.id} (${war.attackerKey}->${war.defenderKey}) — coin flip`);
+    await resolveWarByChance(guild, war, `${tribes.get(war.defenderKey)?.shortName || 'The defender'} never answered in 24h;`).catch(e => console.error('[tribe war] stuck resolve:', e.message));
+  }
 }
 async function postAllianceVote(guild, vote, proposer, target) {
   // Post in the THRONE, not the hall (owner, 2026-08-04) — low-traffic, so the vote isn't buried by chat.
@@ -2205,6 +2229,9 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
   if (dguild) await sweepExpiredWarVotes(dguild).catch(e => console.error(`[tribe war] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredWarVotes(g)).catch(() => {}), 5 * 60 * 1000);
+  // Auto-resolve wars stuck ≥24h awaiting the defender's Accept/Decline (boot + hourly).
+  if (dguild) await sweepStuckWars(dguild).catch(e => console.error(`[tribe war] stuck sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStuckWars(g)).catch(() => {}), 3600000);
   if (dguild) await sweepExpiredAllianceVotes(dguild).catch(e => console.error(`[tribe alliance] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredAllianceVotes(g)).catch(() => {}), 5 * 60 * 1000);
   // #roles self-heal: drop any toggle button whose role was deleted outside the bot's control (boot + hourly).
@@ -4326,13 +4353,9 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.followUp({ content: `⚔️ <@${interaction.user.id}> **accepted** the war on behalf of **${defender.shortName || defender.name}**. To battle!`, allowedMentions: { parse: [] } }).catch(() => {});
       return executeWar(interaction.guild, war, `-# ${defender.shortName || defender.name} accepted the challenge.\n`);
     }
-    // Decline → coin flip decides whether the war happens anyway.
-    const warHappens = Math.random() < 0.5;
-    await interaction.followUp({ content: `🎲 <@${interaction.user.id}> **declined** — leaving it to fate. The coin lands… **${warHappens ? 'WAR' : 'PEACE'}**.`, allowedMentions: { parse: [] } }).catch(() => {});
-    if (warHappens) return executeWar(interaction.guild, war, `-# ${defender.shortName || defender.name} declined; fate chose war.\n`);
-    tribes.resolveWarRecord(warId, { status: 'failed', resolvedAt: Date.now() });
-    const athrone = attacker.throneId && await interaction.guild.channels.fetch(attacker.throneId).catch(() => null);
-    if (athrone) await athrone.send({ content: `🕊️ Fate spared **${defender.shortName || defender.name}** — the declared war on them fizzled on a coin flip. No battle, no spoils.`, allowedMentions: { parse: [] } }).catch(() => {});
+    // Decline → coin flip decides whether the war happens anyway (shared with the 24h stuck-war sweep).
+    await interaction.followUp({ content: `🎲 <@${interaction.user.id}> **declined** — leaving it to fate. Flipping the coin…`, allowedMentions: { parse: [] } }).catch(() => {});
+    await resolveWarByChance(interaction.guild, war, `${defender.shortName || defender.name} declined;`).catch(() => {});
     return;
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_vote:')) {
