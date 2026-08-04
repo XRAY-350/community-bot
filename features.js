@@ -21,28 +21,28 @@ const REGISTRY = [
   { key: 'panel',       audience: 'staff',  built: true,  commands: ['panel', 'staff'] },
   { key: 'features',    audience: 'core',   built: true,  commands: ['features'] }, // owner-only feature toggle command
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
-  { key: 'dashboard',   audience: 'member', built: true,  commands: ['dashboard', 'dashboard-setup'], // public member hub: status, server info, feature guide
+  { key: 'dashboard',   audience: 'member', built: true,  commands: ['dashboard'], // public member hub: status, server info, feature guide (setup folded into /panel → Setup)
     help: { name: '🤖 Member hub', value: 'Open `/dashboard` for your status, the rules, and every member feature in one place.' } },
-  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'cornered', 'stats'], contexts: ['Send to corner'] },
+  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'stats'], contexts: ['Send to corner'] },   // 'cornered' folded into /panel → Corner page
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
   { key: 'levelCheck',  audience: 'staff',  built: true,  commands: ['levelcheck'] }, // audit Arcane level roles landing (reads #bot-commands log) + admin resync-fix
   { key: 'tribes',      audience: 'member', built: true,  commands: ['tribe', 'tribe-admin'], // member-run factions: hub/roster/standings/motto + Warden tools + admin create/register (ranks + rivalry to come)
     help: { name: '🏴 Tribes', value: 'Join a tribe with `/request-role`, then `/tribe info`, `/tribe roster`, and `/tribe list` for standings. Leaders set the vibe with `/tribe motto`.' } },
   { key: 'watchlist',   audience: 'staff',  built: true,  commands: ['watchlist', 'watchlist-terms', 'watchlist-suggest', 'unban'], contexts: ['Report to watchlist'] },
-  { key: 'suggestions', audience: 'member', built: true,  commands: ['suggest', 'suggest-setup'],
-    help: { name: '💡 `/suggest`: pitch an idea', value: 'Have an idea to make the server better? `/suggest` posts it for the community to vote 👍/👎, and staff review the ones people like. One clear idea per suggestion works best.' } },
-  { key: 'confessions', audience: 'member', built: true,  commands: ['confess', 'confess-setup'],
-    help: { name: '🤫 `/confess`: anonymous confession', value: 'Get something off your chest. `/confess` posts it to the confessions channel with **your name hidden from other members**. Vents, shy shout-outs, hot takes. Be kind; the safety filter still applies.' } },
-  { key: 'whistleblow', audience: 'member', built: true,  commands: ['whistleblow', 'whistleblow-setup'],
+  { key: 'suggestions', audience: 'member', built: true,  commands: [],   // /suggest → /dashboard button; /suggest-setup → /panel Setup
+    help: { name: '💡 Suggest an idea', value: 'Have an idea to make the server better? Open **/dashboard** and tap **💡 Suggest**. It posts for the community to vote 👍/👎, and staff review the ones people like. One clear idea per suggestion works best.' } },
+  { key: 'confessions', audience: 'member', built: true,  commands: [],   // /confess → /dashboard button; /confess-setup → /panel Setup
+    help: { name: '🤫 Anonymous confession', value: 'Get something off your chest. Open **/dashboard** and tap **💭 Confess**. It posts to the confessions channel with **your name hidden from other members**. Vents, shy shout-outs, hot takes. Be kind; the safety filter still applies.' } },
+  { key: 'whistleblow', audience: 'member', built: true,  commands: ['whistleblow'],   // whistleblow-setup → /panel Setup
     help: { name: '🕊️ `/whistleblow`: flag a problem safely', value: 'Privately raise a problem with the server or a mod. **You** choose who (if anyone) can ever see it was you, even “no one.” Nobody gets in trouble for being honest. Use it when a normal report isn’t enough.' } },
-  { key: 'reports',     audience: 'member', built: true,  commands: ['report', 'report-setup'], contexts: ['Report'],
-    help: { name: '🚩 `/report` · or right-click a message → **Apps → Report**', value: 'Report a member or a specific message to staff **without them knowing it was you**. Right-click any message → Apps → Report to attach it. Staff see what you send, not that it came from you.' } },
-  { key: 'modmail',     audience: 'member', built: true,  commands: ['modmail', 'modmail-setup'],
-    help: { name: '📨 `/modmail`: message the mods privately', value: 'Send the mod team a private, anonymous note: a question, a concern, or a heads-up you’d rather not say out loud. It lands in a mods-only inbox; you can reply if they follow up.' } },
-  { key: 'modapps',     audience: 'member', built: true,  commands: ['apply-mod', 'apply-mod-setup', 'mod-applications', 'demote-trial', 'promote-trial', 'promote-mod'],
+  { key: 'reports',     audience: 'member', built: true,  commands: [], contexts: ['Report'],   // /report → /dashboard button + right-click; /report-setup → /panel Setup
+    help: { name: '🚩 Report a member or message', value: 'Report a member or a specific message to staff **without them knowing it was you**. Open **/dashboard** and tap **🚩 Report**, or right-click any message → Apps → Report to attach it. Staff see what you send, not that it came from you.' } },
+  { key: 'modmail',     audience: 'member', built: true,  commands: [],   // /modmail → /dashboard button; /modmail-setup → /panel Setup
+    help: { name: '📨 Message the mods privately', value: 'Send the mod team a private, anonymous note: a question, a concern, or a heads-up you’d rather not say out loud. Open **/dashboard** and tap **✉️ Message staff**. It lands in a mods-only inbox; you can reply if they follow up.' } },
+  { key: 'modapps',     audience: 'member', built: true,  commands: ['apply-mod', 'demote-trial'],   // apply-mod-setup → /panel Setup; mod-applications/promote-trial/promote-mod → /panel (Actions/Promotions)
     help: { name: '📋 `/apply-mod`: apply to be a mod', value: 'Want to help run the place? `/apply-mod` opens a short form (age, timezone, why, experience). It creates a private thread where staff can ask follow-ups and you’ll hear back, nothing is public.' } },
-  { key: 'rolereq',     audience: 'member', built: true,  commands: ['request-role', 'request-role-setup'],
+  { key: 'rolereq',     audience: 'member', built: true,  commands: ['request-role'],   // request-role-setup → /panel Setup
     help: { name: '🎭 `/request-role`: ask for (or drop) a role', value: 'Ask for a casual role, or hand one back. Staff get your request with one-click approve/deny; if approved it’s added (or removed) for you. Cosmetic/interest roles only, not staff or age roles.' } },
   { key: 'roleselect',  audience: 'staff',  built: true,  commands: ['roleselect-role'] }, // #roles picker itself has no command (built by a one-off script); this is just the admin add/remove tool
   { key: 'permguard',   audience: 'core',   built: true,  commands: ['permguard'] }, // channel-permission drift guard (auto-sweep + owner resnapshot command)
@@ -55,9 +55,9 @@ const REGISTRY = [
   // listed in both features' commands[] so the command registers if EITHER is on; index.js gates each
   // subcommand against its own feature flag individually (a single command -> single feature isn't
   // enough once one command has independently-toggleable subcommands).
-  { key: 'appeals',      audience: 'member', built: false, commands: ['appeal', 'appeal-setup', 'appeal-reset'],
+  { key: 'appeals',      audience: 'member', built: false, commands: ['appeal', 'appeal-reset'],   // appeal-setup → /panel Setup
     help: { name: '⚖️ `/appeal ban`: appeal a friend’s ban', value: 'A banned friend can’t reach the server, so **you** can appeal for them: `/appeal ban <their @username>` opens a private thread for you and staff, and up to 5 friends can join to make the case. Not eligible for the 4 non-negotiable ban categories (false verification, verification bypass, ban evasion, confirmed grooming).' } },
-  { key: 'strikeAppeals', audience: 'member', built: false, commands: ['appeal', 'appeal-strike-setup'],
+  { key: 'strikeAppeals', audience: 'member', built: false, commands: ['appeal'],   // appeal-strike-setup → /panel Setup
     help: { name: '⚖️ `/appeal strike`: appeal your own strike', value: 'Think a strike was unfair? `/appeal strike` opens a private thread just for you and staff to explain your side. One at a time; a denied appeal has a short cooldown before you can retry. The strike that crossed the ban threshold isn’t appealable this way.' } },
   { key: 'smartWatch',   audience: 'core',   built: false,  commands: ['grade'] }, // LLM contextual judge on the watch pipeline - cuts keyword false positives (needs ANTHROPIC_API_KEY; shadow-mode-first via SMARTWATCH_LIVE). /grade = owner-only card grading.
   { key: 'smartWatchLab', audience: 'core',  built: false }, // Eval sandbox: expanded terms + AI verdicts posted to a private admin lab channel, gradable to train the judge. When ON, the public watch-log reverts to plain keyword flags (AI moves to the lab). Needs SMARTWATCH_LAB_CHANNEL_ID.

@@ -1708,6 +1708,89 @@ function rearmThroneExpiries() {
   if (q.length) console.log(`[throneExpire] re-armed ${q.length} pending throne message expiry(ies)`);
 }
 
+// --- Panel-driven setup (owner: consolidate the 10 *-setup commands into /panel → 🧩 Setup) --------------
+// Wired as opspanel D.runSetup. Each kind mirrors the OLD *-setup slash handler: same guard, same
+// module.setup() call, ephemeral reply — just triggered by a panel button instead of a slash command.
+// `channelId` is only used by the 'dashboard' kind (the member hub is posted into a chosen channel).
+async function runPanelSetup(interaction, kind, channelId) {
+  const g = interaction.guild;
+  const eph = { flags: MessageFlags.Ephemeral };
+  try {
+    switch (kind) {
+      case 'suggest': {
+        if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can set up the forum.', ...eph });
+        await interaction.deferReply(eph);
+        const { forum, created } = await suggestions.setup(g, config);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} the suggestions forum <#${forum.id}>. Members post via **/dashboard → 💡 Suggest**.`);
+      }
+      case 'confess': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { channel, logChannel, created } = await confessions.setup(g, config);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} confessions <#${channel.id}>${logChannel ? ` + staff log <#${logChannel.id}>` : ''}. Members post via **/dashboard → 💭 Confess**.`);
+      }
+      case 'modmail': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { channel, created } = await modmail.setup(g, config);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Members message staff via **/dashboard → ✉️ Message staff**.`);
+      }
+      case 'report': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { channel, created } = await reports.setup(g, config);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Members report via **/dashboard → 🚩 Report** or right-click → Apps → Report.`);
+      }
+      case 'applymod': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { forum, apps } = await modapps.setup(g, config);
+        return interaction.editReply(`✅ Mod applications ready: review forum <#${forum.id}> + applicant threads in <#${apps.id}>. Members apply with \`/apply-mod\`.`);
+      }
+      case 'requestrole': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { channel, created } = await rolereq.setup(g, config);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Members use \`/request-role\`.`);
+      }
+      case 'appeal': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { channel, created } = await appeals.setup(g, config);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. Friends appeal a ban with \`/appeal ban <username>\`.`);
+      }
+      case 'appealstrike': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { channel, created } = await strikeAppeals.setup(g);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>. A struck member appeals with \`/appeal strike <strike>\`.`);
+      }
+      case 'whistleblow': {
+        if (!opspanel.isBotOwner(interaction)) return interaction.reply({ content: 'Only the **bot owner** can set up whistleblows (you become the “you” who can unseal).', ...eph });
+        await interaction.deferReply(eph);
+        const cfg = await whistleblow.setup(g, interaction.user.id);
+        return interaction.editReply(`✅ Whistleblows now DM **you** (<@${cfg.you}>) and/or the **owner** (<@${cfg.her}>) per the sender’s choice. Members use \`/whistleblow\`.`);
+      }
+      case 'dashboard': {
+        if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can post the hub panel.', ...eph });
+        await interaction.deferReply(eph);
+        const ch = channelId ? await g.channels.fetch(channelId).catch(() => null) : null;
+        if (!ch) return interaction.editReply('Could not find that channel.');
+        const sent = await ch.send(pubdash.hubPanel(g.id)).catch(() => null);
+        if (!sent) return interaction.editReply(`Could not post in <#${ch.id}>. Check my permissions there.`);
+        await sent.pin().catch(() => {});
+        return interaction.editReply(`✅ Posted and pinned the member hub in <#${ch.id}>.`);
+      }
+      default:
+        return interaction.reply({ content: `Unknown setup action: ${kind}`, ...eph });
+    }
+  } catch (e) {
+    console.error(`[panel-setup:${kind}] ${e.message}`);
+    const m = `Setup failed: ${e.message}`;
+    return (interaction.deferred || interaction.replied) ? interaction.editReply(m).catch(() => {}) : interaction.reply({ content: m, ...eph }).catch(() => {});
+  }
+}
+
 let verifyChannel = null;
 let alertChannel = null;
 let warnChannel = null;
@@ -1720,6 +1803,7 @@ const getConflictChannel = () => conflictChannel;
 // Inject the bot's own logic into the tier-gated ops dashboard so it reuses corner/sweep/state/etc.
 opspanel.wire({ client, config, state, corner, sweep, activeThreads, freshwatch, cornerMany, announceCorner,
   promoteStart: (guild, member, byId, kind) => promote.start(guild, member, byId, config, kind),
+  runSetup: runPanelSetup,   // /panel → 🧩 Setup buttons dispatch here (replaces the 10 *-setup commands)
   getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel,
   logAction: ownerlog.log,
   strike: {
@@ -5368,7 +5452,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'apply-mod') {
     if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
-    if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet. Ask an admin to run `/apply-mod-setup`.', flags: MessageFlags.Ephemeral });
+    if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet. Ask an admin to set it up in **/panel → 🧩 Setup**.', flags: MessageFlags.Ephemeral });
     if (!modapps.applicationsOpen()) return interaction.reply({ content: modapps.closedNotice(), flags: MessageFlags.Ephemeral });
     // If language mini-mods are set up, ask which position first; otherwise go straight to the mod modal.
     if (features.enabled('langMiniMod') && langmods.isConfigured()) {

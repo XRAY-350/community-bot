@@ -5,7 +5,7 @@
 // reuses the bot's own logic. Members are targeted by @username / display name / ID (resolved live).
 const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
-  UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
+  UserSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
 const { ensureMembers } = require('./memberCache');
@@ -72,6 +72,7 @@ const PAGES = [
   { emoji: '🔨', name: 'Actions', tier: 'admin', blurb: 'run the bot now · ban (needs Admin)' },
   { emoji: '🏅', name: 'Promotions', tier: 'admin', blurb: 'open promotion votes: trial→mod / mod→admin (multi-select)' },
   { emoji: '⚙️', name: 'Settings', tier: 'admin', blurb: 'turn helpers on/off (needs Admin)' },
+  { emoji: '🧩', name: 'Setup', tier: 'admin', blurb: 'create channels + (re)post member panels (needs Admin)' },
   { emoji: '⚠️', name: 'Danger', tier: 'owner', blurb: 'removal policy (needs Owner)' },
 ];
 const pageIdx = (name) => PAGES.findIndex(p => p.name === name);   // reorder-safe page lookup
@@ -338,6 +339,29 @@ function buildSettings() {
   return { content: '## ⚙️ FUBU Ops · Settings', embeds: [embed], components: [row1, row2, navRow(pageIdx('Settings'))] };
 }
 
+// Setup page — one-tap create/repair for the bot's channels + member panels. Replaces the old *-setup
+// slash commands (owner: consolidate the long command list into /panel). Each button is safe to re-press.
+function buildSetup() {
+  const embed = new EmbedBuilder().setColor(0x5865F2).setDescription(
+    '**⭐ Needs Admin.** One-tap **create-or-repair** for the bot\'s channels + member panels. Each button is safe to press again: it makes the channel/panel if it\'s missing, or tells you it already exists. This replaces the old `*-setup` slash commands.\n\n' +
+    '💡 **Suggestions** forum · 💭 **Confessions** + staff log · ✉️ **Mod inbox** · 🚩 **Anon reports** · 📋 **Mod applications**\n' +
+    '🎭 **Role requests** · ⚖️ **Ban appeals** · 🎫 **Strike appeals** · 🕊️ **Whistleblow** recipients (bot-owner) · 🤖 **Member hub** (you pick the channel)')
+    .setFooter({ text: copy.guards.needsAdmin });
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('fops_setup:suggest').setEmoji('💡').setLabel('Suggestions').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:confess').setEmoji('💭').setLabel('Confessions').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:modmail').setEmoji('✉️').setLabel('Mod inbox').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:report').setEmoji('🚩').setLabel('Anon reports').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:applymod').setEmoji('📋').setLabel('Mod apps').setStyle(ButtonStyle.Secondary));
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('fops_setup:requestrole').setEmoji('🎭').setLabel('Role requests').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:appeal').setEmoji('⚖️').setLabel('Ban appeals').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:appealstrike').setEmoji('🎫').setLabel('Strike appeals').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:whistleblow').setEmoji('🕊️').setLabel('Whistleblow').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:dashboard').setEmoji('🤖').setLabel('Member hub').setStyle(ButtonStyle.Secondary));
+  return { content: '## 🧩 FUBU Ops · Setup', embeds: [embed], components: [row1, row2, navRow(pageIdx('Setup'))] };
+}
+
 function buildDanger() {
   const c = D.config;
   const dryOn = !!c.dryRun;
@@ -445,6 +469,7 @@ async function buildPage(page) {
   if (name === 'Actions') return buildActions();
   if (name === 'Promotions') return await buildPromotions();
   if (name === 'Settings') return buildSettings();
+  if (name === 'Setup') return buildSetup();
   if (name === 'Danger') return buildDanger();
   return await buildOverview();
 }
@@ -544,7 +569,7 @@ async function refreshPanel(client) {
 }
 
 function isPanelInteraction(i) {
-  return (i.isButton?.() || i.isStringSelectMenu?.() || i.isUserSelectMenu?.() || i.isModalSubmit?.()) && i.customId?.startsWith('fops_');
+  return (i.isButton?.() || i.isStringSelectMenu?.() || i.isUserSelectMenu?.() || i.isChannelSelectMenu?.() || i.isModalSubmit?.()) && i.customId?.startsWith('fops_');
 }
 
 // --- interactions ---------------------------------------------------------------------------------
@@ -649,6 +674,24 @@ async function handlePanel(interaction) {
     if (!r.ok) return interaction.update({ content: 'Couldn’t find that strike anymore. It may already have been changed.', components: [] });
     const what = w <= 0 ? `Removed strike \`${strikeId}\`` : `Set strike \`${strikeId}\` to **${w} unit${w > 1 ? 's' : ''}**`;
     return interaction.update({ content: `✅ ${what} on <@${uid}>, now **${D.strike.format(r.totalUnits)}/${D.strike.BAN_THRESHOLD} units** (${r.tier}).`, components: [] });
+  }
+  // Setup page — create/repair a channel or (re)post a member panel. Delegates to D.runSetup (index.js),
+  // which runs the same module.setup() the old *-setup commands did. 'dashboard' first asks for a channel.
+  if (id.startsWith('fops_setup:')) {
+    if (!meets(tier, 'admin')) return denyReply('admin');
+    const kind = id.slice('fops_setup:'.length);
+    if (kind === 'dashboard') {
+      const menu = new ChannelSelectMenuBuilder().setCustomId('fops_setupdash').addChannelTypes(ChannelType.GuildText)
+        .setPlaceholder('Pick the channel for the member hub…').setMaxValues(1);
+      return interaction.reply({ content: '🤖 Where should I post + pin the member hub?', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+    }
+    if (!D.runSetup) return interaction.reply({ content: 'Setup isn’t wired up.', flags: MessageFlags.Ephemeral });
+    return D.runSetup(interaction, kind);
+  }
+  if (id === 'fops_setupdash' && interaction.isChannelSelectMenu?.()) {
+    if (!meets(tier, 'admin')) return denyReply('admin');
+    if (!D.runSetup) return interaction.reply({ content: 'Setup isn’t wired up.', flags: MessageFlags.Ephemeral });
+    return D.runSetup(interaction, 'dashboard', interaction.values[0]);
   }
   // Promotions page: open a promotion VOTE for each selected candidate (multi). fops_promote:<trial|mod>.
   if (id.startsWith('fops_promote:') && interaction.isStringSelectMenu?.()) {
