@@ -256,8 +256,8 @@ function addStrongholdTier(key) {
   save(s); return t.strongholdTier;
 }
 
-// ---- Rituals (section 8): musters (member-participation roll-calls, per tribe) + a server-wide weekly
-// challenge (staff-authored, since arbitrary goals can't be auto-tracked; staff judges completion by hand). ----
+// ---- Rituals (section 8): musters — member-participation roll-calls, per tribe. (The old server-wide
+// staff-authored weekly challenge was retired 2026-08-04 in favour of the interactive Arena — see arena.js.) ----
 function startMuster(key, byId, durationMs) {
   const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null;
   t.muster = { startedBy: byId, startedAt: Date.now(), expiresAt: Date.now() + durationMs, participants: [] };
@@ -284,22 +284,6 @@ function closeMuster(key) {
   delete t.muster;
   save(s);
   return { ...m, count: n, reward };
-}
-function setChallenge(text, byId) {
-  const s = load(); s.currentChallenge = { text, setBy: byId, setAt: Date.now(), completedBy: [] }; save(s); return s.currentChallenge;
-}
-function getChallenge() { return load().currentChallenge || null; }
-function clearChallenge() { const s = load(); delete s.currentChallenge; save(s); }
-// +200 treasury / +200 glory to a tribe for completing the CURRENT challenge. Not exclusive — multiple tribes
-// can complete the same challenge; a tribe just can't double-claim the same one twice.
-function completeChallengeForTribe(key) {
-  const s = load(); const ch = s.currentChallenge; const t = s.tribes && s.tribes[key];
-  if (!ch || !t) return false;
-  if (ch.completedBy.includes(key)) return false;
-  ch.completedBy.push(key);
-  t.treasury = (t.treasury || 0) + 200;
-  t.glory = (t.glory || 0) + 200;
-  save(s); return true;
 }
 
 // A mod founding their own tribe needs 2 OTHER mods to co-sign first (owner: "if a mod wants to start a
@@ -493,7 +477,6 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   dueForWeeklyCrown, markWeeklyCrownDone,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
-  setChallenge, getChallenge, clearChallenge, completeChallengeForTribe,
   startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,
   setEntranceGate, getEntranceGate, clearEntranceGate,
   WAR_VOTE_MS, WAR_VOTE_TURNOUT, WAR_COOLDOWN_MS, CAPTURE_LOCK_MS, WAR_TREASURY_RAID_PCT, WAR_GLORY_BONUS,

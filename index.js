@@ -2028,11 +2028,6 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('meter').setDescription('Which meter').setRequired(true)
             .addChoices({ name: 'Treasury (permanent bank)', value: 'treasury' }, { name: 'Glory (this week, decides the crown)', value: 'glory' }))
           .addIntegerOption(o => o.setName('amount').setDescription('How much (negative to correct a mistake)').setRequired(true)))
-        .addSubcommand(s => s.setName('challenge-set').setDescription('Post a weekly challenge to every tribe’s throne (+200 treasury/glory per tribe that completes it)')
-          .addStringOption(o => o.setName('text').setDescription('The challenge').setRequired(true).setMaxLength(300)))
-        .addSubcommand(s => s.setName('challenge-complete').setDescription('Mark a tribe as having completed the current challenge')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(s => s.setName('challenge-clear').setDescription('Clear the current weekly challenge without setting a new one'))
         .addSubcommand(s => s.setName('gate-set').setDescription('Set an entrance question new members must answer correctly to self-join')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('prompt').setDescription('The question/prompt shown to applicants').setRequired(true).setMaxLength(200))
@@ -5624,35 +5619,6 @@ client.on('interactionCreate', async (interaction) => {
       const amount = interaction.options.getInteger('amount');
       const newVal = meter === 'treasury' ? tribes.addTreasury(t.key, amount) : tribes.addGlory(t.key, amount);
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** ${meter} ${amount >= 0 ? '+' : ''}${amount} → now **${newVal}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    }
-    if (sub === 'challenge-set') {
-      const text = interaction.options.getString('text').slice(0, 300);
-      tribes.setChallenge(text, interaction.user.id);
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      let posted = 0;
-      for (const t of tribes.all()) {
-        if (!t.throneId) continue;
-        const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null);
-        if (!throne) continue;
-        await throne.send({ content: `## 🗺️ This week's challenge\n> ${text}\n-# Completing it earns **+200 treasury and +200 glory**. Staff judges when it's done.`, allowedMentions: { parse: [] } }).catch(() => {});
-        posted++;
-      }
-      return interaction.editReply(`🗺️ Challenge set and posted to **${posted}** tribe throne${posted === 1 ? '' : 's'}:\n> ${text}`);
-    }
-    if (sub === 'challenge-complete') {
-      const t = tribes.resolve(interaction.options.getString('tribe'));
-      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
-      const ch = tribes.getChallenge();
-      if (!ch) return interaction.reply({ content: 'There’s no active challenge to complete.', flags: MessageFlags.Ephemeral });
-      const ok = tribes.completeChallengeForTribe(t.key);
-      if (!ok) return interaction.reply({ content: `**${t.shortName || t.name}** already completed this challenge.`, flags: MessageFlags.Ephemeral });
-      if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throne.send({ content: `## 🏆 Challenge complete!\n> ${ch.text}\n-# +200 treasury, +200 glory banked. Now **${tribes.getTreasury(t.key)}** treasury.`, allowedMentions: { parse: [] } }).catch(() => {}); }
-      return interaction.reply({ content: `✅ **${t.shortName || t.name}** marked complete, +200 treasury/+200 glory awarded.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    }
-    if (sub === 'challenge-clear') {
-      if (!tribes.getChallenge()) return interaction.reply({ content: 'There’s no active challenge.', flags: MessageFlags.Ephemeral });
-      tribes.clearChallenge();
-      return interaction.reply({ content: '🗺️ Challenge cleared.', flags: MessageFlags.Ephemeral });
     }
     if (sub === 'gate-set') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
