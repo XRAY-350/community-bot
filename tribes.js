@@ -453,7 +453,29 @@ function breakAlliance(keyA, keyB) {
   save(s);
 }
 
+// ── Mod-tribe leadership requirement (owner, 2026-08-04: "a tribe of mods requires three leaders, it's not
+// a suggestion") ──────────────────────────────────────────────────────────────────────────────────────
+// A tribe FOUNDED BY MODS must keep MIN_MOD_LEADERS staff-leaders at all times. Admin-founded tribes (an
+// admin can lead solo) are exempt — flagged by tribe.foundedByMod. Enforcement is an escalation ladder
+// (owner picked all three tiers): a shortfall first ALERTS with a grace window, then FREEZES the tribe's
+// perks (war/alliances/shop) if unfixed, then queues DISBAND. State lives on tribe.leaderEnforce so it
+// survives restarts; the sweep in index.js drives the transitions and clears it instantly on recovery.
+const MIN_MOD_LEADERS = 3;
+// One grace window from the moment a shortfall is detected. Perks FREEZE at the HALFWAY point (owner,
+// 2026-08-04) and the tribe goes disband-pending at the end if still short.
+const LEADER_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+function isModFounded(tribe) { return !!(tribe && tribe.foundedByMod); }
+function getLeaderEnforce(key) { const t = get(key); return (t && t.leaderEnforce) || null; }
+function setLeaderEnforce(key, obj) { return update(key, { leaderEnforce: obj }); }
+function clearLeaderEnforce(key) { return update(key, { leaderEnforce: null }); }
+// A tribe is "frozen" (perks blocked) once enforcement reaches the freeze/disband stages.
+function isFrozen(tribe) { const e = tribe && tribe.leaderEnforce; return !!(e && (e.stage === 'frozen' || e.stage === 'disband_pending')); }
+// Remove a tribe's record entirely (disband). Returns the removed record so the caller can clean up the
+// Discord roles/channels — this only touches the framework's own state.
+function removeTribe(key) { const s = load(); const rec = s.tribes && s.tribes[key]; if (!rec) return null; delete s.tribes[key]; save(s); return rec; }
+
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
+  MIN_MOD_LEADERS, LEADER_GRACE_MS, isModFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,

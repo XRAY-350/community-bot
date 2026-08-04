@@ -568,6 +568,68 @@ async function sweepStaffRanks(guild) {
     if (staffRankRole) for (const member of staffRankRole.members.values()) await syncStaffRank(guild, member, tribe).catch(() => {});
   }
 }
+// Count a tribe's current STAFF leaders — holders of the leader role who still hold a staff tier (mod+).
+// A leader who lost their mod role (or left the server, dropping the role entirely) stops counting, which
+// is exactly the shortfall the requirement below guards against.
+function countModLeaders(guild, tribe) {
+  const role = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
+  if (!role) return { count: 0, leaders: [] };
+  const leaders = [...role.members.values()].filter(m => ['mod', 'admin', 'owner'].includes(opspanel.memberTier(m)));
+  return { count: leaders.length, leaders };
+}
+async function alertModTribe(guild, content, pingRoleId) {
+  if (!config.modAnnounceChannelId) return;
+  const ch = await guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
+  if (!ch) return;
+  await ch.send({ content, allowedMentions: { roles: pingRoleId ? [pingRoleId] : [] } }).catch(e => console.error('[leader-req] alert:', e.message));
+}
+// Enforce the mod-tribe 3-leader requirement (owner: "not a suggestion"). Escalation ladder, driven boot +
+// hourly: ok → grace (alert) → frozen (perks blocked) → disband_pending (staff-confirmed dissolution). Any
+// return to full strength clears it instantly. Only touches tribes flagged foundedByMod.
+async function sweepLeaderRequirement(guild) {
+  await ensureMembers(guild);
+  const now = Date.now();
+  for (const tribe of tribes.all()) {
+    if (!tribes.isModFounded(tribe)) continue;
+    const { count } = countModLeaders(guild, tribe);
+    const short = tribes.MIN_MOD_LEADERS - count;
+    const enf = tribe.leaderEnforce || null;
+    const name = `${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}**`;
+    // Recovered (back to full strength) — clear any enforcement and announce it.
+    if (short <= 0) {
+      if (enf) {
+        tribes.clearLeaderEnforce(tribe.key);
+        await alertModTribe(guild, `✅ ${name} is back to **${tribes.MIN_MOD_LEADERS} leaders** — leadership requirement satisfied, any freeze on its perks is lifted.`, tribe.leaderRoleId);
+        await refreshThronePanel(guild, tribes.get(tribe.key)).catch(() => {});
+      }
+      continue;
+    }
+    // Short-handed. One grace window: alert now, FREEZE perks at the halfway mark, disband-pending at the end.
+    if (!enf) {
+      const graceUntil = now + tribes.LEADER_GRACE_MS;
+      const freezeAt = now + Math.floor(tribes.LEADER_GRACE_MS / 2);
+      tribes.setLeaderEnforce(tribe.key, { stage: 'grace', since: now, freezeAt, graceUntil });
+      await alertModTribe(guild, `⚠️ ${name} is **${short} leader(s) short** (has ${count}/${tribes.MIN_MOD_LEADERS}). A mod-founded tribe must keep ${tribes.MIN_MOD_LEADERS} leaders. Add one with \`/tribe-admin set-leader\`: its perks (war, alliances, shop) **freeze** <t:${Math.floor(freezeAt / 1000)}:R> if unfixed, and it's disband-pending <t:${Math.floor(graceUntil / 1000)}:R>. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
+    } else if (enf.stage === 'grace' && now >= (enf.freezeAt || 0)) {
+      tribes.setLeaderEnforce(tribe.key, { ...enf, stage: 'frozen', frozenAt: now });
+      await alertModTribe(guild, `🧊 ${name} is still **${short} leader(s) short** — its perks (war, alliances, shop) are now **frozen**. Fix it with \`/tribe-admin set-leader\` before <t:${Math.floor((enf.graceUntil || now) / 1000)}:R>, or it will be queued for **disband**. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
+      await refreshThronePanel(guild, tribes.get(tribe.key)).catch(() => {});
+    } else if (enf.stage === 'frozen' && now >= (enf.graceUntil || 0)) {
+      tribes.setLeaderEnforce(tribe.key, { ...enf, stage: 'disband_pending', pendingAt: now });
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tribedisband_confirm:${tribe.key}`).setEmoji('💥').setLabel('Disband now').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`tribedisband_extend:${tribe.key}`).setEmoji('⏳').setLabel('Give 7 more days').setStyle(ButtonStyle.Secondary));
+      await sendModTribeButtons(guild, `💥 ${name} has gone **${tribes.MIN_MOD_LEADERS} leaders short for the full grace + freeze window** and is now **pending disband**. Per the mod-tribe rule it should be dissolved — an admin must confirm (this deletes its roles + channels and cannot be undone), or grant an extension. <@&${config.adminRoleId || ''}>`, [row], config.adminRoleId);
+    }
+    // stage 'disband_pending' with the confirm still outstanding → nothing to do; wait on the human click.
+  }
+}
+async function sendModTribeButtons(guild, content, components, pingRoleId) {
+  if (!config.modAnnounceChannelId) return;
+  const ch = await guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
+  if (!ch) return;
+  await ch.send({ content, components, allowedMentions: { roles: pingRoleId ? [pingRoleId] : [] } }).catch(e => console.error('[leader-req] disband prompt:', e.message));
+}
 // Closes any muster whose window has passed: pays out, edits the original call-to-arms message (disabling the
 // button) if it can still be found, and posts the final tally. Best-effort throughout — a missing channel or
 // deleted message never blocks the payout itself, which already happened in tribes.closeMuster.
@@ -592,6 +654,17 @@ async function sweepExpiredMusters(guild) {
 // leaders"). Declaring is a real decision: the proposing tribe's OWN members vote (24h window, ≥30% turnout,
 // simple majority) — the target gets no say in whether a war starts. See tribes.js for the state layer,
 // power formula (Tides-based, not rank-based — can't be gamed by mass-promoting people), and simulateWar().
+// Drop any vote cast by someone who has since LEFT the tribe/server (owner, 2026-08-04: "members aren't
+// counted if they've left the server") — a stale vote from a gone member shouldn't sway turnout or the
+// majority. Returns a fresh votes object with only current role-holders. Applied everywhere war/alliance
+// votes are tallied, so a live count is always what's shown and what decides.
+function liveVotes(guild, tribeRoleId, votes) {
+  const role = guild.roles.cache.get(tribeRoleId);
+  if (!role) return {};
+  const out = {};
+  for (const [uid, v] of Object.entries(votes || {})) if (role.members.has(uid)) out[uid] = v;
+  return out;
+}
 function voteTallyLine(votes, memberCount, verb) {
   const yes = Object.values(votes).filter(v => v === 'yes').length;
   const no = Object.values(votes).filter(v => v === 'no').length;
@@ -606,7 +679,8 @@ async function postWarVote(guild, war, attacker, defender) {
   const memberCount = guild.roles.cache.get(attacker.roleId)?.members.size ?? 0;
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribewar_vote:${war.id}:yes`).setEmoji('⚔️').setLabel('For war').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`tribewar_vote:${war.id}:no`).setEmoji('🕊️').setLabel('Against').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId(`tribewar_vote:${war.id}:no`).setEmoji('🕊️').setLabel('Against').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribewar_cancel:${war.id}`).setEmoji('🛑').setLabel('Cancel (leader)').setStyle(ButtonStyle.Secondary));
   const endsAt = Math.floor(war.voteEndsAt / 1000);
   const msg = await hall.send({ content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender.emoji || '🏴'} ${defender.shortName || defender.name}**?\nVoting ends <t:${endsAt}:R>.\n${voteTallyLine(war.votes, memberCount, 'declare war')}`, components: [row], allowedMentions: { roles: [attacker.roleId] } }).catch(() => null);
   if (msg) tribes.resolveWarRecord(war.id, { channelId: hall.id, messageId: msg.id });
@@ -619,8 +693,9 @@ async function resolveWarVoteRecord(guild, war) {
   const attacker = tribes.get(war.attackerKey), defender = tribes.get(war.defenderKey);
   if (!attacker || !defender) { tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() }); return; }
   const memberCount = guild.roles.cache.get(attacker.roleId)?.members.size ?? 0;
-  const turnout = Object.keys(war.votes).length;
-  const yes = Object.values(war.votes).filter(v => v === 'yes').length, no = Object.values(war.votes).filter(v => v === 'no').length;
+  const votes = liveVotes(guild, attacker.roleId, war.votes);   // ignore votes from members who've left
+  const turnout = Object.keys(votes).length;
+  const yes = Object.values(votes).filter(v => v === 'yes').length, no = Object.values(votes).filter(v => v === 'no').length;
   const passed = memberCount > 0 && (turnout / memberCount) >= tribes.WAR_VOTE_TURNOUT && yes > no;
   const editOriginal = async (content) => {
     if (!war.channelId || !war.messageId) return;
@@ -630,7 +705,7 @@ async function resolveWarVoteRecord(guild, war) {
   };
   if (!passed) {
     tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() });
-    await editOriginal(`## ⚔️ War vote failed\n**${attacker.shortName || attacker.name}** did not vote to war **${defender.shortName || defender.name}** (${voteTallyLine(war.votes, memberCount, 'declare war')}). Nothing happens.`);
+    await editOriginal(`## ⚔️ War vote failed\n**${attacker.shortName || attacker.name}** did not vote to war **${defender.shortName || defender.name}** (${voteTallyLine(votes, memberCount, 'declare war')}). Nothing happens.`);
     return;
   }
   const sim = tribes.simulateWar(guild, attacker, defender);
@@ -668,7 +743,8 @@ async function postAllianceVote(guild, vote, proposer, target) {
   const memberCount = guild.roles.cache.get(proposer.roleId)?.members.size ?? 0;
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`tribealliance_vote:${vote.id}:yes`).setEmoji('🤝').setLabel('For alliance').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`tribealliance_vote:${vote.id}:no`).setEmoji('❌').setLabel('Against').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId(`tribealliance_vote:${vote.id}:no`).setEmoji('❌').setLabel('Against').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribealliance_cancel:${vote.id}`).setEmoji('🛑').setLabel('Cancel (leader)').setStyle(ButtonStyle.Secondary));
   const endsAt = Math.floor(vote.voteEndsAt / 1000);
   const msg = await hall.send({ content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target.emoji || '🏴'} ${target.shortName || target.name}**?\nVoting ends <t:${endsAt}:R>.\n${voteTallyLine(vote.votes, memberCount, 'propose')}`, components: [row], allowedMentions: { roles: [proposer.roleId] } }).catch(() => null);
   if (msg) tribes.resolveAllianceVoteRecord(vote.id, { channelId: hall.id, messageId: msg.id });
@@ -678,8 +754,9 @@ async function resolveAllianceVoteRecord(guild, vote) {
   const proposer = tribes.get(vote.proposerKey), target = tribes.get(vote.targetKey);
   if (!proposer || !target) { tribes.resolveAllianceVoteRecord(vote.id, { status: 'failed', resolvedAt: Date.now() }); return; }
   const memberCount = guild.roles.cache.get(proposer.roleId)?.members.size ?? 0;
-  const turnout = Object.keys(vote.votes).length;
-  const yes = Object.values(vote.votes).filter(v => v === 'yes').length, no = Object.values(vote.votes).filter(v => v === 'no').length;
+  const votes = liveVotes(guild, proposer.roleId, vote.votes);   // ignore votes from members who've left
+  const turnout = Object.keys(votes).length;
+  const yes = Object.values(votes).filter(v => v === 'yes').length, no = Object.values(votes).filter(v => v === 'no').length;
   const passed = memberCount > 0 && (turnout / memberCount) >= tribes.WAR_VOTE_TURNOUT && yes > no;
   const editOriginal = async (content, components = []) => {
     if (!vote.channelId || !vote.messageId) return;
@@ -689,13 +766,13 @@ async function resolveAllianceVoteRecord(guild, vote) {
   };
   if (!passed) {
     tribes.resolveAllianceVoteRecord(vote.id, { status: 'failed', resolvedAt: Date.now() });
-    await editOriginal(`## 🤝 Alliance vote failed\n**${proposer.shortName || proposer.name}** did not vote to propose an alliance with **${target.shortName || target.name}** (${voteTallyLine(vote.votes, memberCount, 'propose')}).`);
+    await editOriginal(`## 🤝 Alliance vote failed\n**${proposer.shortName || proposer.name}** did not vote to propose an alliance with **${target.shortName || target.name}** (${voteTallyLine(votes, memberCount, 'propose')}).`);
     return;
   }
   // Internal vote passed — now it's the TARGET tribe's call, mirrors every other cross-tribe consent flow
   // (nominate/invite/join-request) rather than a second full membership vote on their end.
   tribes.resolveAllianceVoteRecord(vote.id, { status: 'awaiting_target' });
-  await editOriginal(`## 🤝 Alliance vote passed\n**${proposer.shortName || proposer.name}**'s members voted to propose an alliance with **${target.shortName || target.name}** (${voteTallyLine(vote.votes, memberCount, 'propose')}). Waiting on their response.`);
+  await editOriginal(`## 🤝 Alliance vote passed\n**${proposer.shortName || proposer.name}**'s members voted to propose an alliance with **${target.shortName || target.name}** (${voteTallyLine(votes, memberCount, 'propose')}). Waiting on their response.`);
   if (!target.throneId) return;
   const throne = await guild.channels.fetch(target.throneId).catch(() => null);
   if (!throne) return;
@@ -1713,6 +1790,10 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('leader_role').setDescription('The leader role (optional)').setRequired(false))
           .addChannelOption(o => o.setName('hall').setDescription('Main tribe channel (optional)').setRequired(false))
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
+        .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
+          .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
+          .addUserOption(o => o.setName('replacing').setDescription('Optional: an existing leader to step down at the same time').setRequired(false)))
         .addSubcommand(s => s.setName('points').setDescription('Set what a tribe calls its activity points, e.g. Tides')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('name').setDescription('The name for its points, e.g. Tides').setRequired(true).setMaxLength(20)))
@@ -1948,6 +2029,9 @@ client.once('ready', async () => {
   // Tribe "General" (staff auto-rank) drift: boot catch-up + hourly (catches later promotions/demotions).
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
+  // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
+  if (dguild) await sweepLeaderRequirement(dguild).catch(e => console.error(`[leader-req] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepLeaderRequirement(g)).catch(() => {}), 3600000);
 
   // Age-role exclusivity + registration-lock backstops (boot + hourly, same cadence as MDNI above).
   if (dguild) {
@@ -3377,6 +3461,9 @@ client.on('interactionCreate', async (interaction) => {
         pointsName: w.pointsName, leaderTitle: w.leaderTitle, channelNames: w.channelNames, channelTopics: w.channelTopics,
       }, config);
       for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
+      // Mark whether this is a mod-founded tribe (the 3-mod-leader requirement applies to it) vs an
+      // admin/owner-founded one (a single admin can lead solo, exempt). Drives sweepLeaderRequirement.
+      tribes.update(b.tribe.key, { foundedByMod: leaderTier === 'mod' });
       _tribeWizards.delete(interaction.user.id);
       tribes.clearFoundingRequest(interaction.user.id);   // only clear on ACTUAL success — see the create handler's fix for why
       // A mod-founded tribe isn't led solo, the founder + the 2 mods who co-signed lead it TOGETHER (owner,
@@ -3542,6 +3629,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.reply({ content: 'You’re not in a tribe yet. Head to #roles to pledge one.', flags: MessageFlags.Ephemeral });
     if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can open the shop.`, flags: MessageFlags.Ephemeral });
+    if (tribes.isFrozen(tribe)) return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s shop is frozen — it’s short on leaders. An admin can restore it with \`/tribe-admin set-leader\`.`, flags: MessageFlags.Ephemeral });
     return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
   }
   if (interaction.isButton?.() && interaction.customId === 'tribehub_leave') {
@@ -3585,6 +3673,9 @@ client.on('interactionCreate', async (interaction) => {
     const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster', 'war', 'alliance', 'allybreak', 'allygift'].includes(act);
     if (isLeaderTool && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    // Frozen perks (mod-tribe short on leaders): war/alliances/shop are locked until it's back to 3 leaders.
+    if (['war', 'alliance', 'allybreak', 'allygift', 'shop'].includes(act) && tribes.isFrozen(tribe))
+      return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s perks are frozen — it’s short on leaders. An admin can restore them with \`/tribe-admin set-leader\`.`, flags: MessageFlags.Ephemeral });
     if (act === 'roster') {
       const members = tribes.roster(interaction.guild, tribe);
       const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
@@ -3846,6 +3937,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can buy for the tribe.`, flags: MessageFlags.Ephemeral });
+    if (tribes.isFrozen(tribe)) return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s shop is frozen — it’s short on leaders.`, flags: MessageFlags.Ephemeral });
     const u = TRIBE_UNLOCKS.find(x => x.key === unlockKey);
     if (!u) return interaction.reply({ content: 'Unknown unlock.', flags: MessageFlags.Ephemeral });
     if (tribes.hasUnlock(tribe, u.key)) return interaction.update(tribeShopView(tribes.get(tribeKey), interaction.guild));
@@ -3869,10 +3961,40 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can buy for the tribe.`, flags: MessageFlags.Ephemeral });
+    if (tribes.isFrozen(tribe)) return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s shop is frozen — it’s short on leaders.`, flags: MessageFlags.Ephemeral });
     const cost = strongholdCost(tribe);
     if (!tribes.spendTreasury(tribe.key, cost)) return interaction.reply({ content: `Not enough treasury (need **${cost}**, have **${tribes.getTreasury(tribe.key)}**).`, flags: MessageFlags.Ephemeral });
     tribes.addStrongholdTier(tribe.key);
     return interaction.update(tribeShopView(tribes.get(tribe.key), interaction.guild));
+  }
+  // Disband-pending prompt (mod-tribe leader requirement, final stage). Admin-only. Confirm = dissolve the
+  // tribe (delete its roles + channels — irreversible); Extend = grant another grace window.
+  if (interaction.isButton?.() && (interaction.customId.startsWith('tribedisband_confirm:') || interaction.customId.startsWith('tribedisband_extend:'))) {
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can decide a tribe disband.', flags: MessageFlags.Ephemeral });
+    const [act, tribeKey] = interaction.customId.split(':');
+    const tribe = tribes.get(tribeKey);
+    if (!tribe) return interaction.update({ content: '_(That tribe no longer exists.)_', components: [] }).catch(() => {});
+    if (act === 'tribedisband_extend') {
+      const graceUntil = Date.now() + tribes.LEADER_GRACE_MS;
+      tribes.setLeaderEnforce(tribe.key, { stage: 'grace', since: Date.now(), freezeAt: Date.now() + Math.floor(tribes.LEADER_GRACE_MS / 2), graceUntil });
+      await ownerlog.log(interaction.guild, { emoji: '⏳', title: 'Tribe disband extended', color: 0xF1C40F, detail: `**${tribe.shortName || tribe.name}** got another grace window from <@${interaction.user.id}>.` }).catch(() => {});
+      return interaction.update({ content: `⏳ **${tribe.shortName || tribe.name}** granted another grace window (until <t:${Math.floor(graceUntil / 1000)}:R>) by <@${interaction.user.id}>. Add a leader with \`/tribe-admin set-leader\`.`, components: [] }).catch(() => {});
+    }
+    // Confirm disband — delete channels + roles, then drop the record. Best-effort per resource.
+    await interaction.deferUpdate();
+    const deleted = [];
+    for (const chId of [tribe.throneId, tribe.hallId, tribe.vcId, tribe.text2Id, tribe.vc2Id, tribe.categoryId].filter(Boolean)) {
+      const ch = await interaction.guild.channels.fetch(chId).catch(() => null);
+      if (ch) { await ch.delete(`Tribe disbanded by ${interaction.user.tag}`).catch(() => {}); deleted.push(chId); }
+    }
+    for (const rId of [tribe.roleId, tribe.leaderRoleId, tribe.staffRankRoleId, ...((tribe.ranks || []).map(r => r.roleId))].filter(Boolean)) {
+      const role = await interaction.guild.roles.fetch(rId).catch(() => null);
+      if (role) await role.delete(`Tribe disbanded by ${interaction.user.tag}`).catch(() => {});
+    }
+    tribes.removeTribe(tribe.key);
+    if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
+    await ownerlog.log(interaction.guild, { emoji: '💥', title: 'Tribe DISBANDED', color: 0xED4245, detail: `**${tribe.shortName || tribe.name}** was dissolved by <@${interaction.user.id}> (mod-tribe leader requirement unmet). ${deleted.length} channel(s) + its roles deleted.` }).catch(() => {});
+    return interaction.editReply({ content: `💥 **${tribe.shortName || tribe.name}** has been disbanded by <@${interaction.user.id}>. Its roles and channels are gone.`, components: [] }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_teardown:')) {
     const [, tribeKey, unlockKey] = interaction.customId.split(':');
@@ -3919,8 +4041,21 @@ client.on('interactionCreate', async (interaction) => {
     const updated = tribes.voteOnWar(warId, interaction.user.id, choice);
     const memberCount = interaction.guild.roles.cache.get(attacker.roleId)?.members.size ?? 0;
     const defender = tribes.get(war.defenderKey);
-    await interaction.update({ content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender?.emoji || '🏴'} ${defender?.shortName || defender?.name || 'that tribe'}**?\nVoting ends <t:${Math.floor(war.voteEndsAt / 1000)}:R>.\n${voteTallyLine(updated.votes, memberCount, 'declare war')}`, allowedMentions: { roles: [attacker.roleId] } }).catch(() => {});
+    const votes = liveVotes(interaction.guild, attacker.roleId, updated.votes);
+    await interaction.update({ content: `## ⚔️ War vote\n<@&${attacker.roleId}>\nProposed by <@${war.proposerId}>: declare war on **${defender?.emoji || '🏴'} ${defender?.shortName || defender?.name || 'that tribe'}**?\nVoting ends <t:${Math.floor(war.voteEndsAt / 1000)}:R>.\n${voteTallyLine(votes, memberCount, 'declare war')}`, allowedMentions: { roles: [attacker.roleId] } }).catch(() => {});
+    // Auto-end early once every current member has voted (owner: "auto-end if you get all of the required
+    // members") — no reason to wait out the 24h window when turnout can't grow any further.
+    if (memberCount > 0 && Object.keys(votes).length >= memberCount) await resolveWarVoteRecord(interaction.guild, tribes.getWar(warId)).catch(() => {});
     return;
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribewar_cancel:')) {
+    const warId = interaction.customId.split(':')[1];
+    const war = tribes.getWar(warId);
+    if (!war || war.status !== 'voting') return interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+    const attacker = tribes.get(war.attackerKey);
+    if (attacker && !tribes.isLeader(interaction.member, attacker) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${attacker ? tribes.leaderTitle(attacker) : 'a leader'} or staff can cancel this vote.`, flags: MessageFlags.Ephemeral });
+    tribes.resolveWarRecord(warId, { status: 'failed', resolvedAt: Date.now() });
+    return interaction.update({ content: `## ⚔️ War vote cancelled\nCalled off by <@${interaction.user.id}>. No war, no cooldown.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_vote:')) {
     const [, voteId, choice] = interaction.customId.split(':');
@@ -3931,8 +4066,20 @@ client.on('interactionCreate', async (interaction) => {
     const updated = tribes.voteOnAlliance(voteId, interaction.user.id, choice);
     const memberCount = interaction.guild.roles.cache.get(proposer.roleId)?.members.size ?? 0;
     const target = tribes.get(vote.targetKey);
-    await interaction.update({ content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target?.emoji || '🏴'} ${target?.shortName || target?.name || 'that tribe'}**?\nVoting ends <t:${Math.floor(vote.voteEndsAt / 1000)}:R>.\n${voteTallyLine(updated.votes, memberCount, 'propose')}`, allowedMentions: { roles: [proposer.roleId] } }).catch(() => {});
+    const votes = liveVotes(interaction.guild, proposer.roleId, updated.votes);
+    await interaction.update({ content: `## 🤝 Alliance vote\n<@&${proposer.roleId}>\nProposed by <@${vote.proposerId}>: propose an alliance with **${target?.emoji || '🏴'} ${target?.shortName || target?.name || 'that tribe'}**?\nVoting ends <t:${Math.floor(vote.voteEndsAt / 1000)}:R>.\n${voteTallyLine(votes, memberCount, 'propose')}`, allowedMentions: { roles: [proposer.roleId] } }).catch(() => {});
+    // Auto-end early once every current member has voted (owner: "auto-end if you get all of the required members").
+    if (memberCount > 0 && Object.keys(votes).length >= memberCount) await resolveAllianceVoteRecord(interaction.guild, tribes.getAllianceVote(voteId)).catch(() => {});
     return;
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_cancel:')) {
+    const voteId = interaction.customId.split(':')[1];
+    const vote = tribes.getAllianceVote(voteId);
+    if (!vote || vote.status !== 'voting') return interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+    const proposer = tribes.get(vote.proposerKey);
+    if (proposer && !tribes.isLeader(interaction.member, proposer) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${proposer ? tribes.leaderTitle(proposer) : 'a leader'} or staff can cancel this vote.`, flags: MessageFlags.Ephemeral });
+    tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
+    return interaction.update({ content: `## 🤝 Alliance vote cancelled\nCalled off by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribealliance_approve:')) {
     const voteId = interaction.customId.split(':')[1];
@@ -5007,6 +5154,41 @@ client.on('interactionCreate', async (interaction) => {
         emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
       return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in #tribes-hub Standings and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'set-leader') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
+      if (!t.leaderRoleId) return interaction.reply({ content: `**${t.shortName || t.name}** has no leader role configured, can’t set a leader.`, flags: MessageFlags.Ephemeral });
+      const newLeader = interaction.options.getMember('member');
+      if (!newLeader) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
+      const replacing = interaction.options.getMember('replacing');
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      // The new leader must belong to THIS tribe — a leader who isn't a member is the exact broken state this
+      // fixes. Add the base tribe role (+ authorize membership) if they aren't already in it, then the leader role.
+      if (!newLeader.roles.cache.has(t.roleId)) {
+        tribes.setMembership(t.key, newLeader.id, true);
+        const ok = await newLeader.roles.add(t.roleId, `Set as ${tribes.leaderTitle(t)} by ${interaction.user.tag}`).then(() => true).catch(() => false);
+        if (!ok) { tribes.setMembership(t.key, newLeader.id, false); return interaction.editReply('Couldn’t add them to the tribe (check my role position).'); }
+      }
+      const addOk = await newLeader.roles.add(t.leaderRoleId, `Set as ${tribes.leaderTitle(t)} by ${interaction.user.tag}`).then(() => true).catch(() => false);
+      if (!addOk) return interaction.editReply('Couldn’t grant the leader role (check my role position).');
+      await syncStaffRank(interaction.guild, newLeader, t).catch(() => {});   // leader outranks the General staff-rank
+      let stepDownNote = '';
+      if (replacing && replacing.roles.cache.has(t.leaderRoleId)) {
+        const remOk = await replacing.roles.remove(t.leaderRoleId, `Stepped down as ${tribes.leaderTitle(t)} by ${interaction.user.tag}`).then(() => true).catch(() => false);
+        stepDownNote = remOk ? ` <@${replacing.id}> stepped down.` : ` (couldn’t remove <@${replacing.id}>’s leader role.)`;
+        await syncStaffRank(interaction.guild, replacing, t).catch(() => {});
+      }
+      // Re-run the requirement sweep immediately so a now-complete tribe clears its shortfall/freeze right away
+      // instead of waiting for the hourly tick (owner: "auto-end if you get all of the required members").
+      await sweepLeaderRequirement(interaction.guild).catch(() => {});
+      const { count } = countModLeaders(interaction.guild, tribes.get(t.key));
+      const reqNote = tribes.isModFounded(t) ? ` Now **${count}/${tribes.MIN_MOD_LEADERS}** leaders.` : '';
+      await ownerlog.log(interaction.guild, { emoji: '👑', title: 'Tribe leader set', color: 0x5865F2,
+        detail: `<@${newLeader.id}> made a ${tribes.leaderTitle(t)} of **${t.shortName || t.name}** by <@${interaction.user.id}>.${stepDownNote}${reqNote}` }).catch(() => {});
+      if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throne.send({ content: `## ${t.emoji || '🏴'} New ${tribes.leaderTitle(t)}\n<@${newLeader.id}> now leads **${t.shortName || t.name}**.${stepDownNote}`, allowedMentions: { users: [newLeader.id] } }).catch(() => {}); }
+      await refreshThronePanel(interaction.guild, tribes.get(t.key)).catch(() => {});
+      return interaction.editReply(`👑 <@${newLeader.id}> is now a ${tribes.leaderTitle(t)} of **${t.shortName || t.name}**.${stepDownNote}${reqNote}`);
     }
     if (sub === 'points') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
