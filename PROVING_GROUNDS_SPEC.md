@@ -87,7 +87,7 @@ All must be async-friendly and self-scored (no live cross-player timing needed).
 7. Weekly Prover track, weekly reveal, tribe rewards, Chronicle/quests/achievements hooks.
 8. `provingGrounds` feature flag, tuning, go-live.
 
-## Design calls I made (flag any you want different)
+## Format rules (owner-confirmed 2026-08-05)
 - Delivery is private and ephemeral (individual, no audience).
 - One attempt per member per day (keeps the leaderboard fair, no grinding).
 - One game family per day, rotating, rather than all three available at once (so the daily
