@@ -1014,7 +1014,7 @@ function scoreArena(tribeKey, userId, points = 1) {
 }
 const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern',
   'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];
-const ARENA_AUTO_CHANCE = 0.5;   // per eligible tick, so timing isn't clockwork on the cooldown boundary
+const ARENA_AUTO_CHANCE = 0.6;   // per eligible tick, so timing isn't clockwork on the cooldown boundary
 // Auto-start (owner: "have the bot start them randomly at a daily cap instead of starting manually"). Called
 // on a ~30-min tick: within active ET hours, if nothing's running and we're off cooldown + under the daily
 // cap (all enforced by arena.startBlocked), roll a chance and launch a random type. The 3h cooldown naturally

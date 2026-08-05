@@ -16,8 +16,8 @@ const WIN_GLORY = 100;
 const RACE_TARGET = 10;     // clicks to win a race
 const TRIVIA_QUESTIONS = 10; // questions per trivia sprint (owner: the online bank is huge, so ask more)
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
-const COOLDOWN_MS = 3 * 60 * 60 * 1000;   // min gap between challenges (owner: cooldown, kept at 3h)
-const DAILY_CAP = 5;                       // max challenges per UTC day (owner: bumped to 5)
+const COOLDOWN_MS = 90 * 60 * 1000;        // 1.5h min gap between challenges (owner: more events/day, ~6-7)
+const DAILY_CAP = 8;                        // max challenges per UTC day (owner: ~6-7/day target, headroom for manual)
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.
