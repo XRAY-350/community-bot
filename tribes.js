@@ -339,6 +339,11 @@ const WAR_GLORY_BONUS = 100;                       // flat, not stolen — Glory
 const WAR_CAPTURE_PCT = 0.10;                      // winner captures ~10% of loser's regular members
 const WAR_CAPTURE_CAP = 5;                         // ...capped at 5 regardless of loser's size
 const WAR_CAPTURE_FLOOR = 3;                       // ...and never below this many members left in the loser
+// Stronghold = war DEFENSE (owner: "stronghold means nothing but it can be a defense against war"). Walls
+// only help the DEFENDER: they boost defensive power, and if the defender still loses, they blunt the sack.
+const STRONGHOLD_DEF_PER_TIER = 0.10;             // +10% defensive war power per Stronghold Tier (defender only)
+const STRONGHOLD_RAID_REDUCE_PER_TIER = 0.05;     // each tier shaves 5 pts off the treasury-raid % if the defender loses
+const WAR_RAID_MIN_PCT = 0.10;                     // ...but a successful raid always takes at least 10%
 
 // Tides-based combat power: everyone (including leaders/staff, who earn Tides same as anyone) contributes
 // at least 1 (bare presence) plus their real accumulated Tides. Needs `guild` to enumerate live role holders.
@@ -385,20 +390,26 @@ function resolveWarRecord(id, patch) {
 // defense doesn't cost the ally anything directly, it just reinforces).
 function simulateWar(guild, attacker, defender) {
   const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
+  // Stronghold walls multiply the DEFENDER's total defensive power (attackers can't carry walls into a fight).
+  const wall = 1 + STRONGHOLD_DEF_PER_TIER * (defender.strongholdTier || 0);
   const powerA = warPower(guild, attacker) + (allyOf(attacker) ? warPower(guild, allyOf(attacker)) : 0);
-  const powerB = warPower(guild, defender) + (allyOf(defender) ? warPower(guild, allyOf(defender)) : 0);
+  const powerB = (warPower(guild, defender) + (allyOf(defender) ? warPower(guild, allyOf(defender)) : 0)) * wall;
   const attackerWinChance = powerA / (powerA + powerB || 1);
   const attackerWins = Math.random() < attackerWinChance;
   const winner = attackerWins ? attacker : defender;
   const loser = attackerWins ? defender : attacker;
   const loserRole = guild.roles.cache.get(loser.roleId);
   const loserMembers = loserRole ? [...loserRole.members.values()].filter(m => !isLeader(m, loser)) : [];
+  // Walls blunt the sack only when the DEFENDER lost (they defended and still fell): fewer captured, smaller raid.
+  const defWallTiers = (loser.key === defender.key) ? (defender.strongholdTier || 0) : 0;
+  const captureReduce = Math.floor(defWallTiers / 2);   // -1 captured per 2 tiers
   const maxCapturable = Math.max(0, loserMembers.length - WAR_CAPTURE_FLOOR);
-  const captureCount = Math.min(WAR_CAPTURE_CAP, maxCapturable, Math.floor(loserMembers.length * WAR_CAPTURE_PCT));
+  const captureCount = Math.max(0, Math.min(WAR_CAPTURE_CAP, maxCapturable, Math.floor(loserMembers.length * WAR_CAPTURE_PCT)) - captureReduce);
   const shuffled = [...loserMembers].sort(() => Math.random() - 0.5);
   const capturedIds = shuffled.slice(0, captureCount).map(m => m.id);
-  const raidAmount = Math.floor((loser.treasury || 0) * WAR_TREASURY_RAID_PCT);
-  return { winnerKey: winner.key, loserKey: loser.key, powerA, powerB, attackerWinChance, raidAmount, capturedIds };
+  const raidPct = Math.max(WAR_RAID_MIN_PCT, WAR_TREASURY_RAID_PCT - STRONGHOLD_RAID_REDUCE_PER_TIER * defWallTiers);
+  const raidAmount = Math.floor((loser.treasury || 0) * raidPct);
+  return { winnerKey: winner.key, loserKey: loser.key, powerA, powerB, attackerWinChance, raidAmount, capturedIds, defWallTiers, raidPct };
 }
 
 function setCaptureLock(userId, untilMs) { const s = load(); if (!s.captureLocks) s.captureLocks = {}; s.captureLocks[userId] = untilMs; save(s); }

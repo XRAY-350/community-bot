@@ -492,7 +492,7 @@ function tribeHubEmbed() {
     + `## Treasury, Glory, and the Weekly Crown\n`
     + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`, war raids, ally gifts).\n\n`
     + `## The Shop\n`
-    + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, faster Tides earning, and a **custom tribe icon**. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for prestige.\n\n`
+    + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, faster Tides earning, and a **custom tribe icon**. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for **war defense** (each tier adds defensive power and blunts an enemy raid).\n\n`
     + `## Musters\n`
     + `A leader can call a **muster**, a roll-call in the hall (about once a day). Answer it and the tribe banks treasury + glory for every member who shows up.\n\n`
     + `## War & Alliances\n`
@@ -844,7 +844,8 @@ async function executeWar(guild, war, note = '') {
   tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount: sim.raidAmount, capturedIds: sim.capturedIds });
   const oddsLine = `-# Odds were ${Math.round(sim.attackerWinChance * 100)}% ${attacker.shortName || attacker.name} · ${Math.round((1 - sim.attackerWinChance) * 100)}% ${defender.shortName || defender.name}, by Tides-weighted strength.`;
   const captureLine = sim.capturedIds.length ? `**${sim.capturedIds.length}** member${sim.capturedIds.length === 1 ? '' : 's'} captured: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No members captured (loser too small).';
-  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} wins!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}\n${oddsLine}`;
+  const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
+  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} wins!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}\n${oddsLine}${wallLine}`;
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
@@ -1283,7 +1284,7 @@ function tribeShopView(tribe, guild) {
     return `🔓 ${u.emoji} **${u.label}** — **${u.cost}** treasury. ${u.desc}`;
   });
   const strongCost = strongholdCost(tribe);
-  const strongLine = `🏰 **Stronghold Tier ${tribe.strongholdTier || 0} → ${(tribe.strongholdTier || 0) + 1}** — **${strongCost}** treasury. Purely cosmetic prestige, never runs out.`;
+  const strongLine = `🏰 **Stronghold Tier ${tribe.strongholdTier || 0} → ${(tribe.strongholdTier || 0) + 1}** — **${strongCost}** treasury. War **defense**: **+${((tribe.strongholdTier || 0) + 1) * 10}%** defensive power when attacked, and if you defend and still lose, a smaller treasury raid + fewer members captured. Repeatable, never runs out.`;
   const buyable = TRIBE_UNLOCKS.filter(u => !tribes.hasUnlock(tribe, u.key) && unlockGateMet(tribe, guild, u));
   const atCap = tribeChannelCount(tribe) >= TRIBE_CHANNEL_CAP;
   const buyBtns = buyable.map(u => new ButtonBuilder().setCustomId(`tribeshop_buy:${tribe.key}:${u.key}`).setLabel(`${u.label} (${u.cost})`).setStyle(ButtonStyle.Success)
