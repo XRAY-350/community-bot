@@ -65,6 +65,12 @@ const REGISTRY = [
     help: { name: '🏅 Achievements & titles', value: 'Earn achievements for your tribe deeds (arena MVPs, play streaks, war wins, crowns, seasons) and equip a title to show off. Open your tribe’s throne panel and tap 🏅 Trophies.' } },
   { key: 'recruitment', audience: 'member', built: false,   // reward recruiting members in + tribe growth milestones (Phase 6). No new commands; auto-awards on nomination/invite accept. DARK until tuned + flipped on (/features toggle recruitment on).
     help: { name: '🌱 Recruitment rewards', value: 'Bring people into your tribe: when someone you nominate or invite joins, you earn Tides and your tribe banks treasury, and every tribe earns a bonus at member-count milestones.' } },
+  { key: 'tribeQuests', audience: 'member', built: true,    // weekly tribe objectives that pay Treasury/Glory (Phase 7 depth). No new command; surfaced on the throne + hub, auto-pays on completion. LIVE.
+    help: { name: '🎯 Weekly quests', value: 'Every week the tribes share three objectives (win Arena contests, answer musters, win a war, take the Crown). Finish one and your tribe banks Treasury and Glory. See them on your throne’s 🎯 Quests view.' } },
+  { key: 'relics',      audience: 'member', built: false,   // Age-end trophies: permanent name/lore + a tiny, capped, cross-Age-decaying perk; raidable in wars (Phase 7 depth). Flipped ON when its handler lands. On the throne.
+    help: { name: '🏺 Relics', value: 'A tribe that wins an Age is minted a Relic: a permanent trophy on your throne, plus a small edge that stacks with more Relics but fades over the Ages so nobody runs away with it forever. Relics can be lost in war.' } },
+  { key: 'prestige',    audience: 'member', built: false,   // capped-out members Prestige for a permanent title (Phase 7 depth), ties into achievements. Flipped ON when its handler lands. Throne button.
+    help: { name: '⭐ Prestige', value: 'Maxed out your tribe rank? Prestige to reset your climb for a permanent honour title and a lasting mark in your tribe’s history. Find it on your throne once you reach the top rung.' } },
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist

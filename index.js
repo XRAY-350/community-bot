@@ -42,6 +42,7 @@ const arena = require('./arena');
 const achievements = require('./achievements');
 const recruitment = require('./recruitment');
 const lore = require('./lore');
+const quests = require('./quests');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
@@ -492,11 +493,17 @@ function tribeThronePanel(tribe) {
       ? new ButtonBuilder().setCustomId(`tribethrone_allybreak:${k}`).setEmoji('💔').setLabel('Break Alliance').setStyle(ButtonStyle.Secondary)
       : new ButtonBuilder().setCustomId(`tribethrone_alliance:${k}`).setEmoji('🤝').setLabel('Propose Alliance').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tribethrone_allygift:${k}`).setEmoji('🎁').setLabel('Gift Treasury to Ally').setStyle(ButtonStyle.Secondary).setDisabled(!ally));
-  // Recognition row (member-facing) — only shown when the achievements feature is enabled.
+  // Recognition + depth row (member-facing) — each button gated by its own feature flag. Discord caps a message
+  // at 5 rows and a row at 5 buttons; Trophies, Hall of Fame, Quests, Relics, Prestige is exactly 5 when all on.
   const rows = [memberRow, leaderRow1, leaderRow2, leaderRow3];
-  if (features.enabled('achievements')) rows.push(new ActionRowBuilder().addComponents(
+  const recog = [];
+  if (features.enabled('achievements')) recog.push(
     new ButtonBuilder().setCustomId(`tribethrone_trophies:${k}`).setEmoji('🏅').setLabel('Trophies').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`tribethrone_halloffame:${k}`).setEmoji('🏛️').setLabel('Hall of Fame').setStyle(ButtonStyle.Secondary)));
+    new ButtonBuilder().setCustomId(`tribethrone_halloffame:${k}`).setEmoji('🏛️').setLabel('Hall of Fame').setStyle(ButtonStyle.Secondary));
+  if (features.enabled('tribeQuests')) recog.push(new ButtonBuilder().setCustomId(`tribethrone_quests:${k}`).setEmoji('🎯').setLabel('Quests').setStyle(ButtonStyle.Secondary));
+  if (features.enabled('relics')) recog.push(new ButtonBuilder().setCustomId(`tribethrone_relics:${k}`).setEmoji('🏺').setLabel('Relics').setStyle(ButtonStyle.Secondary));
+  if (features.enabled('prestige')) recog.push(new ButtonBuilder().setCustomId(`tribethrone_prestige:${k}`).setEmoji('⭐').setLabel('Prestige').setStyle(ButtonStyle.Secondary));
+  if (recog.length) rows.push(new ActionRowBuilder().addComponents(recog.slice(0, 5)));
   return { content, components: rows, allowedMentions: { parse: [] } };
 }
 // Post + pin the panel in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
@@ -643,6 +650,52 @@ async function processChronicleIfDue(guild) {
   lore.record({ type: 'chronicle', title: 'A chapter of the Chronicle was written' });
   console.log('[tribe chronicle] wrote a weekly chapter.');
 }
+
+// ---- Weekly tribe quests (Phase 7 depth) ----------------------------------------------------------------
+// Progress is READ from the Lore Log for the current week — no separate counters. stat maps to lore event types.
+function questStat(tribeKey, stat, weekEvents) {
+  if (stat === 'arena_wins') return weekEvents.filter(e => e.type === 'arena' && (e.tribes || []).includes(tribeKey)).length;
+  if (stat === 'war_wins') return weekEvents.filter(e => e.type === 'war' && e.winner === tribeKey).length;
+  if (stat === 'musters') return weekEvents.filter(e => e.type === 'muster' && (e.tribes || []).includes(tribeKey)).length;
+  if (stat === 'crown') return weekEvents.filter(e => e.type === 'crown' && (e.tribes || []).includes(tribeKey)).length;
+  return 0;
+}
+// Called right after any quest-relevant lore event is recorded for a tribe: pays out every newly-complete,
+// unclaimed quest once. Idempotent (claimed set), fail-off (registry flag), no fourth currency.
+async function checkTribeQuests(guild, tribeKey) {
+  if (!features.enabled('tribeQuests') || !tribeKey) return;
+  const weekStart = tribes.weekStartMs(Date.now());
+  quests.ensureWeek(weekStart);
+  const evs = lore.since(weekStart);
+  const t = tribes.get(tribeKey);
+  if (!t) return;
+  for (const q of quests.activeQuests(weekStart)) {
+    if (quests.isClaimed(tribeKey, q.id)) continue;
+    if (questStat(tribeKey, q.stat, evs) < q.target) continue;
+    quests.markClaimed(tribeKey, q.id);
+    if (q.reward.treasury) tribes.addTreasury(tribeKey, q.reward.treasury);
+    if (q.reward.glory) tribes.addGlory(tribeKey, q.reward.glory);
+    lore.record({ type: 'quest', title: `${t.shortName || t.name} completed a quest: ${q.desc}`, tribes: [tribeKey] });
+    await broadcastSpectacle(guild, `# 🎯 Quest complete\n${tribeName(tribeKey)} finished **${q.desc}** and banked **+${q.reward.treasury} Treasury**${q.reward.glory ? ` and **+${q.reward.glory} Glory**` : ''}.`, [t.roleId].filter(Boolean));
+    await refreshThronePanel(guild, t).catch(() => {});
+  }
+}
+// The 🎯 Quests view: this week's three objectives with this tribe's live progress + reward.
+function renderQuestBoard(tribeKey) {
+  const weekStart = tribes.weekStartMs(Date.now());
+  quests.ensureWeek(weekStart);
+  const evs = lore.since(weekStart);
+  const t = tribes.get(tribeKey);
+  const nextReset = weekStart + 7 * 86400000;
+  const lines = quests.activeQuests(weekStart).map(q => {
+    const done = quests.isClaimed(tribeKey, q.id);
+    const prog = Math.min(questStat(tribeKey, q.stat, evs), q.target);
+    const bar = done ? '✅' : `**${prog}/${q.target}**`;
+    const reward = `+${q.reward.treasury} Treasury${q.reward.glory ? ` · +${q.reward.glory} Glory` : ''}`;
+    return `${done ? '✅' : '🎯'} ${q.desc} — ${bar}\n-# reward: ${reward}${done ? ' · claimed' : ''}`;
+  });
+  return `# 🎯 ${t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : 'Tribe'} · Weekly Quests\n-# Shared by every tribe this week. Resets <t:${Math.floor(nextReset / 1000)}:R>.\n\n${lines.join('\n\n')}`;
+}
 // Phase 6 catch-up: tribes in the bottom half of the live standings earn a bonus multiplier on event payouts
 // so last place can climb back instead of quitting. Neutral (1x) when there are too few tribes to matter.
 const UNDERDOG_MULT = 1.5;
@@ -710,6 +763,7 @@ async function processWeeklyCrownIfDue(guild) {
   const season = tribes.getSeason();
   broadcastCoronation(guild, tribe, result, crownRole, preBoard, season).catch(e => console.error('[coronation]', e.message));
   lore.record({ type: 'crown', title: `${tribe.shortName || tribe.name} took a weekly Crown`, detail: `${result.glory} Glory`, tribes: [tribe.key], age: season?.number });
+  checkTribeQuests(guild, tribe.key).catch(() => {});
 }
 // The weekly crown as a STAGED ceremony (Phase 7, owner: "the Sunday crown becomes a staged sequence").
 // Herald -> crown transfer -> fallen rivals acknowledged -> closing proclamation. Public, detached.
@@ -895,6 +949,7 @@ async function sweepExpiredMusters(guild) {
     const result = tribes.closeMuster(tribe.key);
     if (!result) continue;
     lore.record({ type: 'muster', title: `${tribe.shortName || tribe.name} mustered ${result.count} strong`, tribes: [tribe.key], count: result.count });
+    checkTribeQuests(guild, tribe.key).catch(() => {});
     // Underdog catch-up bonus (Phase 6): bottom-half tribes earn extra on musters too, not just arenas.
     let reward = result.reward, bonusNote = '';
     const mult = underdogMultiplier(guild, tribe.key);
@@ -1025,6 +1080,7 @@ async function executeWar(guild, war, note = '') {
   const attackerWon = sim.winnerKey === attacker.key;
   const wScore = attackerWon ? sim.scoreA : sim.scoreD, lScore = attackerWon ? sim.scoreD : sim.scoreA;
   lore.record({ type: 'war', title: `${warName}: ${winner.shortName || winner.name} beat ${loser.shortName || loser.name} ${wScore}-${lScore}`, detail: `decided in ${sim.rounds.length} skirmishes`, tribes: [attacker.key, defender.key], winner: winner.key, warName });
+  checkTribeQuests(guild, winner.key).catch(() => {});
   // War-win achievements for the victors (gated).
   let honorsLine = '';
   if (features.enabled('achievements')) {
@@ -1459,6 +1515,7 @@ async function endArena(guild) {
     const bonusNote = notes.length ? ` (${notes.join('; ')})` : '';
     resultText = `# 🏆 ${label}: ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${treas} Treasury**${glory ? ` and **+${glory} Glory**` : ''}${bonusNote}.\n\n${arenaScoreboard(a)}`;
     { const wt = tribes.get(win.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || win.key} won a ${label}`, tribes: [win.key], score: win.score }); }
+    checkTribeQuests(guild, win.key).catch(() => {});
     await refreshThronePanel(guild, tribes.get(win.key)).catch(() => {});
   } else {
     resultText = `# 🏁 ${label} over\nNo tribe scored, no reward this time.`;
@@ -4685,6 +4742,10 @@ client.on('interactionCreate', async (interaction) => {
         : `_No age has crowned a Champion yet. **${season.name}** is being written now._`;
       const embed = new EmbedBuilder().setColor(0xF1C40F).setTitle('🏛️ Hall of Fame').setDescription(body).setFooter({ text: season ? `Current age: ${season.name} (Age ${season.number})` : '' });
       return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'quests') {
+      if (!features.enabled('tribeQuests')) return interaction.reply({ content: 'Quests aren’t enabled.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: renderQuestBoard(tribe.key), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (act === 'tithe') {
       // Tithe = convert your OWN activity points into this tribe's treasury (same as /tribe offer). Members only.

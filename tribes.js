@@ -596,7 +596,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
   startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
-  dueForWeeklyCrown, markWeeklyCrownDone, dueForChronicle, markChronicleDone,
+  dueForWeeklyCrown, markWeeklyCrownDone, dueForChronicle, markChronicleDone, weekStartMs,
   SEASON_LEN_MS, ensureSeason, getSeason, addSeasonCrown, seasonStandings, dueForSeasonEnd, seasonHistory, currentChampionKey, endSeasonAndRotate,
   recordArenaPlay, getArenaStreak,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
