@@ -517,8 +517,6 @@ function tribeHubButtons() {
       new ButtonBuilder().setCustomId('tribehub_shop').setEmoji('🛒').setLabel('My Shop').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('tribehub_join').setEmoji('🪶').setLabel('Join Request').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('tribehub_leave').setEmoji('🚪').setLabel('Leave').setStyle(ButtonStyle.Danger)),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('tribehub_arena').setEmoji('🎪').setLabel('Start a Challenge (leaders/admins)').setStyle(ButtonStyle.Primary)),
   ];
 }
 // Idempotent create-or-refresh: makes the channel once, edits the SAME message on every later call (a hub
