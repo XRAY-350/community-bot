@@ -415,10 +415,10 @@ function clearEntranceGate(key) { const s = load(); const t = s.tribes && s.trib
 // active tribe can beat a bigger sloppy one. Power is Tides-based specifically because Tides can't be
 // manufactured on demand (rank-based power could be gamed by mass-promoting members right before a fight;
 // Tides only come from real, rate-limited hall activity — owner's own correction, 2026-08-03).
-const WAR_VOTE_MS = 24 * 60 * 60 * 1000;          // 24h vote window
+const WAR_VOTE_MS = 6 * 60 * 60 * 1000;           // 6h vote window (also used for alliance votes) — kept short so wars don't drag
 const WAR_VOTE_TURNOUT = 0.30;                    // ≥30% of current members must vote
-const WAR_COOLDOWN_MS = 72 * 60 * 60 * 1000;      // 72h before either side can war again
-const CAPTURE_LOCK_MS = WAR_COOLDOWN_MS / 2;       // 36h — captured members can't leave (any path) until this passes
+const WAR_COOLDOWN_MS = 24 * 60 * 60 * 1000;      // 24h before either side can war again
+const CAPTURE_LOCK_MS = 48 * 60 * 60 * 1000;       // 48h — captured members can't leave (any path) until this passes (independent of the cooldown)
 const WAR_TREASURY_RAID_PCT = 0.25;               // winner takes 25% of loser's treasury
 const WAR_GLORY_BONUS = 100;                       // flat, not stolen — Glory is a weekly flow, not a stock to raid
 const WAR_CAPTURE_PCT = 0.10;                      // winner captures ~10% of loser's regular members
