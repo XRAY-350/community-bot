@@ -125,18 +125,34 @@ async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe �
 // Recruitment rewards (Phase 6, gated by the `recruitment` flag): credit the recruiter when their invitee
 // joins, and pay a one-time treasury bonus when the tribe crosses a growth milestone. Announced in the hall.
 async function applyRecruitment(guild, tribe, invitee, recruiterId) {
-  if (recruiterId && recruiterId !== invitee.id && recruitment.creditRecruit(recruiterId, invitee.id)) {
-    tribes.addTides(tribe.key, recruiterId, recruitment.RECRUITER_TIDES);
-    tribes.addTreasury(tribe.key, recruitment.RECRUITER_TREASURY);
-    const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
-    if (hall) await hall.send({ content: `🎉 <@${recruiterId}> recruited <@${invitee.id}> into **${tribe.shortName || tribe.name}**! +${recruitment.RECRUITER_TIDES} Tides for the recruiter, +${recruitment.RECRUITER_TREASURY} treasury for the tribe.`, allowedMentions: { users: [recruiterId] } }).catch(() => {});
-  }
+  // Recruiter reward is DEFERRED: the invitee must stick for STICK_DAYS (sweepRecruitment pays it) so
+  // instantly-leaving alts can't farm it. Record the pending recruit here.
+  if (recruiterId && recruiterId !== invitee.id) recruitment.addPending(recruiterId, invitee.id, tribe.key, Date.now());
+  // Growth milestone fires now (the tribe crossed the member count on this join).
   const count = guild.roles.cache.get(tribe.roleId)?.members.size || 0;
   const gm = recruitment.checkGrowth(tribe.key, count);
   if (gm) {
     tribes.addTreasury(tribe.key, gm.treasury);
     const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
     if (hall) await hall.send({ content: `📈 **${tribe.shortName || tribe.name}** just hit **${gm.members} members**! The tribe banks +${gm.treasury} treasury.`, allowedMentions: { parse: [] } }).catch(() => {});
+  }
+}
+// Pay out recruiter rewards for invitees who've now stuck for STICK_DAYS and are STILL in the tribe (Phase 6).
+async function sweepRecruitment(guild) {
+  if (!features.enabled('recruitment')) return;
+  const due = recruitment.duePending(Date.now());
+  if (!due.length) return;
+  await ensureMembers(guild).catch(() => {});
+  for (const p of due) {
+    const tribe = tribes.get(p.tribeKey);
+    const stillIn = tribe && !!guild.roles.cache.get(tribe.roleId)?.members.has(p.inviteeId);
+    if (tribe && stillIn && recruitment.creditRecruit(p.recruiterId, p.inviteeId)) {
+      tribes.addTides(tribe.key, p.recruiterId, recruitment.RECRUITER_TIDES);
+      tribes.addTreasury(tribe.key, recruitment.RECRUITER_TREASURY);
+      const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
+      if (hall) await hall.send({ content: `🎉 <@${p.recruiterId}> recruited <@${p.inviteeId}> into **${tribe.shortName || tribe.name}**, and they stuck around! +${recruitment.RECRUITER_TIDES} Tides for the recruiter, +${recruitment.RECRUITER_TREASURY} treasury for the tribe.`, allowedMentions: { users: [p.recruiterId] } }).catch(() => {});
+    }
+    recruitment.resolvePending(p.inviteeId);
   }
 }
 // A mod who co-signed another mod's founding request isn't just approving it, they're founding it TOGETHER
@@ -806,9 +822,19 @@ async function sweepExpiredMusters(guild) {
     if (!m || m.expiresAt > now) continue;
     const result = tribes.closeMuster(tribe.key);
     if (!result) continue;
+    // Underdog catch-up bonus (Phase 6): bottom-half tribes earn extra on musters too, not just arenas.
+    let reward = result.reward, bonusNote = '';
+    const mult = underdogMultiplier(guild, tribe.key);
+    if (mult > 1 && result.reward > 0) {
+      const extra = Math.round(result.reward * (mult - 1));
+      tribes.addTreasury(tribe.key, extra);
+      tribes.addGlory(tribe.key, extra);
+      reward += extra;
+      bonusNote = ` (underdog ×${mult})`;
+    }
     const chId = result.channelId || tribe.hallId;
     const ch = chId ? await guild.channels.fetch(chId).catch(() => null) : null;
-    const summary = `🪖 Muster ended: **${result.count}** answered the call. **${tribe.shortName || tribe.name}** banks **+${result.reward}** treasury and **+${result.reward}** glory.`;
+    const summary = `🪖 Muster ended: **${result.count}** answered the call. **${tribe.shortName || tribe.name}** banks **+${reward}** treasury and **+${reward}** glory${bonusNote}.`;
     if (ch && result.messageId) {
       const orig = await ch.messages.fetch(result.messageId).catch(() => null);
       if (orig) await orig.edit({ components: [] }).catch(() => {});
@@ -2741,6 +2767,9 @@ client.once('ready', async () => {
   // Season end: boot catch-up + hourly check (idempotent — ensureSeason opens S1, dueForSeasonEnd gates it).
   if (dguild) await processSeasonEndIfDue(dguild).catch(e => console.error(`[tribe season] boot check: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => processSeasonEndIfDue(g)).catch(() => {}), 3600000);
+  // Recruitment payouts: boot catch-up + hourly (gated inside; the stick period is days, so hourly is ample).
+  if (dguild) await sweepRecruitment(dguild).catch(e => console.error(`[recruitment] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepRecruitment(g)).catch(() => {}), 3600000);
   // Muster auto-close: boot catch-up + every 5min (a muster's 2h window makes a tighter cadence worth it).
   if (dguild) await sweepExpiredMusters(dguild).catch(e => console.error(`[tribe muster] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
@@ -4430,39 +4459,8 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.reply({ content: '## 🏆 Every tribe’s leaderboard', embeds, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   // Hub: Start a Challenge — any tribe leader or admin picks a type; the Arena runs right in the hub channel.
-  if (interaction.isButton?.() && interaction.customId === 'tribehub_arena') {
-    if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can start a challenge.', flags: MessageFlags.Ephemeral });
-    { const blocked = arena.startBlocked(); if (blocked) return interaction.reply({ content: blocked, flags: MessageFlags.Ephemeral }); }
-    const menu = new StringSelectMenuBuilder().setCustomId('tribehub_arena_pick').setPlaceholder('Pick a challenge…').addOptions(
-      { label: 'Reaction Race', value: 'race', emoji: '🏁', description: 'First tribe to 10 claims wins' },
-      { label: 'Trivia Sprint', value: 'trivia', emoji: '❓', description: '10 questions, first correct scores' },
-      { label: 'Word Scramble', value: 'scramble', emoji: '🔤', description: 'Type the unscrambled word to score' },
-      { label: 'Activity Blitz', value: 'blitz', emoji: '⚡', description: 'Most hall activity wins' },
-      { label: 'Math Sprint', value: 'math', emoji: '➗', description: 'Type the answer to the math problem' },
-      { label: 'Fast Fingers', value: 'typing', emoji: '⌨️', description: 'Type the phrase exactly, first scores' },
-      { label: 'Riddle Rush', value: 'riddle', emoji: '🧩', description: 'Type the answer to the riddle' },
-      { label: 'Emoji Decode', value: 'emoji', emoji: '🧠', description: 'Guess what the emojis spell' },
-      { label: 'True or False', value: 'truefalse', emoji: '✅', description: '12 statements, first correct scores' },
-      { label: 'Reaction Rush', value: 'reaction', emoji: '🎯', description: 'First to react with the target emoji' },
-      { label: 'Number Pattern', value: 'pattern', emoji: '🔢', description: 'Complete the sequence, 4 choices' },
-      { label: 'Geography Quiz', value: 'geoquiz', emoji: '🌍', description: 'Trivia: world geography' },
-      { label: 'Science Quiz', value: 'sciquiz', emoji: '🔬', description: 'Trivia: science and nature' },
-      { label: 'History Quiz', value: 'histquiz', emoji: '📜', description: 'Trivia: history' },
-      { label: 'Animal Quiz', value: 'animalquiz', emoji: '🦁', description: 'Trivia: animals' },
-      { label: 'Reverse Word', value: 'reverse', emoji: '🔁', description: 'Type the backwards word the right way' });
-    return interaction.reply({ content: '🎪 Which challenge? It runs here in the hub, and the winning tribe banks Glory + Treasury.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
-  }
-  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribehub_arena_pick') {
-    if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can start a challenge.', flags: MessageFlags.Ephemeral });
-    { const blocked = arena.startBlocked(); if (blocked) return interaction.update({ content: blocked, components: [] }).catch(() => {}); }
-    const type = interaction.values[0];
-    const minutes = ARENA_DEFAULTS[type] || 5;
-    const announceCh = await ensureTribeAnnounce(interaction.guild, config).catch(() => null);
-    await interaction.update({ content: `🎪 Announced **${ARENA_LABEL[type] || type}** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'} — it begins in **5 minutes** so everyone can gather, then runs for **${minutes} min**.`, components: [] }).catch(() => {});
-    try { await startArenaCountdown(interaction.guild, type, minutes, interaction.user.id); }
-    catch (e) { console.error('[arena] hub start:', e.message); await interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
-    return;
-  }
+  // (The old hub "Start a Challenge" button + its picker were removed — arenas auto-start now, with
+  //  /tribe-admin arena for manual staff starts. Handlers deleted as dead code.)
   if (interaction.isButton?.() && interaction.customId === 'tribehub_shop') {
     const tribe = tribes.myTribe(interaction.member);
     if (!tribe) return interaction.reply({ content: 'You’re not in a tribe yet. Head to #roles to pledge one.', flags: MessageFlags.Ephemeral });

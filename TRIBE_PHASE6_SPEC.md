@@ -101,14 +101,19 @@ crown + season champion (silent). UI on the throne panel (shown only when the fl
 Registry-driven; tune `CATALOG` anytime.
 
 ## 8. Recruitment rewards — DONE, DARK (feature `recruitment`, off until tuned)
-Grow the server. `recruitment.js`: credit the recruiter when their nominee/invitee joins (Tides + tribe
-treasury, once per invitee) and pay a one-time treasury bonus at member-count growth milestones (10/25/50).
-Hooked into both tribenom_accept join paths (gate + no-gate) via `applyRecruitment`, announced in the tribe
-hall. Inert until `/features toggle recruitment on`; tune the constants in recruitment.js first.
+Grow the server. `recruitment.js`: the recruiter is credited (Tides + tribe treasury, once per invitee) when
+their nominee/invitee joins AND STICKS. The reward is DEFERRED: on join it's recorded pending, and
+`sweepRecruitment` (hourly) pays it out only after the invitee has stayed `STICK_DAYS` (7) and is still in the
+tribe, so instantly-leaving alts can't farm it. Plus a one-time treasury bonus at member-count growth
+milestones (10/25/50), paid immediately. Hooked into both tribenom_accept join paths via `applyRecruitment`,
+announced in the tribe hall. Inert until `/features toggle recruitment on`; tune the constants first.
 
-## Remaining (trivia / next)
-- Extend the underdog catch-up bonus to muster + weekly-challenge payouts (arena-only today).
-- Remove the now-dead tribehub_arena / tribehub_arena_pick handlers (kept as a stale-message safety net).
+## 9. Loose ends — DONE
+- Underdog catch-up bonus now also applies to **musters** (sweepExpiredMusters), not just arenas. (The weekly
+  challenge was retired when the arena replaced it, so there's nothing else to extend it to.)
+- Removed the now-dead `tribehub_arena` / `tribehub_arena_pick` handlers.
+
+## Next
 - **War revamp** is the next project (owner).
 
 ## Status
