@@ -189,7 +189,7 @@ function loadBank() {
 // fresh prompts until the end timer fires, so no round count is needed. nextTyped(type, used) returns
 // { answer, display, key }: `answer` is what a player types to score, `display` is what's shown, `key` is
 // what to add to the per-game `used` list so a prompt doesn't repeat. index.js renders `display` per type.
-const TYPED_TYPES = ['scramble', 'math', 'typing', 'riddle', 'emoji', 'reverse'];
+const TYPED_TYPES = ['scramble', 'math', 'typing', 'reverse'];   // riddle + emoji removed (no infinite source, owner 2026-08-05)
 // Themed quizzes reuse the trivia button flow, just with a fixed Open Trivia DB category (virtually infinite).
 const TRIVIA_CATEGORY = { geoquiz: 22, sciquiz: 17, histquiz: 23, animalquiz: 27 };
 const BUTTON_TYPES = ['trivia', 'truefalse', 'pattern', ...Object.keys(TRIVIA_CATEGORY)];   // answered by clicking an option button

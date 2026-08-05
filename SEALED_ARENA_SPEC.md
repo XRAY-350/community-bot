@@ -22,13 +22,13 @@ Different from the other two modes on purpose:
 - **Live + simultaneous**, not async. The intensity is the point.
 - **Blind:** no throne can see another during play.
 - **Games:** draws from the **same shared pool as the regular arena** (which it already does),
-  using the **13 timing-precise types** (button + typed). This IS the sealed arena's final game
+  using the **11 timing-precise types** (button + typed; riddle + emoji removed, no infinite source). This IS the sealed arena's final game
   set, no new games for this mode (owner 2026-08-05); new games belong to the other two modes.
   Reaction Race, Reaction Rush, and
   Activity Blitz are EXCLUDED (reactions lack a precise server tap-time; Blitz is a
   server-wide async message count, not a per-throne race). Pool:
   - Button (7): Trivia, True or False, Number Pattern, Geography/Science/History/Animal Quiz.
-  - Typed (6): Word Scramble, Math Sprint, Fast Fingers, Riddle Rush, Emoji Decode, Reverse Word.
+  - Typed (4): Word Scramble, Math Sprint, Fast Fingers, Reverse Word.
 - **Scoring:** per-throne RELATIVE timing (fair regardless of send skew), see below.
 - **Cadence:** 1 to 3 times a day at peak, with its OWN daily cap, separate from the
   regular arena so the two never collide.

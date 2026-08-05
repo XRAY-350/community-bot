@@ -585,7 +585,7 @@ function tribeHubEmbed() {
     + `## War & Alliances\n`
     + `A leader can **Declare War**: your members vote first (24h majority); if it passes the target's leader Accepts or Declines (a coin flip then decides). Each war is **named** and plays out as a live, narrated battle, resolved by a points-weighted strength sim (not rank-based, no guaranteed win), 72h cooldown. The loser is raided for ~25% treasury and can lose a few members for 36h (never the leader), though **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) need a member vote too; allies defend each other and can gift treasury.\n\n`
     + `## Challenges — the Arena\n`
-    + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in tribe-announcements. **16 game types** rotate, from Reaction Race, Trivia and Word Scramble to Riddle Rush, Emoji Decode, Number Pattern and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
+    + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in the arena channel. **14 game types** rotate, from Reaction Race, Trivia and Word Scramble to Number Pattern, Fast Fingers and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
     + `## Every tribe's Throne\n`
     + `Each throne has a pinned panel. Members get Roster / Leaderboard / Shop / Tithe / Leave, plus 🏅 Trophies, 🏛️ Hall of Fame, 🎯 Quests, 🏺 Relics and ⭐ Prestige. Leaders (or staff) also get Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Banner, Muster, War and Alliances.\n\n`
     + `-# Use the buttons below instead of typing commands out.`;
@@ -1334,8 +1334,8 @@ async function sweepExpiredAllianceVotes(guild) {
 // One active challenge at a time. Admin launches one into a public channel; the bot runs + scores it and the
 // winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
-const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4, pattern: 6,
-  geoquiz: 6, sciquiz: 6, histquiz: 6, animalquiz: 6, reverse: 5 };   // default minutes per type
+const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, truefalse: 6, reaction: 4, pattern: 6,
+  geoquiz: 6, sciquiz: 6, histquiz: 6, animalquiz: 6, reverse: 5 };   // default minutes per type (riddle/emoji removed)
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
 const _arenaTimers = { start: null, end: null, round: null, sd: null };
 function clearArenaTimers() { for (const k of ['start', 'end', 'round', 'sd']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
@@ -1361,10 +1361,10 @@ function scoreArena(tribeKey, userId, points = 1) {
   }
   return total;
 }
-const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern',
-  'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];
+const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'truefalse', 'reaction', 'pattern',
+  'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];   // riddle + emoji removed (no infinite source, owner)
 // Downtime runs only calm, low-interaction, async-friendly games (no reflex/crowd types like reaction race).
-const DOWNTIME_TYPES = ['blitz', 'riddle', 'scramble', 'emoji', 'reverse'];
+const DOWNTIME_TYPES = ['blitz', 'scramble', 'reverse'];
 const DOWNTIME_TREASURY_MULT = 2;   // downtime wins bank 2x Treasury but NO Glory: reward night owls, protect the crown
 // Which arena mode are we in right now, in the configured timezone? 'peak' (full slate, all types, tribe pings),
 // 'downtime' (calm low-ping games, bonus treasury/no glory), or 'dead' (no events — the pre-dawn lull).
@@ -3262,13 +3262,13 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('arena').setDescription('Launch an interactive cross-tribe challenge in this channel (winner banks Glory + Treasury)')
           .addStringOption(o => o.setName('type').setDescription('Which challenge').setRequired(true)
             .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' },
-              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' },
+              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' },
               { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' }))
           .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
         .addSubcommand(s => s.setName('sealed-arena').setDescription('Launch a Sealed Arena: every tribe races the same challenge blind in its own throne')
           .addStringOption(o => o.setName('type').setDescription('Which challenge (blank = random)').setRequired(false)
             .addChoices({ name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' },
-              { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🔢 Number Pattern', value: 'pattern' },
+              { name: '✅ True or False', value: 'truefalse' }, { name: '🔢 Number Pattern', value: 'pattern' },
               { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' })))
         .addSubcommand(s => s.setName('trial').setDescription('Launch a Trial: tribes rally in voice and answer together, breadth + voice scored')
           .addBooleanOption(o => o.setName('muster').setDescription('Rally only YOUR tribe (leader Muster Trial) instead of all tribes').setRequired(false)))
