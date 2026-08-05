@@ -2271,7 +2271,7 @@ function renderMemberFounding(req) {
   const need = Math.max(0, tribes.MEMBER_FOUND_COSIGNS - req.cosigns.length);
   const id = req.identity, ready = need === 0;
   const signed = req.cosigns.length ? req.cosigns.map(u => `<@${u}>`).join(', ') : '_none yet_';
-  const header = `## 🏴 A new tribe wants to rise\n> <@${req.founderId}> wants to found **${id.emoji ? id.emoji + ' ' : ''}${id.name}**.\n> It forms once **${tribes.MEMBER_FOUND_COSIGNS} members cosign** it. Cosigners must be regular members — trial mods count, but mods/admins/owners can’t.`;
+  const header = `## 🏴 A new tribe wants to rise\n> <@${req.founderId}> wants to found **${id.emoji ? id.emoji + ' ' : ''}${id.name}**.\n> It forms once **${tribes.MEMBER_FOUND_COSIGNS} members cosign** it. **Cosigning joins the tribe as a founding member**, so you can’t already be in one (get released the usual way first). Trial mods count; mods/admins/owners can’t.`;
   const tally = ready
     ? `\n-# ✅ **${tribes.MEMBER_FOUND_COSIGNS}/${tribes.MEMBER_FOUND_COSIGNS} reached!** <@${req.founderId}> can raise the tribe now.\n-# Cosigned by: ${signed}`
     : `\n-# Cosigned by: ${signed} — **${req.cosigns.length}/${tribes.MEMBER_FOUND_COSIGNS}** (${need} more)`;
@@ -5101,6 +5101,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.user.id === req.founderId) return interaction.reply({ content: 'You can’t cosign your own founding petition.', flags: MessageFlags.Ephemeral });
     if (config.verifiedRoleId && !interaction.member.roles.cache.has(config.verifiedRoleId)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
     if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
+    if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'Cosigning **joins** this tribe, and you’re already in one. You’d have to be released first — the same as always, your tribe’s leader has to **banish** you (or you file a leave request). Once you’re tribe-free, come back and cosign.', flags: MessageFlags.Ephemeral });
     const updated = tribes.cosignMemberFounding(interaction.user.id);
     if (!updated) return interaction.reply({ content: 'You already cosigned this.', flags: MessageFlags.Ephemeral });
     return interaction.update(renderMemberFounding(updated));
@@ -5119,13 +5120,25 @@ client.on('interactionCreate', async (interaction) => {
       const b = await buildTribe(interaction.guild, { name: id.name, shortName: id.shortName, emoji: id.emoji, color: id.color, style: 'smallcaps', leaderMember: interaction.member }, config);
       tribes.update(b.tribe.key, { foundedByMod: false, foundedByMember: true });   // member-led → exempt from the mod-leader requirement (like admin-founded)
       for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
+      // Cosign = join: enroll every cosigner as a founding member. Skip any who've slipped into another tribe
+      // since they signed (they had to be tribe-free to cosign, but the window is open).
+      const enrolled = [], skipped = [];
+      for (const cid of req.cosigns) {
+        const cm = await interaction.guild.members.fetch(cid).catch(() => null);
+        if (!cm || tribes.myTribe(cm)) { skipped.push(cid); continue; }
+        tribes.setMembership(b.tribe.key, cid, true);   // authorize first so the membership guard honors it
+        const ok = await cm.roles.add(b.role.id, 'Founding member — cosigned the tribe').then(() => true).catch(() => false);
+        if (!ok) { tribes.setMembership(b.tribe.key, cid, false); skipped.push(cid); continue; }
+        await syncStaffRank(interaction.guild, cm, b.tribe).catch(() => {});
+        enrolled.push(cid);
+      }
       tribes.setMemberFoundedTribe(b.tribe.key);   // records the one-at-a-time slot AND clears the pending petition
       if (req.channelId && req.messageId) {
         const pch = await interaction.guild.channels.fetch(req.channelId).catch(() => null);
         const pmsg = pch && await pch.messages.fetch(req.messageId).catch(() => null);
-        if (pmsg) await pmsg.edit({ content: `## ${b.tribe.emoji || '🏴'} ${b.tribe.name} has risen!\n> Founded by <@${founderId}>, cosigned by ${req.cosigns.map(u => `<@${u}>`).join(', ')}.\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}> — \`/request-role\` the role to join.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+        if (pmsg) await pmsg.edit({ content: `## ${b.tribe.emoji || '🏴'} ${b.tribe.name} has risen!\n> Founded by <@${founderId}>${enrolled.length ? `, with founding members ${enrolled.map(u => `<@${u}>`).join(', ')}` : ''}.\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
       }
-      return interaction.editReply(`🏴 **${b.tribe.name}** is founded — you’re its leader. Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`);
+      return interaction.editReply(`🏴 **${b.tribe.name}** is founded — you’re its leader, with **${enrolled.length}** founding member${enrolled.length === 1 ? '' : 's'} enrolled.${skipped.length ? ` (${skipped.length} cosigner${skipped.length === 1 ? '' : 's'} couldn’t be added — they’d joined another tribe.)` : ''} Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`);
     } catch (e) {
       console.error('[tribe member-found]', e.message);
       return interaction.editReply(`❌ Couldn’t raise the tribe: ${e.message}`);
