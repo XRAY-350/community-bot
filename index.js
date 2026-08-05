@@ -584,10 +584,12 @@ async function ensureTribesHub(guild, config) {
 // (staff can, for general announcements); the bot posts challenge results here (pinging every tribe). Idempotent.
 // Phase 6 spectacle: broadcast a big moment (war result, crowning, season champion) to a public channel so
 // lurkers and newcomers see the drama, not just the tribes involved. Falls back to tribe-announcements.
+async function getSpectacleChannel(guild) {
+  if (config.tribeSpectacleChannelId) { const c = await guild.channels.fetch(config.tribeSpectacleChannelId).catch(() => null); if (c) return c; }
+  return ensureTribeAnnounce(guild, config).catch(() => null);
+}
 async function broadcastSpectacle(guild, content, roleIds = []) {
-  let ch = null;
-  if (config.tribeSpectacleChannelId) ch = await guild.channels.fetch(config.tribeSpectacleChannelId).catch(() => null);
-  if (!ch) ch = await ensureTribeAnnounce(guild, config).catch(() => null);
+  const ch = await getSpectacleChannel(guild);
   if (ch) await ch.send({ content, allowedMentions: { roles: roleIds } }).catch(() => {});
 }
 // Phase 6 catch-up: tribes in the bottom half of the live standings earn a bonus multiplier on event payouts
@@ -933,8 +935,10 @@ async function resolveWarVoteRecord(guild, war) {
 async function executeWar(guild, war, note = '') {
   const attacker = tribes.get(war.attackerKey), defender = tribes.get(war.defenderKey);
   if (!attacker || !defender) { tribes.resolveWarRecord(war.id, { status: 'failed', resolvedAt: Date.now() }); return; }
-  const sim = tribes.simulateWar(guild, attacker, defender);
+  await ensureMembers(guild).catch(() => {});
+  const sim = tribes.simulateWarMatch(guild, attacker, defender);
   const winner = tribes.get(sim.winnerKey), loser = tribes.get(sim.loserKey);
+  // Consequences apply IMMEDIATELY (so a restart mid-broadcast never loses them; the live show is theater).
   tribes.addTreasury(sim.winnerKey, sim.raidAmount);
   tribes.addTreasury(sim.loserKey, -sim.raidAmount);
   tribes.addGlory(sim.winnerKey, tribes.WAR_GLORY_BONUS);
@@ -946,10 +950,9 @@ async function executeWar(guild, war, note = '') {
     if (m) await captureMemberInto(guild, winner, m, `Captured in war: ${loser.shortName || loser.name} → ${winner.shortName || winner.name}`).catch(() => {});
   }
   tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount: sim.raidAmount, capturedIds: sim.capturedIds });
-  const oddsLine = `-# Odds were ${Math.round(sim.attackerWinChance * 100)}% ${attacker.shortName || attacker.name} · ${Math.round((1 - sim.attackerWinChance) * 100)}% ${defender.shortName || defender.name}, by Tides-weighted strength.`;
-  const captureLine = sim.capturedIds.length ? `**${sim.capturedIds.length}** member${sim.capturedIds.length === 1 ? '' : 's'} captured: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No members captured (loser too small).';
-  const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
-  // War-win achievements for the victors (gated; empty when off). Awarded to every current winner member.
+  const attackerWon = sim.winnerKey === attacker.key;
+  const wScore = attackerWon ? sim.scoreA : sim.scoreD, lScore = attackerWon ? sim.scoreD : sim.scoreA;
+  // War-win achievements for the victors (gated).
   let honorsLine = '';
   if (features.enabled('achievements')) {
     const wRole = guild.roles.cache.get(winner.roleId);
@@ -957,16 +960,68 @@ async function executeWar(guild, war, note = '') {
     if (wRole) for (const m of wRole.members.values()) for (const a of achievements.bumpAndCheck(m.id, 'warwin')) honored.push(m.id);
     if (honored.length) honorsLine = `\n-# 🏅 New war honors for ${[...new Set(honored)].slice(0, 10).map(id => `<@${id}>`).join(' ')}.`;
   }
-  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} wins!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}\n${oddsLine}${wallLine}${honorsLine}`;
+  const captureLine = sim.capturedIds.length ? `**${sim.capturedIds.length}** member${sim.capturedIds.length === 1 ? '' : 's'} captured: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No members captured (loser too small).';
+  const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
+  // Concise record posted to both thrones.
+  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} win ${wScore}-${lScore}!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}${wallLine}${honorsLine}`;
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: summary, allowedMentions: { parse: [] } });
   }
-  // Spectacle: also broadcast the war result publicly so the whole server sees the drama (Phase 6).
-  await broadcastSpectacle(guild, summary, [attacker.roleId, defender.roleId].filter(Boolean));
   await refreshThronePanel(guild, tribes.get(attacker.key)).catch(() => {});
   await refreshThronePanel(guild, tribes.get(defender.key)).catch(() => {});
+  // The GRAND part: a live, narrated battle plays out in the public spectacle channel. Detached (it takes
+  // ~20s), so it never blocks the caller/interaction — the outcome above is already committed.
+  broadcastWarSpectacle(guild, attacker, defender, winner, loser, sim, { note, wScore, lScore }).catch(e => console.error('[war spectacle]', e.message));
+}
+// The live, narrated battle broadcast (owner: "grand, like a Madden quicksim"). Hybrid: one live-updating
+// scoreboard message + key-moment feed drops (first blood, lead changes, match point, the final blow). The
+// outcome is already committed in executeWar; this is pure theater, so a restart mid-show is harmless.
+const WAR_EVENTS = ['leads a charge', 'springs an ambush', 'breaches the gate', 'rallies the ranks', 'outflanks the enemy', 'storms the walls', 'holds the line under fire', 'turns the tide', 'crushes the vanguard', 'raids the flank', 'seizes the high ground', 'routs a column'];
+const WAR_MVP_TIDES = 20;
+const warSleep = ms => new Promise(r => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
+function warMomentumBar(sA, sD, target) {
+  const total = target * 2 - 1, mid = Math.floor(total / 2);
+  const pos = Math.max(0, Math.min(total - 1, mid + (sA - sD)));
+  return '▱'.repeat(pos) + '🔥' + '▱'.repeat(total - 1 - pos);
+}
+async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, sim, meta) {
+  const ch = await getSpectacleChannel(guild);
+  if (!ch) return;
+  const aEmoji = attacker.emoji || '🏴', dEmoji = defender.emoji || '🏴';
+  const aName = attacker.shortName || attacker.name, dName = defender.shortName || defender.name;
+  const target = tribes.WAR_WIN_ROUNDS;
+  const nameOf = id => guild.members.cache.get(id)?.displayName || 'a warrior';
+  const aPct = Math.round(sim.attackerWinChance * 100);
+  const board = (r, sA, sD, play) => `# ⚔️ ${aEmoji} ${aName}  vs  ${dEmoji} ${dName}\n### Round ${r}\n## ${aEmoji} ${sA}   ${sD} ${dEmoji}\n${warMomentumBar(sA, sD, target)}\n> ${play}`;
+  await ch.send({ content: `# ⚔️ WAR!\n${aEmoji} **${aName}** marches on ${dEmoji} **${dName}**. The horns sound, steel is drawn. First to **${target}** skirmishes takes it.\n-# Strength: ${aName} ${aPct}% vs ${dName} ${100 - aPct}%, by Tides + walls.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await warSleep(2500);
+  const scoreMsg = await ch.send({ content: board(0, 0, 0, 'The battle begins…') }).catch(() => null);
+  let sA = 0, sD = 0, mp = false; const tally = {};
+  for (let i = 0; i < sim.rounds.length; i++) {
+    await warSleep(3000);
+    const rr = sim.rounds[i];
+    if (rr.side === 'attacker') sA++; else sD++;
+    const sEmoji = rr.side === 'attacker' ? aEmoji : dEmoji, side = rr.side === 'attacker' ? attacker : defender;
+    if (rr.starId) tally[rr.starId] = (tally[rr.starId] || 0) + 1;
+    const play = `${sEmoji} **${nameOf(rr.starId)}** ${WAR_EVENTS[Math.floor(Math.random() * WAR_EVENTS.length)]}!`;
+    if (scoreMsg) await scoreMsg.edit({ content: board(i + 1, sA, sD, play) }).catch(() => {});
+    if (i === 0) await ch.send({ content: `🩸 **First blood!** ${play}`, allowedMentions: { parse: [] } }).catch(() => {});
+    else if (rr.leadChange) await ch.send({ content: `🔄 **Lead change!** ${side.emoji || '🏴'} ${side.shortName || side.name} pulls ahead ${Math.max(sA, sD)}-${Math.min(sA, sD)}.`, allowedMentions: { parse: [] } }).catch(() => {});
+    else if (!mp && Math.max(sA, sD) === target - 1 && sA !== sD) { mp = true; const lead = sA > sD ? attacker : defender; await ch.send({ content: `⚡ **Match point** for ${lead.emoji || '🏴'} **${lead.shortName || lead.name}**! One more skirmish to win it all.`, allowedMentions: { parse: [] } }).catch(() => {}); }
+  }
+  const wEmoji = winner.emoji || '🏴', wName = winner.shortName || winner.name;
+  let mvpId = null, mvpN = 0; const wRole = guild.roles.cache.get(winner.roleId);
+  for (const [id, n] of Object.entries(tally)) if (wRole?.members.has(id) && n > mvpN) { mvpN = n; mvpId = id; }
+  let mvpLine = '';
+  if (mvpId) { tribes.addTides(winner.key, mvpId, WAR_MVP_TIDES); mvpLine = `\n-# 🎖️ Battle MVP: <@${mvpId}> won ${mvpN} skirmish${mvpN === 1 ? '' : 'es'}. +${WAR_MVP_TIDES} Tides.`; }
+  if (scoreMsg) await scoreMsg.edit({ content: `# 🏆 ${wEmoji} ${wName} WIN!   ${meta.wScore}-${meta.lScore}\n${aEmoji} ${aName}  vs  ${dEmoji} ${dName}\n${warMomentumBar(sA, sD, target)}` }).catch(() => {});
+  await warSleep(1500);
+  const cap = sim.capturedIds.length ? `Captured **${sim.capturedIds.length}**: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No captures.';
+  const wall = sim.defWallTiers ? ` 🏰 ${dName}'s walls held the raid to ${Math.round(sim.raidPct * 100)}%.` : '';
+  const roleIds = [attacker.roleId, defender.roleId].filter(Boolean);
+  await ch.send({ content: `# 🏆 ${wEmoji} **${wName}** win the war ${meta.wScore}-${meta.lScore}!\n> Raided **+${sim.raidAmount}** treasury and banked **+${tribes.WAR_GLORY_BONUS}** glory. ${cap}${wall}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds, users: mvpId ? [mvpId] : [] } }).catch(() => {});
 }
 async function sweepExpiredWarVotes(guild) {
   for (const war of tribes.expiredWarVotes(Date.now())) await resolveWarVoteRecord(guild, war).catch(e => console.error('[tribe war] resolve:', e.message));

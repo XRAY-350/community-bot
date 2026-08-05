@@ -113,8 +113,20 @@ announced in the tribe hall. Inert until `/features toggle recruitment on`; tune
   challenge was retired when the arena replaced it, so there's nothing else to extend it to.)
 - Removed the now-dead `tribehub_arena` / `tribehub_arena_pick` handlers.
 
+## 10. War spectacle — DONE (owner: "grand, like a Madden quicksim / Retro Bowl")
+Wars no longer resolve into one instant summary. `tribes.simulateWarMatch` runs a best-of-7 of power-weighted
+skirmishes (same strength model: Tides power + stronghold wall + allies), producing momentum swings, comebacks,
+and nail-biters. `executeWar` commits the outcome + spoils immediately (restart-safe), posts a concise record
+to both thrones, then launches `broadcastWarSpectacle` DETACHED (non-blocking) in the public spectacle channel:
+a HYBRID of a live-updating scoreboard message (score + momentum bar + latest play, edited every ~3s) and
+key-moment feed drops (first blood, lead changes, match point, the final blow). Real members star as heroes
+(named per skirmish); a **Battle MVP** (most skirmishes won on the winning side) gets a shout + bonus Tides.
+Whole thing runs ~20s. simulateWarMatch unit-tested; the live narration needs a real 2-tribe war to see end
+to end.
+
 ## Next
-- **War revamp** is the next project (owner).
+- A real 2-tribe war to watch the spectacle live and tune pacing/flavor.
+- (Optional) a war-MVP achievement; more skirmish flavor lines.
 
 ## Status
 - [x] 1. Stronghold defense

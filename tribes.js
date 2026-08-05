@@ -466,6 +466,43 @@ function simulateWar(guild, attacker, defender) {
   return { winnerKey: winner.key, loserKey: loser.key, powerA, powerB, attackerWinChance, raidAmount, capturedIds, defWallTiers, raidPct };
 }
 
+// Spectacle war (owner: "I want it to be grand, like a Madden quicksim"). Instead of a single roll, the war is
+// a best-of-(2*WAR_WIN_ROUNDS-1) series of power-weighted skirmishes, so it produces momentum swings + comebacks
+// that index.js narrates live. Same strength model (Tides power + stronghold wall) and same spoils as
+// simulateWar. Returns the round-by-round data plus everything executeWar needs.
+const WAR_WIN_ROUNDS = 4;   // first tribe to this many skirmish wins takes the war (best-of-7)
+function simulateWarMatch(guild, attacker, defender) {
+  const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
+  const wall = 1 + STRONGHOLD_DEF_PER_TIER * (defender.strongholdTier || 0);
+  const powerA = warPower(guild, attacker) + (allyOf(attacker) ? warPower(guild, allyOf(attacker)) : 0);
+  const powerB = (warPower(guild, defender) + (allyOf(defender) ? warPower(guild, allyOf(defender)) : 0)) * wall;
+  const pA = powerA / (powerA + powerB || 1);
+  const rosterOf = t => { const r = guild.roles.cache.get(t.roleId); return r ? [...r.members.values()].map(m => m.id) : []; };
+  const aRoster = rosterOf(attacker), dRoster = rosterOf(defender);
+  const pick = arr => arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+  const rounds = []; let sA = 0, sD = 0, prevLeader = 0;
+  while (sA < WAR_WIN_ROUNDS && sD < WAR_WIN_ROUNDS) {
+    const attackerWins = Math.random() < pA;
+    if (attackerWins) sA++; else sD++;
+    const lead = sA > sD ? 1 : sD > sA ? -1 : 0;
+    const leadChange = lead !== 0 && prevLeader !== 0 && lead !== prevLeader;
+    if (lead !== 0) prevLeader = lead;
+    rounds.push({ side: attackerWins ? 'attacker' : 'defender', starId: pick(attackerWins ? aRoster : dRoster), sA, sD, leadChange });
+  }
+  const attackerWon = sA >= WAR_WIN_ROUNDS;
+  const winner = attackerWon ? attacker : defender, loser = attackerWon ? defender : attacker;
+  const loserRole = guild.roles.cache.get(loser.roleId);
+  const loserMembers = loserRole ? [...loserRole.members.values()].filter(m => !isLeader(m, loser)) : [];
+  const defWallTiers = (loser.key === defender.key) ? (defender.strongholdTier || 0) : 0;
+  const captureReduce = Math.floor(defWallTiers / 2);
+  const maxCapturable = Math.max(0, loserMembers.length - WAR_CAPTURE_FLOOR);
+  const captureCount = Math.max(0, Math.min(WAR_CAPTURE_CAP, maxCapturable, Math.floor(loserMembers.length * WAR_CAPTURE_PCT)) - captureReduce);
+  const capturedIds = [...loserMembers].sort(() => Math.random() - 0.5).slice(0, captureCount).map(m => m.id);
+  const raidPct = Math.max(WAR_RAID_MIN_PCT, WAR_TREASURY_RAID_PCT - STRONGHOLD_RAID_REDUCE_PER_TIER * defWallTiers);
+  const raidAmount = Math.floor((loser.treasury || 0) * raidPct);
+  return { winnerKey: winner.key, loserKey: loser.key, rounds, scoreA: sA, scoreD: sD, powerA, powerB, attackerWinChance: pA, raidAmount, capturedIds, defWallTiers, raidPct };
+}
+
 function setCaptureLock(userId, untilMs) { const s = load(); if (!s.captureLocks) s.captureLocks = {}; s.captureLocks[userId] = untilMs; save(s); }
 function captureLockUntil(userId) { return (load().captureLocks || {})[userId] || 0; }
 function isCaptureLocked(userId, nowMs = Date.now()) { return captureLockUntil(userId) > nowMs; }
@@ -556,7 +593,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   setEntranceGate, getEntranceGate, clearEntranceGate,
   WAR_VOTE_MS, WAR_VOTE_TURNOUT, WAR_COOLDOWN_MS, CAPTURE_LOCK_MS, WAR_TREASURY_RAID_PCT, WAR_GLORY_BONUS,
   WAR_CAPTURE_PCT, WAR_CAPTURE_CAP, WAR_CAPTURE_FLOOR,
-  warPower, onWarCooldown, warCooldownEndsAt, simulateWar,
+  warPower, onWarCooldown, warCooldownEndsAt, simulateWar, simulateWarMatch, WAR_WIN_ROUNDS,
   startWarVote, getWar, voteOnWar, activeWarVoteFor, anyActiveWarInvolving, expiredWarVotes, resolveWarRecord,
   setCaptureLock, captureLockUntil, isCaptureLocked,
   startAllianceVote, getAllianceVote, voteOnAlliance, activeAllianceVoteFor, expiredAllianceVotes, resolveAllianceVoteRecord,
