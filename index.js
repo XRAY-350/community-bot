@@ -1054,16 +1054,14 @@ async function startArenaCountdown(guild, type, minutes, startedById, downtime =
   const startsAt = Date.now() + ARENA_LOBBY_MS;
   const label = ARENA_LABEL[type] || type;
   const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
-  // Peak pings every tribe to gather. DOWNTIME stays QUIET (no role pings, no throne heads-ups) so a 3am event
-  // never wakes sleeping members — the few night owls online just see it in the channel.
-  const pingTail = downtime ? '' : `\n${roleIds.map(r => `<@&${r}>`).join(' ')}`;
+  // General heads-up in tribe-announcements, pinging every tribe so the whole server can gather in time.
   const lobby = await channel.send({
-    content: `# 🎪 ${label} — starting soon!\nGet ready: a **${label}** arena begins <t:${Math.floor(startsAt / 1000)}:R> (in about ${Math.round(ARENA_LOBBY_MS / 60000)} minutes). Round up your tribe and be here in <#${channel.id}> when it starts.${pingTail}`,
-    allowedMentions: downtime ? { parse: [] } : { roles: roleIds },
+    content: `# 🎪 ${label} — starting soon!\nGet ready: a **${label}** arena begins <t:${Math.floor(startsAt / 1000)}:R> (in about ${Math.round(ARENA_LOBBY_MS / 60000)} minutes). Round up your tribe and be here in <#${channel.id}> when it starts.\n${roleIds.map(r => `<@&${r}>`).join(' ')}`,
+    allowedMentions: { roles: roleIds },
   }).catch(() => null);
-  // Per-tribe heads-up in each throne (stored; endArena deletes them). Peak only — skipped when downtime.
+  // Per-tribe heads-up in each throne (stored; endArena deletes them). These double as the event pings.
   const thronePings = {};
-  if (!downtime) for (const t of tribes.all()) {
+  for (const t of tribes.all()) {
     if (!t.throneId || !t.roleId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
     if (!throne) continue;
@@ -1280,14 +1278,11 @@ async function endArena(guild) {
     const streak = tribes.getArenaStreak(mvp.userId);
     mvpLine = `\n-# 🥇 MVP: <@${mvp.userId}> with **${mvp.score}** point${mvp.score === 1 ? '' : 's'} (+${ARENA_MVP_BONUS_TIDES} Tides)${streak > 1 ? `, on a ${streak}-day streak 🔥` : ''}. Every scorer banked Tides toward their rank.`;
   }
-  // Result in the tribe-announcements channel (where it ran). Peak pings every tribe; downtime stays quiet
-  // (no role pings), still pinging just the MVP since they were actively playing.
+  // Result in the tribe-announcements channel (where it ran), pinging every tribe (and the MVP).
   if (ch) {
     const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
-    const mentions = dt ? { parse: [] } : { roles: roleIds };
-    if (mvpId) mentions.users = [mvpId];
-    const tail = dt ? '' : `\n${roleIds.map(r => `<@&${r}>`).join(' ')}`;
-    await ch.send({ content: `${resultText}${mvpLine}${tail}`, allowedMentions: mentions }).catch(() => {});
+    const mentions = { roles: roleIds }; if (mvpId) mentions.users = [mvpId];
+    await ch.send({ content: `${resultText}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: mentions }).catch(() => {});
   }
   arena.recordEnd(Date.now(), dt);   // stamp end + schedule the next auto (longer gap if downtime)
   arena.clear();
@@ -1320,8 +1315,7 @@ async function reconcileArena(guild) {
     const line = a.type === 'blitz'
       ? `# ⚡ Activity Blitz — still on!\nEvery message you send **anywhere in the server** scores for your tribe. Ends <t:${Math.floor(a.endsAt / 1000)}:R>.`
       : `▶️ The **${ARENA_LABEL[a.type] || a.type}** is still running — ends <t:${Math.floor(a.endsAt / 1000)}:R>.`;
-    const quiet = !!a.downtime;   // don't re-ping roles on a resumed downtime event
-    await channel.send({ content: quiet ? line : `${line}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: quiet ? { parse: [] } : { roles: roleIds } }).catch(() => {});
+    await channel.send({ content: `${line}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
   }
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), remaining);
   if (arena.BUTTON_TYPES.includes(a.type)) _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // don't stall the current question

@@ -82,8 +82,8 @@ Replaces the old hard active-window (which left ~10h dead) with three modes in t
 - **Peak** (`arenaAutoStartHour`..`arenaAutoEndHour`, default 10:00-24:00): full slate (all 16 types), pings every
   tribe, random 1h..2h spacing.
 - **Downtime** (`arenaDowntimeStartHour`..`arenaDowntimeEndHour`, default 00:00-08:00, a 6-8h block): only calm
-  low-interaction games (`DOWNTIME_TYPES` = blitz + word/riddle puzzles), **QUIET** (no role pings, no throne
-  heads-ups, so it never wakes sleeping members), sparser random 2h..3.5h spacing. Economy:
+  low-interaction games (`DOWNTIME_TYPES` = blitz + word/riddle puzzles), sparser random 2h..3.5h spacing.
+  Pings tribes normally (owner: "it should still ping"). Economy:
   **2x Treasury (`DOWNTIME_TREASURY_MULT`) but ZERO Glory** — rewards night owls / off-timezone members with
   spendable wealth while protecting the weekly crown as a peak-hours contest.
 - **Dead** (everything else, default 08:00-10:00): no events, the pre-dawn lull.
