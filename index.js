@@ -937,7 +937,7 @@ async function sweepExpiredAllianceVotes(guild) {
 // One active challenge at a time. Admin launches one into a public channel; the bot runs + scores it and the
 // winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
-const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30 };   // default minutes per type
+const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4 };   // default minutes per type
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
 const _arenaTimers = { start: null, end: null, round: null };
 function clearArenaTimers() { for (const k of ['start', 'end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
@@ -985,7 +985,7 @@ async function beginArena(guild) {
   const thronePings = pending.thronePings || {};
   const channel = await guild.channels.fetch(pending.channelId).catch(() => null) || await ensureTribeAnnounce(guild, config);
   if (!channel) { console.error('[arena] begin: no tribe-announcements channel'); return; }
-  if (type === 'scramble') await channel.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'arena scramble: allow answers' }).catch(() => {});
+  if (arena.TYPED_TYPES.includes(type)) await channel.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'arena typed round: allow answers' }).catch(() => {});
   const endsAt = Date.now() + minutes * 60000;
   // Preserve the lobby-created state (throne pings, lobby message, base scores) into the LIVE state.
   const base = { type, minutes, phase: 'live', channelId: channel.id, startedBy: pending.startedBy,
@@ -998,17 +998,26 @@ async function beginArena(guild) {
   } else if (type === 'blitz') {
     const msg = await channel.send({ content: `# ⚡ Activity Blitz!\nFor the next **${minutes} minutes**, every message you send **anywhere in the server** scores a point for your tribe. The most active tribe wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. Ends <t:${Math.floor(endsAt / 1000)}:R>. Go!` });
     arena.set({ ...base, messageId: msg.id });
-  } else if (type === 'scramble') {
-    const word = arena.nextWord([]);
-    const msg = await channel.send({ content: scrambleContent(word, { round: 1 }) });
-    arena.set({ ...base, messageId: msg.id, answer: word, round: 1, usedWords: [word] });
-  } else if (type === 'trivia') {
+  } else if (arena.TYPED_TYPES.includes(type)) {
+    // Typed types (scramble/math/typing/riddle/emoji): post a prompt; the messageCreate hook scores the first
+    // correct typed answer and advances to a fresh prompt, repeating until the end timer fires.
+    const nx = arena.nextTyped(type, []);
+    const st = { ...base, answer: nx.answer, display: nx.display, used: [nx.key], round: 1 };
+    const msg = await channel.send({ content: typedContent(type, st) });
+    arena.set({ ...st, messageId: msg.id });
+  } else if (type === 'trivia' || type === 'truefalse') {
     // Pre-fetch the whole batch from the online bank at launch (owner: "an online list that's virtually
     // infinite") so mid-game network hiccups can't stall a round; fall back to the local bank if it fails.
-    const fetched = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS);
-    const questions = (fetched && fetched.length >= arena.TRIVIA_QUESTIONS) ? fetched : arena.localTrivia(arena.TRIVIA_QUESTIONS, []);
+    const n = type === 'truefalse' ? arena.TF_QUESTIONS : arena.TRIVIA_QUESTIONS;
+    const fetched = type === 'truefalse' ? await arena.fetchBoolean(n) : await arena.fetchTrivia(n);
+    const questions = (fetched && fetched.length) ? fetched : (type === 'truefalse' ? arena.localBoolean(n) : arena.localTrivia(n, []));
     arena.set({ ...base, questions, qNum: 0, source: fetched ? 'online' : 'local' });
     await askNextTrivia(guild);
+  } else if (type === 'reaction') {
+    // Reaction Rush: each round targets one emoji; the messageReactionAdd hook scores the first tribe member
+    // to react and posts the next round. postReactionRound handles both the first round and each advance.
+    arena.set({ ...base, used: [], round: 0 });
+    await postReactionRound(guild);
   }
   // Flip the per-tribe heads-up pings to "LIVE now — play!".
   for (const [k, p] of Object.entries(thronePings)) {
@@ -1025,13 +1034,34 @@ async function beginArena(guild) {
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), minutes * 60000);
   return arena.get();
 }
-const ARENA_LABEL = { race: 'Reaction Race', trivia: 'Trivia Sprint', scramble: 'Word Scramble', blitz: 'Activity Blitz' };
+const ARENA_LABEL = { race: 'Reaction Race', trivia: 'Trivia Sprint', scramble: 'Word Scramble', blitz: 'Activity Blitz',
+  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush' };
 function arenaScoreboard(a) {
   const rows = Object.entries(a.scores || {}).sort((x, y) => y[1] - x[1]);
   return rows.length ? rows.map(([k, v]) => `> ${tribeName(k)} — **${v}**`).join('\n') : '> _No points yet._';
 }
-function scrambleContent(word, a) {
-  return `# 🔤 Word Scramble — round ${a.round || 1}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(word).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${arenaScoreboard(a)}`;
+// Render the current prompt for any TYPED type (scramble/math/typing/riddle/emoji). `a.display` is the prompt
+// payload (word for scramble, expression for math, phrase for typing, question for riddle, emojis for emoji).
+function typedContent(type, a) {
+  const sb = arenaScoreboard(a);
+  const r = a.round || 1;
+  if (type === 'math') return `# ➗ Math Sprint — round ${r}\nFirst tribe member to **type the answer** in this channel scores:\n## \`${a.display}\`\n\n${sb}`;
+  if (type === 'typing') return `# ⌨️ Fast Fingers — round ${r}\nFirst to **type this exactly** (spelling counts) scores for their tribe:\n## \`${a.display}\`\n\n${sb}`;
+  if (type === 'riddle') return `# 🧩 Riddle Rush — round ${r}\nFirst correct **typed** answer scores for their tribe:\n> ${a.display}\n\n${sb}`;
+  if (type === 'emoji') return `# 🧠 Emoji Decode — round ${r}\nWhat do these emojis spell? **Type** your answer:\n## ${a.display}\n\n${sb}`;
+  return `# 🔤 Word Scramble — round ${r}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(a.display).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${sb}`;
+}
+// Reaction Rush: post the next round — a message asking players to click the target emoji, with the bot
+// pre-adding it so it's one tap. Storing the round # lets a late reaction on an old round be ignored.
+async function postReactionRound(guild) {
+  const a = arena.get(); if (!a || a.type !== 'reaction') return;
+  const ch = await arenaChannel(guild); if (!ch) return;
+  const target = arena.nextReaction(a.used || []);
+  const round = (a.round || 0) + 1;
+  const msg = await ch.send({ content: `# ⚡ Reaction Rush — round ${round}\nFirst tribe member to react with ${target} scores for their tribe. Go!\n\n${arenaScoreboard(a)}` }).catch(() => null);
+  if (!msg) return;
+  arena.update({ messageId: msg.id, target, round, used: [...(a.used || []), target].slice(-12), reactionOpen: true });
+  await msg.react(target).catch(() => {});
 }
 // Tally an Activity Blitz from message history over [startMs, endMs] (owner: count at the end, not live).
 // A message anywhere by a tribe member scores for their tribe, with the same 8s per-member cooldown. Because
@@ -1070,7 +1100,7 @@ async function computeBlitzScores(guild, startMs, endMs) {
   return scores;
 }
 async function askNextTrivia(guild) {
-  const a = arena.get(); if (!a || a.type !== 'trivia') return;
+  const a = arena.get(); if (!a || !arena.BUTTON_TYPES.includes(a.type)) return;
   // Lock the previous question so a late click (or the 25s timeout advancing) can't score a stale question.
   if (a.messageId) { const pch = await arenaChannel(guild); const pm = pch && await pch.messages.fetch(a.messageId).catch(() => null); if (pm) await pm.edit({ components: [] }).catch(() => {}); }
   const questions = a.questions || [];
@@ -1079,7 +1109,8 @@ async function askNextTrivia(guild) {
   const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
     new ButtonBuilder().setCustomId(`arena_ans:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
   const ch = await arenaChannel(guild); if (!ch) return;
-  const msg = await ch.send({ content: `# ❓ Trivia — Q${a.qNum + 1}/${questions.length}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
+  const qLabel = a.type === 'truefalse' ? 'True or False' : 'Trivia';
+  const msg = await ch.send({ content: `# ❓ ${qLabel} — Q${a.qNum + 1}/${questions.length}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
   arena.update({ answer: q.answer, qNum: a.qNum + 1, messageId: msg.id, answeredThisQ: [] });
   if (_arenaTimers.round) clearTimeout(_arenaTimers.round);
   _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // 25s per question, then advance
@@ -1101,7 +1132,7 @@ async function endArena(guild) {
   // Remove the general "starting soon / LIVE now" lobby announcement too (the result post replaces it).
   if (a.lobbyMessageId && ch) { const lm = await ch.messages.fetch(a.lobbyMessageId).catch(() => null); if (lm) await lm.delete().catch(() => {}); }
   // Re-lock the announcements channel if a scramble had opened it for typing.
-  if (a.type === 'scramble' && ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'arena scramble over: re-lock' }).catch(() => {});
+  if (arena.TYPED_TYPES.includes(a.type) && ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'arena typed round over: re-lock' }).catch(() => {});
   let resultText;
   if (win) {
     tribes.addTreasury(win.key, arena.WIN_TREASURY);
@@ -1150,7 +1181,7 @@ async function reconcileArena(guild) {
     await channel.send({ content: `${line}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
   }
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), remaining);
-  if (a.type === 'trivia') _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // don't stall the current question
+  if (arena.BUTTON_TYPES.includes(a.type)) _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // don't stall the current question
 }
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
@@ -2297,7 +2328,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
         .addSubcommand(s => s.setName('arena').setDescription('Launch an interactive cross-tribe challenge in this channel (winner banks Glory + Treasury)')
           .addStringOption(o => o.setName('type').setDescription('Which challenge').setRequired(true)
-            .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' }))
+            .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' },
+              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }))
           .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
@@ -2571,6 +2603,22 @@ client.on('messageReactionAdd', async (reaction, user) => {
   try {
     if (user.bot) return;
     if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+    // Arena REACTION RUSH — first tribe member to react with the target emoji scores + advances the round.
+    const ax = arena.get();
+    if (ax && ax.type === 'reaction' && ax.reactionOpen && reaction.message.id === ax.messageId) {
+      if (reaction.emoji?.name === ax.target) {
+        const rguild = reaction.message.guild;
+        const member = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
+        const mine = member && tribes.memberTribe(member);
+        const cur = arena.get();   // re-read to reduce a double-score race between near-simultaneous reactions
+        if (mine && cur && cur.type === 'reaction' && cur.reactionOpen && cur.messageId === ax.messageId) {
+          arena.update({ reactionOpen: false });   // first-to-react closes this round
+          arena.addScore(mine.key, 1);
+          await postReactionRound(rguild).catch(() => {});
+        }
+      }
+      return;   // it was a reaction on the arena message — don't fall through to react-resolve
+    }
     const msgId = state.getMeta('reactMsgId');
     if (!msgId || reaction.message.id !== msgId) return;
     const guild = reaction.message.guild;
@@ -3399,22 +3447,21 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author?.bot || !msg.guild) return;
-    // Arena SCRAMBLE — the only type that watches messages live (it needs the typed answer). Blitz is NOT
-    // counted here anymore (owner: "why not count at the end?") — it's tallied from message history when the
-    // event ends (see computeBlitzScores/endArena), which is zero per-message overhead and restart-proof.
+    // Arena TYPED types (scramble/math/typing/riddle/emoji) watch messages live for the typed answer. Blitz is
+    // NOT counted here (owner: "count at the end") — tallied from message history in endArena. Button types
+    // (trivia/truefalse) and reaction score via their own handlers, not here.
     try {
       const ax = arena.get();
-      if (ax && ax.type === 'scramble' && msg.channelId === ax.channelId && ax.answer &&
-          msg.content.trim().toLowerCase() === ax.answer.toLowerCase()) {
+      if (ax && arena.TYPED_TYPES.includes(ax.type) && msg.channelId === ax.channelId && ax.answer &&
+          msg.content.trim().toLowerCase() === String(ax.answer).trim().toLowerCase()) {
         const mine = tribes.memberTribe(msg.member);
         if (mine) {
           arena.addScore(mine.key, 1);
-          const nextRound = (ax.round || 1) + 1;
-          const word = arena.nextWord(ax.usedWords || []);   // no in-game repeats (owner)
-          arena.update({ answer: word, round: nextRound, usedWords: [...(ax.usedWords || []), word] });
+          const nx = arena.nextTyped(ax.type, ax.used || []);   // fresh prompt; no in-game repeats (owner)
+          arena.update({ answer: nx.answer, display: nx.display, round: (ax.round || 1) + 1, used: [...(ax.used || []), nx.key] });
           await msg.react('✅').catch(() => {});
           const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
-          if (ch) await ch.send({ content: scrambleContent(word, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
+          if (ch) await ch.send({ content: typedContent(ax.type, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
         }
       }
     } catch (e) { console.error('[arena] messageCreate:', e.message); }
@@ -4191,7 +4238,13 @@ client.on('interactionCreate', async (interaction) => {
       { label: 'Reaction Race', value: 'race', emoji: '🏁', description: 'First tribe to 10 claims wins' },
       { label: 'Trivia Sprint', value: 'trivia', emoji: '❓', description: '10 questions, first correct scores' },
       { label: 'Word Scramble', value: 'scramble', emoji: '🔤', description: 'Type the unscrambled word to score' },
-      { label: 'Activity Blitz', value: 'blitz', emoji: '⚡', description: 'Most hall activity wins' });
+      { label: 'Activity Blitz', value: 'blitz', emoji: '⚡', description: 'Most hall activity wins' },
+      { label: 'Math Sprint', value: 'math', emoji: '➗', description: 'Type the answer to the math problem' },
+      { label: 'Fast Fingers', value: 'typing', emoji: '⌨️', description: 'Type the phrase exactly, first scores' },
+      { label: 'Riddle Rush', value: 'riddle', emoji: '🧩', description: 'Type the answer to the riddle' },
+      { label: 'Emoji Decode', value: 'emoji', emoji: '🧠', description: 'Guess what the emojis spell' },
+      { label: 'True or False', value: 'truefalse', emoji: '✅', description: '12 statements, first correct scores' },
+      { label: 'Reaction Rush', value: 'reaction', emoji: '🎯', description: 'First to react with the target emoji' });
     return interaction.reply({ content: '🎪 Which challenge? It runs here in the hub, and the winning tribe banks Glory + Treasury.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribehub_arena_pick') {
@@ -4731,7 +4784,7 @@ client.on('interactionCreate', async (interaction) => {
   // correct click scores + advances (changing messageId) before any concurrent click's handler runs.
   if (interaction.isButton?.() && interaction.customId.startsWith('arena_ans:')) {
     const a = arena.get();
-    if (!a || a.type !== 'trivia') return interaction.reply({ content: 'No trivia is running.', flags: MessageFlags.Ephemeral });
+    if (!a || !arena.BUTTON_TYPES.includes(a.type)) return interaction.reply({ content: 'No trivia is running.', flags: MessageFlags.Ephemeral });
     if (interaction.message.id !== a.messageId) return interaction.reply({ content: 'That question is already over.', flags: MessageFlags.Ephemeral });
     const mine = tribes.memberTribe(interaction.member);
     if (!mine) return interaction.reply({ content: 'You’re not in a tribe — join one in #roles to play.', flags: MessageFlags.Ephemeral });

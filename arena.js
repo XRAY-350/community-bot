@@ -17,7 +17,7 @@ const RACE_TARGET = 10;     // clicks to win a race
 const TRIVIA_QUESTIONS = 10; // questions per trivia sprint (owner: the online bank is huge, so ask more)
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
 const COOLDOWN_MS = 3 * 60 * 60 * 1000;   // min gap between challenges (owner: cooldown, kept at 3h)
-const DAILY_CAP = 4;                       // max challenges per UTC day (owner: 4 so you can run 1 of each type)
+const DAILY_CAP = 5;                       // max challenges per UTC day (owner: bumped to 5)
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.
@@ -98,6 +98,143 @@ function loadBank() {
     trivia: [...TRIVIA_DEFAULT, ...extra.trivia.filter(t => t && t.q && Array.isArray(t.options) && t.options.length >= 2 && Number.isInteger(t.answer))] };
 }
 
+// ---- More game types (owner: "add at least 6 more arena events") ------------------------------------
+// TYPED types are answered by typing in the channel (like scramble) and are time-boxed — they keep posting
+// fresh prompts until the end timer fires, so no round count is needed. nextTyped(type, used) returns
+// { answer, display, key }: `answer` is what a player types to score, `display` is what's shown, `key` is
+// what to add to the per-game `used` list so a prompt doesn't repeat. index.js renders `display` per type.
+const TYPED_TYPES = ['scramble', 'math', 'typing', 'riddle', 'emoji'];
+const BUTTON_TYPES = ['trivia', 'truefalse'];   // answered by clicking an option button
+const TF_QUESTIONS = 12;    // statements per True-or-False sprint
+
+const MATH_OPS = ['+', '-', '×'];
+function nextMath(used) {
+  for (let i = 0; i < 60; i++) {
+    const op = pick(MATH_OPS);
+    let a, b, ans;
+    if (op === '×') { a = 2 + randInt(11); b = 2 + randInt(11); ans = a * b; }
+    else if (op === '+') { a = 5 + randInt(45); b = 5 + randInt(45); ans = a + b; }
+    else { a = 12 + randInt(48); b = 1 + randInt(a - 1); ans = a - b; }
+    const prompt = `${a} ${op} ${b}`;
+    if (!(used || []).includes(prompt)) return { display: prompt, answer: String(ans), key: prompt };
+  }
+  const a = 2 + randInt(11), b = 2 + randInt(11);
+  return { display: `${a} × ${b}`, answer: String(a * b), key: `${a}×${b}#` };
+}
+// Fast Fingers — retype an exact short phrase from the common word bank.
+function nextTyping(used) {
+  const words = loadBank().words;
+  for (let i = 0; i < 60; i++) {
+    const phrase = [pick(words), pick(words), pick(words)].join(' ');
+    if (!(used || []).includes(phrase)) return { display: phrase, answer: phrase, key: phrase };
+  }
+  const p = [pick(words), pick(words), pick(words)].join(' ');
+  return { display: p, answer: p, key: p };
+}
+// Riddle Rush — a curated bank (answers are one word / short, matched case-insensitively).
+const RIDDLES = [
+  { q: 'What has keys but no locks, space but no room, and you can enter but not go inside?', a: 'keyboard' },
+  { q: 'What has to be broken before you can use it?', a: 'egg' },
+  { q: 'What has hands but cannot clap?', a: 'clock' },
+  { q: 'What has a neck but no head?', a: 'bottle' },
+  { q: 'What gets wetter the more it dries?', a: 'towel' },
+  { q: 'What has many teeth but cannot bite?', a: 'comb' },
+  { q: 'What has an eye but cannot see?', a: 'needle' },
+  { q: 'What can travel around the world while staying in a corner?', a: 'stamp' },
+  { q: 'What has a thumb and four fingers but is not alive?', a: 'glove' },
+  { q: 'What has legs but cannot walk?', a: 'table' },
+  { q: 'What has one head, one foot, and four legs?', a: 'bed' },
+  { q: 'What building has the most stories?', a: 'library' },
+  { q: 'What goes up but never comes down?', a: 'age' },
+  { q: 'What has words but never speaks?', a: 'book' },
+  { q: 'What has a bed but never sleeps, and runs but never walks?', a: 'river' },
+  { q: 'What can you catch but not throw?', a: 'cold' },
+  { q: 'What has ears but cannot hear?', a: 'corn' },
+  { q: 'What kind of coat is best put on wet?', a: 'paint' },
+  { q: 'What has cities but no houses, forests but no trees, and water but no rivers?', a: 'map' },
+  { q: 'What has branches but no fruit, trunk, or leaves?', a: 'bank' },
+  { q: 'The more you take, the more you leave behind. What are they?', a: 'footsteps' },
+  { q: 'What is full of holes but still holds water?', a: 'sponge' },
+  { q: 'What can fill a room but takes up no space?', a: 'light' },
+  { q: 'What has a tail and a head but no body?', a: 'coin' },
+  { q: 'I am tall when I am young and short when I am old. What am I?', a: 'candle' },
+  { q: 'What kind of tree can you carry in your hand?', a: 'palm' },
+  { q: 'What can you keep only after giving it to someone?', a: 'word' },
+  { q: 'What comes down but never goes up?', a: 'rain' },
+  { q: 'What has a heart that does not beat?', a: 'artichoke' },
+  { q: 'What runs all around a yard yet never moves?', a: 'fence' },
+];
+function nextRiddle(used) {
+  const pool = RIDDLES.filter((_, i) => !(used || []).includes(i));
+  const chosen = pick(pool.length ? pool : RIDDLES);
+  const idx = RIDDLES.indexOf(chosen);
+  return { display: chosen.q, answer: chosen.a, key: idx };
+}
+// Emoji Decode — the emojis spell a word/thing; answer matched case-insensitively.
+const EMOJI_REBUS = [
+  { e: '🐱🐟', a: 'catfish' }, { e: '🔥🦊', a: 'firefox' }, { e: '⭐🐟', a: 'starfish' },
+  { e: '🌞🌻', a: 'sunflower' }, { e: '🦶⚽', a: 'football' }, { e: '🌙🚶', a: 'moonwalk' },
+  { e: '🌊🏄', a: 'surfing' }, { e: '🕷️🕸️', a: 'spiderweb' }, { e: '🌞🕶️', a: 'sunglasses' },
+  { e: '🔥🚒', a: 'firetruck' }, { e: '🐛📚', a: 'bookworm' }, { e: '🏠🪰', a: 'housefly' },
+  { e: '🌊🐴', a: 'seahorse' }, { e: '🐄👦', a: 'cowboy' }, { e: '❄️⛄', a: 'snowman' },
+  { e: '🐝🍯', a: 'honeybee' }, { e: '🔑⌨️', a: 'keyboard' }, { e: '🌈', a: 'rainbow' },
+  { e: '🦋', a: 'butterfly' }, { e: '🐙', a: 'octopus' }, { e: '🦄', a: 'unicorn' },
+  { e: '🌋', a: 'volcano' }, { e: '🎃', a: 'pumpkin' }, { e: '🍍', a: 'pineapple' },
+];
+function nextEmoji(used) {
+  const pool = EMOJI_REBUS.filter((_, i) => !(used || []).includes(i));
+  const chosen = pick(pool.length ? pool : EMOJI_REBUS);
+  const idx = EMOJI_REBUS.indexOf(chosen);
+  return { display: chosen.e, answer: chosen.a, key: idx };
+}
+// Unified typed-prompt picker used by scramble/math/typing/riddle/emoji.
+function nextTyped(type, used) {
+  if (type === 'math') return nextMath(used);
+  if (type === 'typing') return nextTyping(used);
+  if (type === 'riddle') return nextRiddle(used);
+  if (type === 'emoji') return nextEmoji(used);
+  const w = nextWord(used);   // scramble
+  return { display: w, answer: w, key: w };
+}
+
+// True or False — online boolean bank (opentdb, virtually infinite), local fallback. Returns the SAME shape
+// as trivia questions ({q, options, answer index}) so it reuses the trivia flow (askNextTrivia + arena_ans).
+const TF_DEFAULT = [
+  { q: 'The Great Wall of China is visible from space with the naked eye.', a: false },
+  { q: 'Honey never spoils.', a: true },
+  { q: 'Bats are blind.', a: false },
+  { q: 'An octopus has three hearts.', a: true },
+  { q: 'Goldfish have a three-second memory.', a: false },
+  { q: 'Lightning never strikes the same place twice.', a: false },
+  { q: 'A group of flamingos is called a flamboyance.', a: true },
+  { q: 'Humans only use 10% of their brains.', a: false },
+  { q: 'The Eiffel Tower can grow taller in summer.', a: true },
+  { q: 'Sharks are mammals.', a: false },
+  { q: 'Bananas are berries, botanically speaking.', a: true },
+  { q: 'The heart of a shrimp is located in its head.', a: true },
+  { q: 'Mount Everest is the tallest mountain on Earth measured base to peak.', a: false },
+  { q: 'Sound travels faster in water than in air.', a: true },
+];
+async function fetchBoolean(n) {
+  try {
+    const res = await fetch(`https://opentdb.com/api.php?amount=${n}&type=boolean&encode=url3986`, { signal: AbortSignal.timeout(6000) });
+    const d = await res.json();
+    if (d.response_code !== 0 || !Array.isArray(d.results) || !d.results.length) return null;
+    return d.results.map(r => {
+      const correct = decodeURIComponent(r.correct_answer);   // "True" | "False"
+      const options = ['True', 'False'];
+      return { q: decodeURIComponent(r.question), options, answer: options.indexOf(correct) };
+    });
+  } catch (e) { console.error('[arena] fetchBoolean:', e.message); return null; }
+}
+function localBoolean(n) {
+  return shuffle(TF_DEFAULT).slice(0, Math.min(n, TF_DEFAULT.length)).map(t => ({ q: t.q, options: ['True', 'False'], answer: t.a ? 0 : 1 }));
+}
+
+// Reaction Rush — each round targets one easy-to-click emoji; first tribe member to react scores.
+const REACTION_EMOJIS = ['🔥', '⚡', '🎯', '🏆', '💎', '🌟', '🚀', '🎉', '👑', '🐉', '🛡️', '⚔️', '🌈', '💯', '🍀'];
+function nextReaction(used) { const pool = REACTION_EMOJIS.filter(e => !(used || []).includes(e)); return pick(pool.length ? pool : REACTION_EMOJIS); }
+
 // Pick a scramble word not already used THIS game (owner: no in-game repeats).
 function nextWord(used) { const pool = loadBank().words.filter(w => !(used || []).includes(w)); return pick(pool.length ? pool : loadBank().words); }
 // Local trivia fallback picker (excludes already-asked-this-game).
@@ -124,7 +261,9 @@ async function fetchTrivia(n) {
 
 module.exports = {
   STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
+  TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS,
   get, isActive, set, clear, update, addScore, markOnce, resetBucket, winner,
   recordEnd, startBlocked,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
+  nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS,
 };
