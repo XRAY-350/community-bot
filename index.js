@@ -490,13 +490,13 @@ function tribeThronePanel(tribe) {
   const ranks = (tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet';
   const k = tribe.key;
   const ally = tribes.getAlly(tribe.key);
-  const onCooldown = tribes.onWarCooldown(tribe);
+  const onCooldown = tribes.onOutboundCooldown(tribe);   // "can we start a war" = the outbound cooldown
   const content = `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: what you can do\n`
     + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
     + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks: ${ranks}. Ranks only ever go up.\n`
     + `-# Staff who join as members automatically hold **${tribes.staffRankTitle(tribe)}**, above the whole ladder.\n`
     + `\n${ally ? `**Allied with ${ally.emoji || '🏴'} ${ally.shortName || ally.name}** — mutual defense in wars, treasury can be gifted between you.` : '_No current alliance._'}`
-    + (onCooldown ? `\n-# ⚔️ On war cooldown until <t:${Math.floor(tribes.warCooldownEndsAt(tribe) / 1000)}:R>.` : '')
+    + (onCooldown ? `\n-# ⚔️ On attack cooldown until <t:${Math.floor(tribes.outboundCooldownEndsAt(tribe) / 1000)}:R> (you can still be attacked / defend).` : '')
     + `\n-# Row 1: everyone. Rows 2-4: ${title} or staff only.`
     + (tribe.entranceGate ? `\n-# ⚔️ This tribe gates new applicants: "${tribe.entranceGate.prompt}" (also asked of nominated/invited members before they join).` : '');
   const memberRow = new ActionRowBuilder().addComponents(
@@ -1165,8 +1165,8 @@ async function executeWar(guild, war, note = '') {
   tribes.addTreasury(sim.loserKey, -sim.raidAmount);
   tribes.addGlory(sim.winnerKey, tribes.WAR_GLORY_BONUS);
   const now = Date.now();
-  tribes.update(attacker.key, { lastWarAt: now });
-  tribes.update(defender.key, { lastWarAt: now });
+  tribes.update(attacker.key, { lastOutboundWarAt: now });   // separate cooldowns (owner 2026-08-05): the aggressor cools on ATTACKING
+  tribes.update(defender.key, { lastInboundWarAt: now });    // ...the target cools on BEING attacked — independently
   for (const uid of sim.capturedIds) {
     const m = await guild.members.fetch(uid).catch(() => null);
     if (m) await captureMemberInto(guild, winner, m, `Captured in war: ${loser.shortName || loser.name} → ${winner.shortName || winner.name}`).catch(() => {});
@@ -5591,13 +5591,13 @@ client.on('interactionCreate', async (interaction) => {
       return safeShowModal(interaction, modal);
     }
     if (act === 'war') {
-      if (tribes.onWarCooldown(tribe)) return interaction.reply({ content: `On war cooldown until <t:${Math.floor(tribes.warCooldownEndsAt(tribe) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
-      if (tribes.anyActiveWarInvolving(tribe.key)) return interaction.reply({ content: 'This tribe is already in an active war vote.', flags: MessageFlags.Ephemeral });
+      if (tribes.onOutboundCooldown(tribe)) return interaction.reply({ content: `On attack cooldown until <t:${Math.floor(tribes.outboundCooldownEndsAt(tribe) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
+      if (tribes.activeOutboundWar(tribe.key)) return interaction.reply({ content: 'You already have a war underway as the aggressor — only one outbound war at a time. (Being attacked doesn’t stop you from attacking.)', flags: MessageFlags.Ephemeral });
       const targets = tribes.all().filter(t => t.key !== tribe.key);
       if (!targets.length) return interaction.reply({ content: 'No other tribes to war.', flags: MessageFlags.Ephemeral });
       const menu = new StringSelectMenuBuilder().setCustomId(`tribethrone_war_pick:${tribeKey}`).setPlaceholder('Declare war on which tribe?')
         .addOptions(targets.slice(0, 25).map(t => ({ label: `${t.emoji || '🏴'} ${t.shortName || t.name}`.slice(0, 100), value: t.key })));
-      return interaction.reply({ content: '⚔️ This opens a 24h vote for YOUR members — the target has no say in whether it starts. Pick who to war.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: '⚔️ This opens a 6h vote for YOUR members — the target has no say in whether it starts. Pick who to war.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
     }
     if (act === 'alliance') {
       if (tribe.allyKey) return interaction.reply({ content: 'Already allied — break it first if you want a different ally.', flags: MessageFlags.Ephemeral });
@@ -5606,7 +5606,7 @@ client.on('interactionCreate', async (interaction) => {
       if (!targets.length) return interaction.reply({ content: 'No eligible tribes right now (everyone else is already allied).', flags: MessageFlags.Ephemeral });
       const menu = new StringSelectMenuBuilder().setCustomId(`tribethrone_alliance_pick:${tribeKey}`).setPlaceholder('Propose an alliance with which tribe?')
         .addOptions(targets.slice(0, 25).map(t => ({ label: `${t.emoji || '🏴'} ${t.shortName || t.name}`.slice(0, 100), value: t.key })));
-      return interaction.reply({ content: '🤝 This opens a 24h vote for YOUR members first, then the other tribe decides. Pick who to propose to.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: '🤝 This opens a 6h vote for YOUR members first, then the other tribe decides. Pick who to propose to.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
     }
     if (act === 'allybreak') {
       const ally = tribes.getAlly(tribe.key);
@@ -5694,10 +5694,10 @@ client.on('interactionCreate', async (interaction) => {
     const attacker = tribes.get(tribeKey);
     if (!attacker) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
     if (!tribes.isLeader(interaction.member, attacker) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(attacker)} or staff can do that.`, components: [] });
-    if (tribes.onWarCooldown(attacker) || tribes.anyActiveWarInvolving(attacker.key)) return interaction.update({ content: 'No longer eligible to declare war right now.', components: [] }).catch(() => {});
+    if (tribes.onOutboundCooldown(attacker) || tribes.activeOutboundWar(attacker.key)) return interaction.update({ content: 'No longer eligible to declare war right now (attack cooldown or you already have a war underway).', components: [] }).catch(() => {});
     const defender = tribes.get(interaction.values[0]);
     if (!defender) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (tribes.onWarCooldown(defender) || tribes.anyActiveWarInvolving(defender.key)) return interaction.update({ content: `**${defender.shortName || defender.name}** is on cooldown or already in a war vote.`, components: [] }).catch(() => {});
+    if (tribes.onInboundCooldown(defender) || tribes.activeInboundWar(defender.key)) return interaction.update({ content: `**${defender.shortName || defender.name}** can’t be attacked right now — they were recently at war or are already defending one.`, components: [] }).catch(() => {});
     await interaction.deferUpdate();
     const war = tribes.startWarVote(attacker.key, defender.key, interaction.user.id);
     await postWarVote(interaction.guild, war, attacker, defender);

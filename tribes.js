@@ -502,6 +502,12 @@ function warPower(guild, tribe) {
 }
 function onWarCooldown(tribe, nowMs = Date.now()) { return !!tribe.lastWarAt && (nowMs - tribe.lastWarAt) < WAR_COOLDOWN_MS; }
 function warCooldownEndsAt(tribe) { return (tribe.lastWarAt || 0) + WAR_COOLDOWN_MS; }
+// Separate inbound/outbound war cooldowns (owner 2026-08-05): a tribe's cooldown on ATTACKING is independent of
+// its cooldown on BEING attacked. Falls back to the legacy single lastWarAt so existing cooldowns carry over.
+function onOutboundCooldown(tribe, nowMs = Date.now()) { const t = tribe.lastOutboundWarAt || tribe.lastWarAt; return !!t && (nowMs - t) < WAR_COOLDOWN_MS; }
+function outboundCooldownEndsAt(tribe) { return (tribe.lastOutboundWarAt || tribe.lastWarAt || 0) + WAR_COOLDOWN_MS; }
+function onInboundCooldown(tribe, nowMs = Date.now()) { const t = tribe.lastInboundWarAt || tribe.lastWarAt; return !!t && (nowMs - t) < WAR_COOLDOWN_MS; }
+function inboundCooldownEndsAt(tribe) { return (tribe.lastInboundWarAt || tribe.lastWarAt || 0) + WAR_COOLDOWN_MS; }
 
 function startWarVote(attackerKey, defenderKey, proposerId) {
   const s = load(); if (!s.wars) s.wars = {};
@@ -522,6 +528,10 @@ function activeWarVoteFor(tribeKey) {
 function anyActiveWarInvolving(tribeKey) {
   return Object.values(load().wars || {}).some(w => w.status === 'voting' && (w.attackerKey === tribeKey || w.defenderKey === tribeKey));
 }
+// One outbound (as attacker) AND one inbound (as defender) war allowed concurrently (owner 2026-08-05). "Active"
+// = still resolving: a vote in flight OR a passed vote awaiting the defender's consent.
+function activeOutboundWar(tribeKey) { return Object.values(load().wars || {}).find(w => (w.status === 'voting' || w.status === 'awaiting_target') && w.attackerKey === tribeKey) || null; }
+function activeInboundWar(tribeKey) { return Object.values(load().wars || {}).find(w => (w.status === 'voting' || w.status === 'awaiting_target') && w.defenderKey === tribeKey) || null; }
 function expiredWarVotes(nowMs) {
   return Object.values(load().wars || {}).filter(w => w.status === 'voting' && w.voteEndsAt <= nowMs);
 }
@@ -691,7 +701,8 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   setEntranceGate, getEntranceGate, clearEntranceGate,
   WAR_VOTE_MS, WAR_VOTE_TURNOUT, WAR_COOLDOWN_MS, CAPTURE_LOCK_MS, WAR_TREASURY_RAID_PCT, WAR_GLORY_BONUS,
   WAR_CAPTURE_PCT, WAR_CAPTURE_CAP, WAR_CAPTURE_FLOOR,
-  warPower, onWarCooldown, warCooldownEndsAt, simulateWar, simulateWarMatch, WAR_WIN_ROUNDS,
+  warPower, onWarCooldown, warCooldownEndsAt, onOutboundCooldown, outboundCooldownEndsAt, onInboundCooldown, inboundCooldownEndsAt,
+  activeOutboundWar, activeInboundWar, simulateWar, simulateWarMatch, WAR_WIN_ROUNDS,
   relicsOf, mintRelic, relicPerk, stealRelic, RELIC_PERK_CAP,
   startWarVote, getWar, voteOnWar, activeWarVoteFor, anyActiveWarInvolving, expiredWarVotes, resolveWarRecord,
   setCaptureLock, captureLockUntil, isCaptureLocked,
