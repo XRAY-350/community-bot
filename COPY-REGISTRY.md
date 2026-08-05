@@ -11,59 +11,49 @@ which `copy.js` keys back it. "inline" = the copy still lives at the call site (
 | Command | Feature | Audience | Perm gate | /help copy | Description |
 |---|---|---|---|---|---|
 | `appeal` | appeals | member | UseApplicationCommands | ✅ | Appeal a ban (for a friend) or one of your own strikes |
-| `appeal-setup` | appeals | member | Administrator | ✅ | Create the ban-appeals channel (owner) |
-| `confess` | confessions | member | UseApplicationCommands | ✅ | Send an anonymous confession |
-| `confess-setup` | confessions | member | Administrator | ✅ | Create/repair the confessions + staff log channels (owner) |
+| `appeal-reset` | appeals | member | ManageRoles | ✅ | Clear a decided ban-appeal so the person can be appealed again (admin) |
 | `contest` | contest | member | ManageEvents | ✅ | Run the monthly community contests (organizers/staff) |
 | `contest-submit` | contest | member | UseApplicationCommands | ✅ | Enter this month\'s contest anonymously (your name stays hidden) |
-| `corner` | corner | staff | ModerateMembers | — | Send a member to the corner — strips roles, pulls them from voice, jails them (o |
-| `cornered` | corner | staff | ManageRoles | — | List everyone in the corner, with one-click release buttons |
+| `corner` | corner | staff | ModerateMembers | — | Send a member to the corner: strips roles, pulls them from voice, jails them (op |
 | `Send to corner (ctx)` | corner | staff | ctx | — | (context-menu command) |
+| `stats` | corner | staff | ModerateMembers | — | A member’s moderation record: corners & strikes over a period |
 | `uncorner` | corner | staff | ModerateMembers | — | Release a member from the corner (or schedule a release) |
+| `dashboard` | dashboard | member | UseApplicationCommands | ✅ | Your member hub: status, server info, and every member feature |
 | `features` | features | core | Administrator | — | View or toggle bot features (Owner only) |
-| `help` | help | core | UseApplicationCommands | — | What can this bot do? — the member features |
+| `help` | help | core | UseApplicationCommands | — | What can this bot do? The member features |
+| `levelcheck` | levelCheck | staff | ModerateMembers | — | Check Arcane level roles are landing: flag (or fix) members missing earned level |
 | `apply-mod` | modapps | member | UseApplicationCommands | ✅ | Apply to become a moderator |
-| `apply-mod-setup` | modapps | member | Administrator | ✅ | Create the private mod-applications forum (owner) |
 | `demote-trial` | modapps | member | ManageRoles | ✅ | Remove the Trial Mod role from a member (owner) |
-| `mod-applications` | modapps | member | ManageRoles | ✅ | Open or close mod applications when the team is full (admin) |
-| `promote-mod` | modapps | member | ManageRoles | ✅ | Open a promotion vote for a mod → admin (posts in admin-discussion) |
-| `promote-trial` | modapps | member | ManageRoles | ✅ | Open a promotion vote for a trial mod (posts in mod-announcements) |
-| `modmail` | modmail | member | UseApplicationCommands | ✅ | Send an anonymous message to the mod team |
-| `modmail-setup` | modmail | member | Administrator | ✅ | Create the mod-inbox channel (owner) |
 | `panel` | panel | staff | UseApplicationCommands | — | Open your private FUBU control panel (only you see it) |
-| `staff` | panel | staff | ManageRoles | — | Staff roster — each tier’s count + members (@ · username · user id) |
+| `staff` | panel | staff | ManageRoles | — | Staff roster: each tier’s count + members (@ · username · user id) |
 | `permguard` | permguard | core | Administrator | — | Permission-drift guard (Owner only) |
 | `perms` | perms | core | Administrator | — | Permission inspector & audit (bot owner only) |
-| `report` | reports | member | UseApplicationCommands | ✅ | Anonymously report a member to staff |
 | `Report (ctx)` | reports | member | UseApplicationCommands | ✅ | (context-menu command) |
-| `report-setup` | reports | member | Administrator | ✅ | Create the anon-reports channel (owner) |
-| `request-role` | rolereq | member | UseApplicationCommands | ✅ | Request a casual role — staff approves it |
-| `request-role-setup` | rolereq | member | Administrator | ✅ | Create the role-requests channel (owner) |
+| `request-role` | rolereq | member | UseApplicationCommands | ✅ | Request a casual role, staff approves it |
 | `roleselect-role` | roleselect | staff | ManageRoles | — | Add or remove a self-assign role in #roles (admin) |
-| `grade` | smartWatch | core | Administrator | — | Grade a smart-watch card by its ID — trains the judge (owner only) |
-| `appeal-strike-setup` | strikeAppeals | member | Administrator | ✅ | Create the strike-appeals channel (owner) |
-| `strike` | strikes | staff | ModerateMembers | — | Appeal one of your own strikes, alone — opens a private thread |
+| `grade` | smartWatch | core | Administrator | — | Grade a smart-watch card by its ID: trains the judge (owner only) |
+| `strike` | strikes | staff | ModerateMembers | — | Appeal one of your own strikes, alone. Opens a private thread |
 | `Strike (ctx)` | strikes | staff | ModerateMembers | — | (context-menu command) |
-| `suggest` | suggestions | member | UseApplicationCommands | ✅ | Post a suggestion to the suggestions forum |
-| `suggest-setup` | suggestions | member | Administrator | ✅ | Create/repair the bot-gated suggestions forum (owner) |
+| `weights` | strikes | staff | ModerateMembers | — | The staff infraction/weight guide: which rule = Corner / Strike (weight) / ban |
+| `tribe` | tribes | member | UseApplicationCommands | ✅ | Your tribe: info, roster, standings, and (leaders) set the motto |
+| `tribe-admin` | tribes | member | ManageRoles | ✅ | Create or register tribes (admin) |
 | `pending` | verify | core | ModerateMembers | — | Browse open verify threads (paginated) |
-| `verify` | verify | core | ModerateMembers | — | Verify a member — no need to open the panel |
+| `verify` | verify | core | ModerateMembers | — | Verify a member, no need to open the panel |
 | `Report to watchlist (ctx)` | watchlist | staff | ctx | — | (context-menu command) |
 | `unban` | watchlist | staff | BanMembers | — | Unban a user by ID (optionally re-watchlist on rejoin) |
 | `watchlist` | watchlist | staff | ModerateMembers | — | Give them the Watchlist role when they rejoin |
 | `watchlist-suggest` | watchlist | staff | ModerateMembers | — | Scan recent messages and recommend new watchlist terms |
-| `watchlist-terms` | watchlist | staff | ModerateMembers | — | Manage flagged terms — strict / loose / welfare |
-| `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top — no channel, admins ca |
-| `whistleblow-setup` | whistleblow | member | Administrator | ✅ | Set who receives whistleblows (bot owner only) |
+| `watchlist-terms` | watchlist | staff | ModerateMembers | — | Manage flagged terms: strict / loose / welfare |
+| `whistleblow` | whistleblow | member | UseApplicationCommands | ✅ | Privately DM a problem about the server/staff to the top, no channel, admins can |
+| `wordfilter` | wordFilter | staff | ManageMessages | — | Auto-delete messages containing a word/phrase for a period going forward |
 
-## copy.js keys (migrated so far — 112)
+## copy.js keys (migrated so far — 111)
 
 - `copy.appeals.denied`
 - `copy.appeals.untracked`
 - `copy.common.alreadySetup`
 - `copy.common.dailyLimit()`
 - `copy.common.noMemberInServer`
-- `copy.common.noWatchlistRole`
 - `copy.common.notInServer`
 - `copy.common.onCooldown()`
 - `copy.common.whichRule`
@@ -180,8 +170,12 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **panel** (staff) — _inline (not yet migrated)_
 - **features** (core) — _inline (not yet migrated)_
 - **help** (core) — _inline (not yet migrated)_
+- **dashboard** (member) — _inline (not yet migrated)_
 - **corner** (staff) — copy.js: `corner`
 - **strikes** (staff) — _inline (not yet migrated)_
+- **wordFilter** (staff) — _inline (not yet migrated)_
+- **levelCheck** (staff) — _inline (not yet migrated)_
+- **tribes** (member) — _inline (not yet migrated)_
 - **watchlist** (staff) — copy.js: `watchlist`
 - **suggestions** (member) — copy.js: `suggestions`
 - **confessions** (member) — copy.js: `confessions`
