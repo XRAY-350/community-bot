@@ -49,5 +49,8 @@ function dayKey(nowMs) { const d = new Date(nowMs); return `${d.getUTCFullYear()
 function dailyCount(nowMs) { const s = load(); return s.dayKey === dayKey(nowMs || Date.now()) ? (s.count || 0) : 0; }
 function bumpDaily(nowMs) { const s = load(); const k = dayKey(nowMs || Date.now()); if (s.dayKey !== k) { s.dayKey = k; s.count = 0; } s.count = (s.count || 0) + 1; s.lastRunAt = nowMs || Date.now(); save(s); }
 function lastRunAt() { return load().lastRunAt || 0; }
+// scheduled-Trial once-a-day marker (separate from the sealed cap)
+function trialDoneToday(nowMs) { const s = load(); return s.lastTrialDay === dayKey(nowMs || Date.now()); }
+function markTrialDay(nowMs) { const s = load(); s.lastTrialDay = dayKey(nowMs || Date.now()); save(s); }
 
-module.exports = { FILE, load, save, get, isActive, set, clear, update, throne, throneByChannel, updateThrone, scoreThrone, allThronesDone, thronesArr, dailyCount, bumpDaily, lastRunAt };
+module.exports = { FILE, load, save, get, isActive, set, clear, update, throne, throneByChannel, updateThrone, scoreThrone, allThronesDone, thronesArr, dailyCount, bumpDaily, lastRunAt, trialDoneToday, markTrialDay };

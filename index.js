@@ -1852,7 +1852,8 @@ async function revealSealedArena(guild, board, winner, label) {
 }
 // Boot: a Sealed Arena in flight when we restarted is short, so resolve it immediately (resolve-on-restart).
 async function reconcileSealed(guild) {
-  if (!sealed.isActive()) return;
+  const a = sealed.get();
+  if (!a || a.mode !== 'sealed') return;   // a Trial is handled by reconcileTrial (RESUME, not resolve)
   console.log('[sealed] resolving interrupted Sealed Arena on boot');
   return finishSealedArena(guild).catch(e => console.error('[sealed] boot resolve:', e.message));
 }
@@ -1865,6 +1866,129 @@ async function sealedAutoTick(guild) {
   if (!sealedPeakHour()) return;
   const r = await startSealedArena(guild, {}).catch(e => { console.error('[sealed] auto start:', e.message); return null; });
   if (r && r.ok) console.log(`[sealed] auto-started (${r.gameType})`);
+}
+
+// ==== THE TRIALS (spec: THE_TRIALS_SPEC.md) — collaborative sealed mode, evolution of the Muster ========
+// Reuses the concurrent per-throne state (sealed.js). Unlike the Sealed Arena's lockstep first-to-buzz race,
+// The Trials is COLLABORATIVE: any member answers any question, each throne streams questions INDEPENDENTLY
+// (a faster tribe clears more), and the score is total correct x a BREADTH multiplier (distinct contributors)
+// x a VC bonus (members gathered in the tribe voice channel). v1 game: The Assembly. (Relay + Mosaic to follow.)
+const TRIAL_WINDOW_MS = 12 * 60000;    // the collaborative window
+const TRIAL_POOL = 40;                 // big shared question list so a fast tribe won't run it dry
+const TRIAL_BREADTH_PER = 0.15;        // +15% per distinct contributor beyond the first
+const TRIAL_BREADTH_CAP = 2.0;         // breadth multiplier capped at 2.0x
+const TRIAL_VC_PER = 0.05;             // +5% per member in the tribe VC during the Trial
+const TRIAL_VC_CAP = 0.5;              // VC bonus capped at +50%
+const _trialTimers = { end: null };
+function clearTrialTimers() { if (_trialTimers.end) { clearTimeout(_trialTimers.end); _trialTimers.end = null; } }
+async function buildAssembly() {
+  const f = await arena.fetchTrivia(TRIAL_POOL, null);
+  return arena.freshenQuestions('trial', (f && f.length) ? f : arena.localTrivia(TRIAL_POOL, []), TRIAL_POOL);
+}
+function assemblyRender(item, qNum, tribeKey) {
+  const row = new ActionRowBuilder().addComponents(item.options.map((o, i) =>
+    new ButtonBuilder().setCustomId(`trialans:${tribeKey}:${qNum}:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
+  return { content: `# ⚔️ The Trials, The Assembly\nAnswer **#${qNum + 1}** together, everyone who chips in counts:\n\n**${item.q}**`, components: [row], allowedMentions: { parse: [] } };
+}
+async function trialPost(guild, tribeKey) {
+  const a = sealed.get(); if (!a || a.mode !== 'trial') return;
+  const th = sealed.throne(tribeKey); if (!th || th.done) return;
+  const item = a.items[th.qNum];
+  if (!item) { sealed.updateThrone(tribeKey, { done: true }); return; }   // ran the pool dry (rare)
+  const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) return;
+  const msg = await ch.send(assemblyRender(item, th.qNum, tribeKey)).catch(() => null);
+  sealed.updateThrone(tribeKey, { promptMessageId: msg ? msg.id : null, perQ: [] });
+}
+async function startTrial(guild, { mode = 'scheduled', tribeKey, startedById } = {}) {
+  if (!features.enabled('theTrials')) return { ok: false, error: 'The Trials aren’t enabled.' };
+  if (sealed.isActive()) return { ok: false, error: 'A throne event is already running.' };
+  if (arena.isActive()) return { ok: false, error: 'Wait for the current Arena to finish first.' };
+  const withThrone = (mode === 'muster' && tribeKey)
+    ? tribes.all().filter(t => t.key === tribeKey && t.throneId)
+    : tribes.all().filter(t => t.throneId);
+  if (!withThrone.length) return { ok: false, error: 'No tribes with thrones.' };
+  const items = await buildAssembly();
+  if (!items.length) return { ok: false, error: 'Could not build the question set.' };
+  const thrones = {};
+  for (const t of withThrone) thrones[t.key] = { channelId: t.throneId, promptMessageId: null, qNum: 0, done: false, score: 0, correct: 0, contributors: {}, perQ: [] };
+  sealed.set({ mode: 'trial', trialKind: mode, game: 'assembly', kind: 'button', items, startedAt: Date.now(), endsAt: Date.now() + TRIAL_WINDOW_MS, phase: 'live', thrones, startedById: startedById || null });
+  await Promise.all(Object.keys(thrones).map(async (k) => {
+    const t = tribes.get(k); const ch = await guild.channels.fetch(t.throneId).catch(() => null);
+    if (ch) await ch.send({ content: `# ⚔️ A Trial begins!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather in your **voice channel**${t.vcId ? ` <#${t.vcId}>` : ''} and answer together for the next **${Math.round(TRIAL_WINDOW_MS / 60000)} minutes**. Everyone who chips in counts, and more of you in voice raises your score.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
+  }));
+  await warSleep(3000);
+  for (const k of Object.keys(thrones)) await trialPost(guild, k);
+  clearTrialTimers();
+  _trialTimers.end = setTimeout(() => finishTrial(guild).catch(e => console.error('[trial] end:', e.message)), TRIAL_WINDOW_MS);
+  return { ok: true };
+}
+async function trialVcBonus(guild, tribeKey) {
+  const t = tribes.get(tribeKey); if (!t || !t.vcId) return 0;
+  const vc = await guild.channels.fetch(t.vcId).catch(() => null);
+  const n = vc && vc.members ? vc.members.filter(m => !m.user.bot).size : 0;
+  return Math.min(TRIAL_VC_CAP, TRIAL_VC_PER * n);
+}
+async function finishTrial(guild) {
+  clearTrialTimers();
+  const a = sealed.get(); if (!a || a.mode !== 'trial') return;
+  for (const th of sealed.thronesArr()) {
+    if (!th.promptMessageId) continue;
+    const ch = await guild.channels.fetch(th.channelId).catch(() => null);
+    const pm = ch && await ch.messages.fetch(th.promptMessageId).catch(() => null);
+    if (pm) await pm.edit({ components: [] }).catch(() => {});
+  }
+  const board = [];
+  for (const th of sealed.thronesArr()) {
+    const distinct = Object.keys(th.contributors || {}).length;
+    const breadth = Math.min(TRIAL_BREADTH_CAP, 1 + TRIAL_BREADTH_PER * Math.max(0, distinct - 1));
+    const vc = await trialVcBonus(guild, th.tribeKey);
+    board.push({ key: th.tribeKey, correct: th.correct || 0, distinct, breadth, vc, score: Math.round((th.correct || 0) * breadth * (1 + vc)) });
+  }
+  board.sort((x, y) => y.score - x.score || y.correct - x.correct);
+  const winner = board[0] && board[0].score > 0 ? board[0] : null;
+  if (winner) {
+    const mult = underdogMultiplier(guild, winner.key);
+    tribes.addTreasury(winner.key, Math.round(arena.WIN_TREASURY * 2 * mult));
+    tribes.addGlory(winner.key, Math.round(arena.WIN_GLORY * 2 * mult));
+    { const wt = tribes.get(winner.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || winner.key} won a Trial (The Assembly)`, tribes: [winner.key], score: winner.score }); }
+    checkTribeQuests(guild, winner.key).catch(() => {});
+    await refreshThronePanel(guild, tribes.get(winner.key)).catch(() => {});
+  }
+  const isMuster = a.trialKind === 'muster';
+  sealed.clear();
+  enqueueSpectacle(SPECTACLE_PRIORITY.trialResult, 'trialResult', () => revealTrial(guild, board, winner, isMuster));
+}
+async function revealTrial(guild, board, winner, isMuster) {
+  const ch = await getSpectacleChannel(guild); if (!ch) return;
+  await ch.send({ content: `# ⚔️ ${isMuster ? 'A Muster Trial' : 'The Trial'} is done.\n${copy.herald.open()} The tribes rallied and answered as one. Here is who pulled together best.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await warSleep(2500);
+  const medals = ['🥇', '🥈', '🥉'];
+  for (let i = board.length - 1; i >= 0; i--) {
+    const b = board[i];
+    await ch.send({ content: `${medals[i] || `**${i + 1}.**`} ${tribeName(b.key)}: **${b.score}** (${b.correct} correct, ${b.distinct} member${b.distinct === 1 ? '' : 's'} chipped in${b.vc ? `, +${Math.round(b.vc * 100)}% voice` : ''})`, allowedMentions: { parse: [] } }).catch(() => {});
+    await warSleep(1800);
+  }
+  if (winner) { const t = tribes.get(winner.key); await ch.send({ content: `# 🏆 ${tribeName(winner.key)} pulled together best!\nTurnout wins. ${t?.roleId ? `<@&${t.roleId}>` : ''}`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {}); }
+  else await ch.send({ content: `# 🏁 The Trial ends with no victor. Nobody answered.`, allowedMentions: { parse: [] } }).catch(() => {});
+}
+// The Trials RESUME on restart (long VC event people gathered for): re-arm the window for whatever's left.
+async function reconcileTrial(guild) {
+  const a = sealed.get(); if (!a || a.mode !== 'trial') return;
+  const left = (a.endsAt || 0) - Date.now();
+  if (left <= 0) { console.log('[trial] window elapsed during downtime, finishing'); return finishTrial(guild).catch(() => {}); }
+  console.log(`[trial] resuming (${Math.round(left / 1000)}s left)`);
+  for (const th of sealed.thronesArr()) if (!th.done) await trialPost(guild, th.tribeKey);
+  clearTrialTimers();
+  _trialTimers.end = setTimeout(() => finishTrial(guild).catch(e => console.error('[trial] end:', e.message)), left);
+}
+// Scheduled Trial: one a day at peak (own daily marker, separate from the sealed cap).
+async function trialAutoTick(guild) {
+  if (!features.enabled('theTrials') || sealed.isActive() || arena.isActive()) return;
+  if (sealed.trialDoneToday(Date.now())) return;
+  if (!sealedPeakHour()) return;
+  sealed.markTrialDay(Date.now());
+  const r = await startTrial(guild, { mode: 'scheduled' }).catch(e => { console.error('[trial] auto start:', e.message); return null; });
+  if (r && r.ok) console.log('[trial] auto-started (scheduled Assembly)');
 }
 
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
@@ -3032,6 +3156,8 @@ client.once('ready', async () => {
             .addChoices({ name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' },
               { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🔢 Number Pattern', value: 'pattern' },
               { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' })))
+        .addSubcommand(s => s.setName('trial').setDescription('Launch a Trial: tribes rally in voice and answer together, breadth + voice scored')
+          .addBooleanOption(o => o.setName('muster').setDescription('Rally only YOUR tribe (leader Muster Trial) instead of all tribes').setRequired(false)))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
@@ -3293,6 +3419,10 @@ client.once('ready', async () => {
   // hourly auto-tick (peak hours, daily cap + min-gap gate inside).
   if (dguild) await reconcileSealed(dguild).catch(e => console.error(`[sealed] boot reconcile: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sealedAutoTick(g)).catch(() => {}), 3600000);
+  // The Trials (dark until enabled): RESUME an in-flight Trial on boot (long VC event), then an hourly tick that
+  // fires the daily scheduled Trial at peak (own once-a-day marker).
+  if (dguild) await reconcileTrial(dguild).catch(e => console.error(`[trial] boot reconcile: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => trialAutoTick(g)).catch(() => {}), 3600000);
   try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
@@ -4194,7 +4324,7 @@ client.on('messageCreate', async (msg) => {
     // (lockstep, so the throne then waits for the shared round timer to advance everyone).
     try {
       const sa = sealed.get();
-      if (sa && sa.kind === 'typed') {
+      if (sa && sa.mode === 'sealed' && sa.kind === 'typed') {
         const th = sealed.throneByChannel(msg.channelId);
         if (th && !th.answered) {
           const item = sa.items[th.qNum];
@@ -5591,7 +5721,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton?.() && interaction.customId.startsWith('sealedans:')) {
     const [, tribeKey, qNumStr, optStr] = interaction.customId.split(':');
     const a = sealed.get();
-    if (!a || a.kind !== 'button') return interaction.reply({ content: 'That round is over.', flags: MessageFlags.Ephemeral });
+    if (!a || a.mode !== 'sealed' || a.kind !== 'button') return interaction.reply({ content: 'That round is over.', flags: MessageFlags.Ephemeral });
     const th = sealed.throne(tribeKey);
     if (!th || th.qNum !== Number(qNumStr)) return interaction.reply({ content: 'That round is over.', flags: MessageFlags.Ephemeral });
     const mine = tribes.memberTribe(interaction.member);
@@ -5602,6 +5732,23 @@ client.on('interactionCreate', async (interaction) => {
     if (!correct) return interaction.reply({ content: '❌ Not quite.', flags: MessageFlags.Ephemeral });
     const counted = sealedTryScore(tribeKey, interaction.user.id, interaction.createdTimestamp, true);
     return interaction.reply({ content: counted ? '✅ Correct, and first! Points banked for your tribe.' : '✅ Correct, but your tribe already scored this round.', flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('trialans:')) {
+    const [, tribeKey, qNumStr, optStr] = interaction.customId.split(':');
+    const a = sealed.get();
+    if (!a || a.mode !== 'trial') return interaction.reply({ content: 'The Trial is over.', flags: MessageFlags.Ephemeral });
+    const th = sealed.throne(tribeKey);
+    if (!th || th.done || th.qNum !== Number(qNumStr)) return interaction.reply({ content: 'That question already moved on.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine || mine.key !== tribeKey) return interaction.reply({ content: 'Answer in your own tribe’s throne.', flags: MessageFlags.Ephemeral });
+    if ((th.perQ || []).includes(interaction.user.id)) return interaction.reply({ content: 'You already tried this one, let a tribemate take it.', flags: MessageFlags.Ephemeral });
+    sealed.updateThrone(tribeKey, { perQ: [...(th.perQ || []), interaction.user.id] });
+    if (Number(optStr) !== a.items[th.qNum].answer) return interaction.reply({ content: '❌ Not quite, someone else try.', flags: MessageFlags.Ephemeral });
+    sealed.scoreThrone(tribeKey, interaction.user.id, 1);            // +1 correct, credit the contributor (breadth)
+    sealed.updateThrone(tribeKey, { qNum: th.qNum + 1 });           // this throne advances independently
+    await interaction.update({ components: [] }).catch(() => {});
+    await trialPost(interaction.guild, tribeKey);
+    return interaction.followUp({ content: '✅ Correct! On to the next.', flags: MessageFlags.Ephemeral }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('arena_ans:')) {
     const a = arena.get();
@@ -6757,6 +6904,16 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await startSealedArena(interaction.guild, { type: interaction.options.getString('type') || undefined, startedById: interaction.user.id });
       return interaction.editReply(r.ok ? `🚪 Sealed Arena launched (${ARENA_LABEL[r.gameType] || r.gameType}). Every tribe is racing it now in their throne; results reveal at the end.` : `Couldn’t launch it: ${r.error}`);
+    }
+    if (sub === 'trial') {
+      if (!features.enabled('theTrials')) return interaction.reply({ content: 'The Trials aren’t enabled yet.', flags: MessageFlags.Ephemeral });
+      const muster = interaction.options.getBoolean('muster');
+      const led = tribes.leaderTribe(interaction.member);
+      if (muster && !led && !canWLAdmin(interaction)) return interaction.reply({ content: 'Only a tribe leader can rally a Muster Trial.', flags: MessageFlags.Ephemeral });
+      if (!muster && !canWLAdmin(interaction) && !led) return interaction.reply({ content: 'Only a tribe leader or an admin can launch a Trial.', flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const r = await startTrial(interaction.guild, muster && led ? { mode: 'muster', tribeKey: led.key, startedById: interaction.user.id } : { mode: 'scheduled', startedById: interaction.user.id });
+      return interaction.editReply(r.ok ? `⚔️ Trial launched. ${muster ? 'Rally your tribe' : 'Every tribe, rally'} in voice and answer together — results reveal at the end.` : `Couldn’t launch it: ${r.error}`);
     }
     if (sub === 'arena') {
       // Any tribe LEADER or an admin may start one (owner, 2026-08-04).

@@ -1,6 +1,7 @@
 # Sealed Arena, Spec (v1)
 
-**Status:** spec only, not built. First of three planned throne-competition modes
+**Status:** BUILT + deployed DARK (2026-08-05), pending owner test + flag flip (`sealedArena`).
+First of three planned throne-competition modes
 (this one first, by owner priority). The other two are sketched at the bottom.
 
 ## Concept
