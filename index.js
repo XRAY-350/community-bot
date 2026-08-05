@@ -1014,17 +1014,16 @@ function scoreArena(tribeKey, userId, points = 1) {
 }
 const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern',
   'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];
-const ARENA_AUTO_CHANCE = 0.6;   // per eligible tick, so timing isn't clockwork on the cooldown boundary
-// Auto-start (owner: "have the bot start them randomly at a daily cap instead of starting manually"). Called
-// on a ~30-min tick: within active ET hours, if nothing's running and we're off cooldown + under the daily
-// cap (all enforced by arena.startBlocked), roll a chance and launch a random type. The 3h cooldown naturally
-// spaces them across the day so they land ~cap times without ever exceeding it. Manual starts still work.
+// Auto-start (owner: "have the bot start them randomly"). Called on a ~15-min tick: within the active local
+// hours (config timezone, default Central Europe), if nothing's running, under the daily cap, and the randomly
+// scheduled next-auto time has passed, launch a random type. The next-auto time is set at each event's end to
+// a random 1h..2h out (arena.recordEnd), so spacing is random with a hard 1h floor. Manual starts still work.
 async function maybeAutoStartArena(guild) {
   if (!config.arenaAutoStart) return;
-  const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }));
+  const hour = Number(new Date().toLocaleString('en-US', { timeZone: config.arenaAutoTimezone, hour: '2-digit', hour12: false }));
   if (hour < config.arenaAutoStartHour || hour >= config.arenaAutoEndHour) return;   // active hours only
-  if (arena.startBlocked()) return;   // already running/lobby, on cooldown, or daily cap reached
-  if (Math.random() > ARENA_AUTO_CHANCE) return;
+  if (arena.startBlocked()) return;        // already running/lobby, under the 1h floor, or daily cap reached
+  if (!arena.autoStartDue(Date.now())) return;   // the randomly-scheduled next-auto time hasn't arrived yet
   const type = ARENA_ALL_TYPES[Math.floor(Math.random() * ARENA_ALL_TYPES.length)];
   try { await startArenaCountdown(guild, type, ARENA_DEFAULTS[type] || 5, client.user.id); console.log(`[arena] auto-started ${type}`); }
   catch (e) { console.error('[arena] auto-start:', e.message); }
@@ -2699,9 +2698,9 @@ client.once('ready', async () => {
   if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
   // An arena challenge left active by a pre-restart crash is resolved early (see reconcileArena).
   if (dguild) await reconcileArena(dguild).catch(e => console.error(`[arena] boot reconcile: ${e.message}`));
-  // Auto-start random arenas through the active day (owner). Checked every 30 min; the cooldown + daily cap
-  // (via arena.startBlocked) keep it from over-firing. Not run immediately on boot (let the bot settle first).
-  setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartArena(g)).catch(() => {}), 30 * 60000);
+  // Auto-start random arenas through the active day (owner). Checked every 15 min; the random next-auto time
+  // (1h..2h after each event), the 1h floor + daily cap (via arena.startBlocked) keep it from over-firing.
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartArena(g)).catch(() => {}), 15 * 60000);
   try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);

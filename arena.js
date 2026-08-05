@@ -16,8 +16,13 @@ const WIN_GLORY = 100;
 const RACE_TARGET = 10;     // clicks to win a race
 const TRIVIA_QUESTIONS = 10; // questions per trivia sprint (owner: the online bank is huge, so ask more)
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
-const COOLDOWN_MS = 90 * 60 * 1000;        // 1.5h min gap between challenges (owner: more events/day, ~6-7)
-const DAILY_CAP = 8;                        // max challenges per UTC day (owner: ~6-7/day target, headroom for manual)
+const COOLDOWN_MS = 60 * 60 * 1000;        // HARD FLOOR: at least 1h between events (owner) — for manual + auto
+const DAILY_CAP = 10;                       // max challenges per UTC day (headroom so the random spacing isn't truncated)
+// Auto events don't fire on a fixed cadence: each next auto event is scheduled at a RANDOM time in a 1h..2h
+// window after the last one ends (owner: "at least an hour between, but random within the ~1.5h window"), so
+// two can land ~1h apart or ~2h apart unpredictably (averaging ~1.5h).
+const AUTO_GAP_MIN_MIN = 60;                // never sooner than 1h after the last event
+const AUTO_GAP_SPREAD_MIN = 60;            // ...plus a random 0..60 min, so the gap is 1h..2h
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.
@@ -48,8 +53,13 @@ function utcDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
 function recordEnd(nowMs) {
   const s = load(); const now = nowMs || Date.now(); const day = utcDay(now);
   if (s.day !== day) { s.day = day; s.count = 0; }
-  s.count = (s.count || 0) + 1; s.lastEndedAt = now; save(s);
+  s.count = (s.count || 0) + 1; s.lastEndedAt = now;
+  s.nextAutoAt = now + (AUTO_GAP_MIN_MIN + randInt(AUTO_GAP_SPREAD_MIN + 1)) * 60000;   // random 1h..2h until the next auto event
+  save(s);
 }
+// Is an AUTO event due? True once we've passed the randomly-scheduled next-auto time (or if none is set yet).
+function autoStartDue(nowMs) { const s = load(); return !s.nextAutoAt || (nowMs || Date.now()) >= s.nextAutoAt; }
+function getNextAutoAt() { return load().nextAutoAt || 0; }
 function startBlocked(nowMs) {
   const s = load(); const now = nowMs || Date.now();
   if (s.active) return 'A challenge is already running — let it finish first.';
@@ -297,7 +307,7 @@ module.exports = {
   STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
   TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS, PATTERN_QUESTIONS, TRIVIA_CATEGORY,
   get, isActive, set, clear, update, addScore, addMemberScore, topMemberScorer, markOnce, resetBucket, winner,
-  recordEnd, startBlocked,
+  recordEnd, startBlocked, autoStartDue, getNextAutoAt,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
   nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,
 };
