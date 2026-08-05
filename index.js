@@ -130,7 +130,12 @@ async function syncStaffRank(guild, member, tribe) {
   if (isTribeMember && isStaff && !has) await member.roles.add(tribe.staffRankRoleId, `Tribe: staff auto-rank (${tribes.staffRankTitle(tribe)})`).catch(() => {});
   else if (has && !(isTribeMember && isStaff)) await member.roles.remove(tribe.staffRankRoleId, 'Tribe: no longer eligible for the staff rank').catch(() => {});
 }
+// A member-founded tribe stays MEMBER-ONLY (owner ruling): mods/admins/owners can't join it — they'd get the
+// "General" staff rank and overshadow the regular-member co-leaders. Trial mods (memberTier null) are fine, same
+// as they can cosign/co-lead. This is the one gate that keeps a member-led tribe actually member-led.
+function staffBlockedFromMemberTribe(member, tribe) { return tribes.isMemberFounded(tribe) && !!opspanel.memberTier(member); }
 async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe — self-join via #roles') {
+  if (staffBlockedFromMemberTribe(member, tribe)) return { ok: false, content: `**${tribe.shortName || tribe.name}** is a member-founded tribe — it stays member-only, so mods/admins/owners can’t join it.` };
   tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
   const ok = await member.roles.add(tribe.roleId, reason).then(() => true).catch(() => false);
   if (!ok) { tribes.setMembership(tribe.key, member.id, false); return { ok: false }; }
@@ -204,6 +209,7 @@ async function releaseTribeMember(guild, tribe, member, reason) {
 // can't immediately leave-request (or staff-instant-leave) their way back out, undermining the whole point
 // of the stakes. See tribes.js's CAPTURE_LOCK_MS for the lock duration.
 async function captureMemberInto(guild, winnerTribe, member, reason) {
+  if (staffBlockedFromMemberTribe(member, winnerTribe)) return;   // a member-only tribe doesn't capture staff into itself
   const oldTribe = tribes.myTribe(member);
   if (oldTribe) await releaseTribeMember(guild, oldTribe, member, reason).catch(() => {});
   tribes.setMembership(winnerTribe.key, member.id, true);
@@ -232,6 +238,7 @@ async function submitLeaveRequest(guild, member) {
 // Shared by /tribe join-request AND the Tribes Hub's join-request select menu — self-petition, reuses the
 // nomination machinery (nominator === target, see §27 in TRIBE_PHASE5_SPEC.md for why).
 async function submitJoinRequest(guild, member, tribe) {
+  if (staffBlockedFromMemberTribe(member, tribe)) return { ok: false, content: `**${tribe.shortName || tribe.name}** is a member-founded tribe — it stays member-only, so mods/admins/owners can’t join it.` };
   if (member.roles.cache.has(tribe.roleId)) return { ok: false, content: `You’re already in **${tribe.shortName || tribe.name}**.` };
   if (tribes.myTribe(member)) return { ok: false, content: 'You’re already in a different tribe. Its leader has to release you first.' };
   if (!tribes.isVeteran(member.id)) return { ok: false, content: 'You haven’t pledged before, so your first tribe is a free pick, no approval needed: use the picker in #roles instead.' };
@@ -5134,7 +5141,7 @@ client.on('interactionCreate', async (interaction) => {
       const enrolled = [], skipped = [];
       for (const cid of req.cosigns) {
         const cm = await interaction.guild.members.fetch(cid).catch(() => null);
-        if (!cm) { skipped.push(cid); continue; }
+        if (!cm || opspanel.memberTier(cm)) { skipped.push(cid); continue; }   // gone, or became staff since cosigning — member tribe stays member-only
         const cr = await addCoLeader(interaction.guild, b.tribe, b.leaderRole, cm);
         if (cr?.ok) enrolled.push(cid); else skipped.push(cid);
       }
@@ -7111,6 +7118,7 @@ client.on('interactionCreate', async (interaction) => {
         // the same nomination/accept machinery as /tribe nominate. No entrance gate on this path though —
         // the leader already vouches for this person, a quiz on top would be redundant here specifically.
         if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+        if (staffBlockedFromMemberTribe(target, tribe)) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** is member-founded — it stays member-only, so you can’t invite staff (mods/admins/owners).`, flags: MessageFlags.Ephemeral });
         const r = await submitInvite(interaction.guild, tribe, interaction.user.id, target);
         return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
