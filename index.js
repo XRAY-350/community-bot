@@ -3532,6 +3532,10 @@ client.once('ready', async () => {
   if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
   // An arena challenge left active by a pre-restart crash is resolved early (see reconcileArena).
   if (dguild) await reconcileArena(dguild).catch(e => console.error(`[arena] boot reconcile: ${e.message}`));
+  // Remote word bank for Scramble/Reverse (owner: source from a bank, not hardcode): use the cache immediately,
+  // then refresh from the common-word list in the background. Falls back to the curated list if the fetch fails.
+  console.log(`[arena] word bank: ${arena.loadCachedWords()} cached; refreshing...`);
+  arena.fetchWordBank().then(n => n && console.log(`[arena] remote word bank refreshed: ${n} words`)).catch(() => {});
   // Auto-start random arenas through the active day (owner). Checked every 15 min; the random next-auto time
   // (1h..2h after each event), the 1h floor + daily cap (via arena.startBlocked) keep it from over-firing.
   setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartArena(g)).catch(() => {}), 15 * 60000);
@@ -4435,11 +4439,17 @@ client.on('messageCreate', async (msg) => {
         const mine = tribes.memberTribe(msg.member);
         if (mine) {
           scoreArena(mine.key, msg.author.id);
-          const nx = arena.nextTyped(ax.type, ax.used || []);   // fresh prompt; no in-game repeats (owner)
-          arena.update({ answer: nx.answer, display: nx.display, round: (ax.round || 1) + 1, used: [...(ax.used || []), nx.key] });
           await msg.react('✅').catch(() => {});
-          const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
-          if (ch) await ch.send({ content: typedContent(ax.type, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
+          // Round cap for the finite LOCAL banks (riddle/emoji) so a fast game can't run them dry and wrap
+          // (owner). The others are effectively infinite: words = large remote bank; math/typing/pattern generated.
+          if (['riddle', 'emoji'].includes(ax.type) && (ax.round || 1) >= 18) {
+            await endArena(msg.guild).catch(() => {});
+          } else {
+            const nx = arena.nextTyped(ax.type, ax.used || []);   // fresh prompt; no in-game repeats (owner)
+            arena.update({ answer: nx.answer, display: nx.display, round: (ax.round || 1) + 1, used: [...(ax.used || []), nx.key] });
+            const ch = await msg.guild.channels.fetch(ax.channelId).catch(() => null);
+            if (ch) await ch.send({ content: typedContent(ax.type, arena.get()), allowedMentions: { parse: [] } }).catch(() => {});
+          }
         }
       }
     } catch (e) { console.error('[arena] messageCreate:', e.message); }

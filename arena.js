@@ -160,10 +160,27 @@ const TRIVIA_DEFAULT = [
 // Optional editable bank file (owner: make them editable) — { words: [...], trivia: [{q,options,answer}] }.
 // Its entries ADD to the defaults, so mods can grow the pools without a code change.
 const BANK_FILE = process.env.FUBU_ARENA_BANK_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_arena_bank.json`;
+// Remote word bank (owner: source quizzes from a bank, don't hardcode). Pulls a large COMMON-word list
+// (google-10000-english, filtered to solvable 4-8 letter words) so Scramble/Reverse are effectively infinite and
+// never wrap. Cached to disk; the curated WORDS_DEFAULT stays as flavour + offline fallback. Generic random-word
+// APIs were rejected on purpose: they return unsolvable obscure words (piolets/furazolidones), a common list does not.
+const WORDS_CACHE = process.env.FUBU_ARENA_WORDS_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_arena_words.json`;
+const WORDS_URL = 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears-medium.txt';
+let _remoteWords = null;
+function loadCachedWords() { if (_remoteWords) return _remoteWords.length; try { const j = JSON.parse(fs.readFileSync(WORDS_CACHE, 'utf8')); if (Array.isArray(j.words) && j.words.length > 500) _remoteWords = j.words; } catch { /* no cache yet */ } return _remoteWords ? _remoteWords.length : 0; }
+async function fetchWordBank() {
+  try {
+    const res = await fetch(WORDS_URL, { signal: AbortSignal.timeout(9000) });
+    const txt = await res.text();
+    const words = [...new Set(txt.split('\n').map(w => w.trim().toLowerCase()).filter(w => /^[a-z]{4,8}$/.test(w)))];
+    if (words.length > 500) { _remoteWords = words; try { fs.writeFileSync(WORDS_CACHE, JSON.stringify({ at: Date.now(), words })); } catch { /* cache best-effort */ } }
+    return _remoteWords ? _remoteWords.length : 0;
+  } catch (e) { console.error('[arena] word bank fetch:', e.message); return 0; }
+}
 function loadBank() {
   let extra = { words: [], trivia: [] };
   try { const j = JSON.parse(fs.readFileSync(BANK_FILE, 'utf8')); if (Array.isArray(j.words)) extra.words = j.words; if (Array.isArray(j.trivia)) extra.trivia = j.trivia; } catch { /* no file = defaults only */ }
-  return { words: [...WORDS_DEFAULT, ...extra.words.filter(w => typeof w === 'string' && /^[a-z]{3,12}$/i.test(w))],
+  return { words: [...WORDS_DEFAULT, ...(_remoteWords || []), ...extra.words.filter(w => typeof w === 'string' && /^[a-z]{3,12}$/i.test(w))],
     trivia: [...TRIVIA_DEFAULT, ...extra.trivia.filter(t => t && t.q && Array.isArray(t.options) && t.options.length >= 2 && Number.isInteger(t.answer))] };
 }
 
@@ -415,5 +432,5 @@ module.exports = {
   recordEnd, startBlocked, autoStartDue, getNextAutoAt,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
   nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,
-  freshenQuestions,
+  freshenQuestions, loadCachedWords, fetchWordBank,
 };
