@@ -106,7 +106,10 @@ function get(key) { return REGISTRY.find(r => r.key === key); }
 function enabledCommandNames() { const s = new Set(); for (const r of REGISTRY) if (enabled(r.key)) { (r.commands || []).forEach(n => s.add(n)); (r.contexts || []).forEach(n => s.add(n)); } return s; }
 // map a command / context-menu name -> its feature key
 function featureForCommand(name) { return REGISTRY.find(r => (r.commands || []).includes(name) || (r.contexts || []).includes(name))?.key; }
-// member-facing help entries for enabled features (for /help + the guide)
-function memberHelp() { return REGISTRY.filter(r => r.audience === 'member' && enabled(r.key) && r.help).map(r => r.help); }
+// Tribe features document themselves in the Tribe Hub (its own guide) — they don't belong in the
+// general bot guide, which is for what a normal member uses the bot for. Excluded from memberHelp.
+const TRIBE_HELP_KEYS = new Set(['tribes', 'achievements', 'recruitment', 'tribeQuests', 'relics', 'prestige', 'sealedArena', 'theTrials', 'provingGrounds']);
+// member-facing help entries for enabled features (for /help + the guide) — tribe features excluded (see above)
+function memberHelp() { return REGISTRY.filter(r => r.audience === 'member' && enabled(r.key) && r.help && !TRIBE_HELP_KEYS.has(r.key)).map(r => r.help); }
 
 module.exports = { REGISTRY, enabled, setEnabled, needsRestart, load, save, ensureSeeded, get, enabledCommandNames, featureForCommand, memberHelp };
