@@ -1271,8 +1271,9 @@ async function sweepExpiredAllianceVotes(guild) {
 const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4, pattern: 6,
   geoquiz: 6, sciquiz: 6, histquiz: 6, animalquiz: 6, reverse: 5 };   // default minutes per type
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
-const _arenaTimers = { start: null, end: null, round: null };
-function clearArenaTimers() { for (const k of ['start', 'end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
+const _arenaTimers = { start: null, end: null, round: null, sd: null };
+function clearArenaTimers() { for (const k of ['start', 'end', 'round', 'sd']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
+const ARENA_SD_MS = 40000;   // sudden-death tiebreaker: 40s for a tied tribe to react before it falls back to first place
 // Personal-reward tuning for the arena (Phase 6 daily hook).
 const TIDES_PER_ARENA_POINT = 3;      // personal Tides for each point you score in an arena
 const ARENA_DAILY_BONUS_TIDES = 10;   // your first arena score of the UTC day
@@ -1507,8 +1508,9 @@ async function askNextTrivia(guild) {
   _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // 25s per question, then advance
 }
 async function endArena(guild) {
-  clearArenaTimers();
   let a = arena.get(); if (!a) return;
+  if (a.phase === 'suddendeath') return;   // a tiebreaker is already live; its own resolver will finalize (guards the end-timer)
+  clearArenaTimers();
   // Blitz is tallied now, from message history over the whole window (owner: count at the end). Per-member
   // counts also drive personal Tides + the MVP, same as the interactive types earn via scoreArena.
   if (a.type === 'blitz') {
@@ -1522,7 +1524,47 @@ async function endArena(guild) {
     }
     arena.update({ scores, memberScores: ms }); a = arena.get();
   }
-  const win = arena.winner();
+  // Tie check: if 2+ tribes share the highest score, run a SUDDEN-DEATH tiebreaker rather than silently
+  // handing it to whoever happened to score first (the old winner() behaviour). sdDone guards the loop.
+  const scores = a.scores || {};
+  let top = 0; for (const v of Object.values(scores)) if (v > top) top = v;
+  const tied = Object.keys(scores).filter(k => scores[k] === top);
+  if (top > 0 && tied.length > 1 && !a.sdDone) return startSuddenDeath(guild, tied, top);
+  return finalizeArena(guild, arena.winner());
+}
+// Kick off a sudden-death round among the tied tribes: first member of a tied tribe to react wins it all.
+// Reaction-based (no answer to validate) so it's simple + fair; falls back to first place if nobody reacts.
+async function startSuddenDeath(guild, tied, top) {
+  clearArenaTimers();
+  const a = arena.get(); if (!a) return;
+  const ch = await arenaChannel(guild);
+  // The scoring game is over; if a typed round had opened the channel, re-lock it now.
+  if (arena.TYPED_TYPES.includes(a.type) && ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'arena over, sudden death' }).catch(() => {});
+  const target = '🔥';
+  const roleIds = tied.map(k => tribes.get(k)?.roleId).filter(Boolean);
+  let msg = null;
+  if (ch) msg = await ch.send({ content: `# ⚡ Sudden death!\nTied at **${top}**: ${tied.map(k => tribeName(k)).join(' vs ')}.\nFirst member of a tied tribe to react ${target} on this message takes it all. Go!\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => null);
+  if (msg) await msg.react(target).catch(() => {});
+  arena.update({ phase: 'suddendeath', sdTied: tied, sdTop: top, sdTarget: target, sdMessageId: msg ? msg.id : null });
+  _arenaTimers.sd = setTimeout(() => resolveSuddenDeath(guild, null).catch(e => console.error('[arena] sd timeout:', e.message)), ARENA_SD_MS);
+}
+// Resolve sudden death: winnerKey from the first valid reaction, or null on timeout (falls back to first place).
+async function resolveSuddenDeath(guild, winnerKey) {
+  const a = arena.get();
+  if (!a || a.phase !== 'suddendeath') return;   // already resolved or gone
+  if (_arenaTimers.sd) { clearTimeout(_arenaTimers.sd); _arenaTimers.sd = null; }
+  arena.update({ phase: 'resolving', sdDone: true });   // synchronous flip: blocks a second reaction from double-resolving
+  const tied = a.sdTied || [];
+  const viaReaction = !!(winnerKey && tied.includes(winnerKey));
+  const key = viaReaction ? winnerKey : tied[0];   // nobody reacted in time -> the tribe that reached the top first
+  const score = (a.scores && a.scores[key]) || a.sdTop || 0;
+  return finalizeArena(guild, key ? { key, score } : null, viaReaction ? ' in sudden death' : ' (sudden death — no reaction, tiebreak to first place)');
+}
+// Award, announce + tear down an arena for a decided winner (or null = nobody scored). Split out of endArena so
+// both the normal path and the sudden-death resolver share one finalize. `note` decorates the win headline.
+async function finalizeArena(guild, win, note = '') {
+  clearArenaTimers();
+  const a = arena.get(); if (!a) return;
   const ch = await arenaChannel(guild);
   const label = ARENA_LABEL[a.type] || 'challenge';
   // Remove the per-throne start pings now that the event is over.
@@ -1547,7 +1589,7 @@ async function endArena(guild) {
     if (mult > 1) notes.push(`underdog ×${mult}`);
     if (dt) notes.push(`downtime treasury ×${DOWNTIME_TREASURY_MULT}, no Glory`);
     const bonusNote = notes.length ? ` (${notes.join('; ')})` : '';
-    resultText = `# 🏆 ${label}: ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${treas} Treasury**${glory ? ` and **+${glory} Glory**` : ''}${bonusNote}.\n\n${arenaScoreboard(a)}`;
+    resultText = `# 🏆 ${label}: ${tribeName(win.key)} wins${note}!\nScored **${win.score}**. Banked **+${treas} Treasury**${glory ? ` and **+${glory} Glory**` : ''}${bonusNote}.\n\n${arenaScoreboard(a)}`;
     { const wt = tribes.get(win.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || win.key} won a ${label}`, tribes: [win.key], score: win.score }); }
     checkTribeQuests(guild, win.key).catch(() => {});
     await refreshThronePanel(guild, tribes.get(win.key)).catch(() => {});
@@ -1598,6 +1640,13 @@ async function reconcileArena(guild) {
     console.log(`[arena] resuming lobby countdown (${Math.round(wait / 1000)}s left)`);
     _arenaTimers.start = setTimeout(() => beginArena(guild).catch(e => console.error('[arena] begin:', e.message)), wait);
     return;
+  }
+  // A sudden-death tiebreaker (or its resolution) was cut off by the restart — resolve it deterministically now
+  // (fall back to first place) so the arena can't get stuck mid-tiebreak.
+  if (a.phase === 'suddendeath' || a.phase === 'resolving') {
+    console.log('[arena] resolving interrupted sudden-death on boot');
+    arena.update({ sdDone: true });
+    return finalizeArena(guild, arena.winner(), a.phase === 'suddendeath' ? ' (sudden death, resolved on restart)' : '').catch(e => console.error('[arena] boot sd:', e.message));
   }
   // If the window already passed while the bot was down, resolve it. Otherwise CONTINUE the live challenge
   // (owner: a restart must not kill a real event) — re-arm the end timer and re-announce that it's still on.
@@ -3069,6 +3118,14 @@ client.on('messageReactionAdd', async (reaction, user) => {
         }
       }
       return;   // it was a reaction on the arena message — don't fall through to react-resolve
+    }
+    // Arena SUDDEN DEATH — first member of a tied tribe to react the target wins the whole event.
+    if (ax && ax.phase === 'suddendeath' && ax.sdMessageId && reaction.message.id === ax.sdMessageId && reaction.emoji?.name === ax.sdTarget) {
+      const rguild = reaction.message.guild;
+      const member = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
+      const key = member && (ax.sdTied || []).find(k => { const t = tribes.get(k); return t && member.roles.cache.has(t.roleId); });
+      if (key) await resolveSuddenDeath(rguild, key).catch(() => {});
+      return;
     }
     const msgId = state.getMeta('reactMsgId');
     if (!msgId || reaction.message.id !== msgId) return;
