@@ -696,6 +696,18 @@ function renderQuestBoard(tribeKey) {
   });
   return `# 🎯 ${t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : 'Tribe'} · Weekly Quests\n-# Shared by every tribe this week. Resets <t:${Math.floor(nextReset / 1000)}:R>.\n\n${lines.join('\n\n')}`;
 }
+// The 🏺 Relics view: the tribe's permanent trophies + its current (tiny, decaying) war bonus.
+function renderRelicsBoard(tribeKey) {
+  const t = tribes.get(tribeKey);
+  const relics = tribes.relicsOf(tribeKey);
+  const season = tribes.getSeason();
+  const age = season ? season.number : 0;
+  const perk = tribes.relicPerk(tribeKey, age);
+  const head = `# 🏺 ${t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : 'Tribe'} · Relics\n-# Won by claiming an Age. Each is a permanent trophy; together they add a tiny war edge that stacks but fades over the Ages. Current bonus: **+${(perk * 100).toFixed(1)}% war power** (cap +${Math.round(tribes.RELIC_PERK_CAP * 100)}%).`;
+  if (!relics.length) return `${head}\n\n_No relics yet. Win an Age to be awarded one, or seize one in war._`;
+  const body = relics.slice().reverse().map(r => `🏺 **${r.name}** — won ${r.ageName || `Age ${r.age}`}${r.raidedFrom ? ' · seized in war' : ''}`).join('\n');
+  return `${head}\n\n${body}`;
+}
 // Phase 6 catch-up: tribes in the bottom half of the live standings earn a bonus multiplier on event payouts
 // so last place can climb back instead of quitting. Neutral (1x) when there are too few tribes to matter.
 const UNDERDOG_MULT = 1.5;
@@ -802,9 +814,16 @@ async function processSeasonEndIfDue(guild) {
   if (champRole) for (const m of [...champRole.members.values()]) await m.roles.remove(champRole.id, 'Age ended, champion rotates').catch(() => {});
   if (champRole && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of [...tr.members.values()]) await m.roles.add(champRole.id, `${previousName} champion: ${champTribe.key}`).catch(() => {}); }
   if (features.enabled('achievements') && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of tr.members.values()) achievements.bumpAndCheck(m.id, 'season'); }
+  // Mint the Age Champion a Relic (Phase 7): a permanent trophy + a tiny decaying war edge (fail-off gated).
+  let mintedRelic = null;
+  if (features.enabled('relics') && champion && champTribe) {
+    mintedRelic = tribes.mintRelic(champTribe.key, { age: previousNumber, ageName: previousName });
+    if (mintedRelic) lore.record({ type: 'relic', title: `${champTribe.shortName || champTribe.name} was awarded ${mintedRelic.name}`, detail: `won ${previousName}`, tribes: [champTribe.key], relic: mintedRelic.name, age: previousNumber });
+  }
   const endsAt = Math.floor(season.endsAt / 1000);
+  const relicLine = mintedRelic ? `\n🏺 They are awarded a Relic: **${mintedRelic.name}**, kept forever on their throne (a small, fading war edge that stacks with future relics).` : '';
   const msg = champion
-    ? `# 🏆 ${previousName} ends: ${champTribe?.emoji || '🏴'} **${champion.name}** are its Champion!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} across the age and now wear <@&${champRole?.id}>. Their name is written into the Hall of Fame forever.\n**${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. The age's crowns reset, so the race is wide open. Treasury, ranks, and unlocks all carry over.`
+    ? `# 🏆 ${previousName} ends: ${champTribe?.emoji || '🏴'} **${champion.name}** are its Champion!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} across the age and now wear <@&${champRole?.id}>. Their name is written into the Hall of Fame forever.${relicLine}\n**${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. The age's crowns reset, so the race is wide open. Treasury, ranks, and unlocks all carry over.`
     : `# 🏁 ${previousName} ends with no Champion.\nNo tribe claimed a weekly crown across the age. **${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. Go make history.`;
   await broadcastSpectacle(guild, msg, champTribe ? [champTribe.roleId].filter(Boolean) : []);
   if (champTribe && champTribe.throneId) { const throne = await guild.channels.fetch(champTribe.throneId).catch(() => null); if (throne) await throneSend(throne, { content: msg, allowedMentions: { parse: [] } }).catch(() => {}); }
@@ -1081,6 +1100,13 @@ async function executeWar(guild, war, note = '') {
   const wScore = attackerWon ? sim.scoreA : sim.scoreD, lScore = attackerWon ? sim.scoreD : sim.scoreA;
   lore.record({ type: 'war', title: `${warName}: ${winner.shortName || winner.name} beat ${loser.shortName || loser.name} ${wScore}-${lScore}`, detail: `decided in ${sim.rounds.length} skirmishes`, tribes: [attacker.key, defender.key], winner: winner.key, warName });
   checkTribeQuests(guild, winner.key).catch(() => {});
+  // Relic raid (Phase 7): the winner seizes the loser's newest relic as a war trophy. Committed here, before
+  // the narration, same as every other consequence. Gated by the relics flag.
+  let stolenRelic = null;
+  if (features.enabled('relics')) {
+    stolenRelic = tribes.stealRelic(loser.key, winner.key);
+    if (stolenRelic) lore.record({ type: 'relic', title: `${winner.shortName || winner.name} seized ${stolenRelic.name} from ${loser.shortName || loser.name}`, detail: `spoils of ${warName}`, tribes: [winner.key, loser.key], relic: stolenRelic.name });
+  }
   // War-win achievements for the victors (gated).
   let honorsLine = '';
   if (features.enabled('achievements')) {
@@ -1091,8 +1117,9 @@ async function executeWar(guild, war, note = '') {
   }
   const captureLine = sim.capturedIds.length ? `**${sim.capturedIds.length}** member${sim.capturedIds.length === 1 ? '' : 's'} captured: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No members captured (loser too small).';
   const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
+  const relicRaidLine = stolenRelic ? `\n🏺 **${winner.shortName || winner.name} seized ${stolenRelic.name}** from ${loser.shortName || loser.name} as a war trophy.` : '';
   // Concise record posted to both thrones.
-  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} win ${wScore}-${lScore}!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}${wallLine}${honorsLine}`;
+  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} win ${wScore}-${lScore}!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}${wallLine}${relicRaidLine}${honorsLine}`;
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
@@ -1102,7 +1129,7 @@ async function executeWar(guild, war, note = '') {
   await refreshThronePanel(guild, tribes.get(defender.key)).catch(() => {});
   // The GRAND part: a live, narrated battle plays out in the public spectacle channel. Detached (it takes
   // ~20s), so it never blocks the caller/interaction — the outcome above is already committed.
-  broadcastWarSpectacle(guild, attacker, defender, winner, loser, sim, { note, wScore, lScore, warName }).catch(e => console.error('[war spectacle]', e.message));
+  broadcastWarSpectacle(guild, attacker, defender, winner, loser, sim, { note, wScore, lScore, warName, stolenRelic: stolenRelic ? stolenRelic.name : null }).catch(e => console.error('[war spectacle]', e.message));
 }
 // The live, narrated battle broadcast (owner: "grand, like a Madden quicksim"). Hybrid: one live-updating
 // scoreboard message + key-moment feed drops (first blood, lead changes, match point, the final blow). The
@@ -1152,8 +1179,9 @@ async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, s
   await warSleep(1500);
   const cap = sim.capturedIds.length ? `Captured **${sim.capturedIds.length}**: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No captures.';
   const wall = sim.defWallTiers ? ` 🏰 ${dName}'s walls held the raid to ${Math.round(sim.raidPct * 100)}%.` : '';
+  const relicBeat = meta.stolenRelic ? ` 🏺 Seized **${meta.stolenRelic}** as a war trophy.` : '';
   const roleIds = [attacker.roleId, defender.roleId].filter(Boolean);
-  await ch.send({ content: `# 🏆 ${wEmoji} **${wName}** win ${meta.warName || 'the war'} ${meta.wScore}-${meta.lScore}!\n-# ${meta.warName ? `${meta.warName}, decided in ${sim.rounds.length} skirmishes.` : ''}\n> Raided **+${sim.raidAmount}** treasury and banked **+${tribes.WAR_GLORY_BONUS}** glory. ${cap}${wall}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds, users: mvpId ? [mvpId] : [] } }).catch(() => {});
+  await ch.send({ content: `# 🏆 ${wEmoji} **${wName}** win ${meta.warName || 'the war'} ${meta.wScore}-${meta.lScore}!\n-# ${meta.warName ? `${meta.warName}, decided in ${sim.rounds.length} skirmishes.` : ''}\n> Raided **+${sim.raidAmount}** treasury and banked **+${tribes.WAR_GLORY_BONUS}** glory. ${cap}${wall}${relicBeat}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds, users: mvpId ? [mvpId] : [] } }).catch(() => {});
 }
 async function sweepExpiredWarVotes(guild) {
   for (const war of tribes.expiredWarVotes(Date.now())) await resolveWarVoteRecord(guild, war).catch(e => console.error('[tribe war] resolve:', e.message));
@@ -4746,6 +4774,10 @@ client.on('interactionCreate', async (interaction) => {
     if (act === 'quests') {
       if (!features.enabled('tribeQuests')) return interaction.reply({ content: 'Quests aren’t enabled.', flags: MessageFlags.Ephemeral });
       return interaction.reply({ content: renderQuestBoard(tribe.key), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (act === 'relics') {
+      if (!features.enabled('relics')) return interaction.reply({ content: 'Relics aren’t enabled.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: renderRelicsBoard(tribe.key), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (act === 'tithe') {
       // Tithe = convert your OWN activity points into this tribe's treasury (same as /tribe offer). Members only.

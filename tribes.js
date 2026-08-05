@@ -411,14 +411,50 @@ const STRONGHOLD_DEF_PER_TIER = 0.10;             // +10% defensive war power pe
 const STRONGHOLD_RAID_REDUCE_PER_TIER = 0.05;     // each tier shaves 5 pts off the treasury-raid % if the defender loses
 const WAR_RAID_MIN_PCT = 0.10;                     // ...but a successful raid always takes at least 10%
 
+// ---- Relics (Phase 7 depth): permanent trophy + a tiny, stacking, capped, cross-Age-DECAYING war-power edge.
+// Minted to the Age Champion at Age end; raidable in wars. The decay is what keeps a dynasty from running away:
+// a fresh relic is worth +3% war power the Age it's won and halves every Age after, so old glory fades.
+const RELIC_BASE_PERK = 0.03;      // a relic won THIS Age adds +3% war power
+const RELIC_DECAY = 0.5;           // ...halving each Age that passes (fades toward nothing)
+const RELIC_PERK_CAP = 0.10;       // total relic war-power bonus is capped at +10% (no runaway)
+const RELIC_ADJ = ['Ember', 'Tide', 'Ashen', 'Iron', 'Storm', 'Bone', 'Gilded', 'Obsidian', 'Crimson', 'Frost', 'Thorn', 'Dusk'];
+const RELIC_NOUN = ['Crown', 'Chalice', 'Banner', 'Blade', 'Sigil', 'Horn', 'Cinder', 'Reliquary', 'Standard', 'Idol', 'Fang', 'Lantern'];
+function makeRelicName(seed) { return `The ${RELIC_ADJ[seed % RELIC_ADJ.length]} ${RELIC_NOUN[(seed * 7 + 3) % RELIC_NOUN.length]}`; }
+function relicsOf(key) { const t = get(key); return (t && t.relics) || []; }
+function mintRelic(key, { age, ageName } = {}) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null;
+  if (!t.relics) t.relics = [];
+  const relic = { id: `relic_${age || 0}_${t.relics.length}`, name: makeRelicName((age || 0) * 13 + t.relics.length), age: age || 0, ageName: ageName || `Age ${age || 0}`, mintedAt: Date.now() };
+  t.relics.push(relic); save(s); return relic;
+}
+// The current tiny/capped/decaying war-power bonus from a tribe's relics. currentAge defaults to the live season.
+function relicPerk(key, currentAge) {
+  const relics = relicsOf(key);
+  if (!relics.length) return 0;
+  const age = currentAge != null ? currentAge : (getSeason() ? getSeason().number : 0);
+  let sum = 0;
+  for (const r of relics) sum += RELIC_BASE_PERK * Math.pow(RELIC_DECAY, Math.max(0, age - (r.age || 0)));
+  return Math.min(sum, RELIC_PERK_CAP);
+}
+// War raid: the winner seizes the loser's NEWEST relic (its strongest). Trophy + lore carry to the winner.
+function stealRelic(fromKey, toKey) {
+  const s = load(); const from = s.tribes && s.tribes[fromKey], to = s.tribes && s.tribes[toKey];
+  if (!from || !to || !(from.relics && from.relics.length)) return null;
+  const relic = from.relics.pop();
+  if (!to.relics) to.relics = [];
+  relic.raidedFrom = fromKey; relic.raidedAt = Date.now();
+  to.relics.push(relic); save(s); return relic;
+}
+
 // Tides-based combat power: everyone (including leaders/staff, who earn Tides same as anyone) contributes
 // at least 1 (bare presence) plus their real accumulated Tides. Needs `guild` to enumerate live role holders.
+// Relics (if any) add a small, capped, decaying multiplier on top.
 function warPower(guild, tribe) {
   const role = guild.roles.cache.get(tribe.roleId);
   if (!role) return 0;
   let power = 0;
   for (const m of role.members.values()) power += 1 + getTides(tribe.key, m.id);
-  return power;
+  return power * (1 + relicPerk(tribe.key));
 }
 function onWarCooldown(tribe, nowMs = Date.now()) { return !!tribe.lastWarAt && (nowMs - tribe.lastWarAt) < WAR_COOLDOWN_MS; }
 function warCooldownEndsAt(tribe) { return (tribe.lastWarAt || 0) + WAR_COOLDOWN_MS; }
@@ -606,6 +642,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   WAR_VOTE_MS, WAR_VOTE_TURNOUT, WAR_COOLDOWN_MS, CAPTURE_LOCK_MS, WAR_TREASURY_RAID_PCT, WAR_GLORY_BONUS,
   WAR_CAPTURE_PCT, WAR_CAPTURE_CAP, WAR_CAPTURE_FLOOR,
   warPower, onWarCooldown, warCooldownEndsAt, simulateWar, simulateWarMatch, WAR_WIN_ROUNDS,
+  relicsOf, mintRelic, relicPerk, stealRelic, RELIC_PERK_CAP,
   startWarVote, getWar, voteOnWar, activeWarVoteFor, anyActiveWarInvolving, expiredWarVotes, resolveWarRecord,
   setCaptureLock, captureLockUntil, isCaptureLocked,
   startAllianceVote, getAllianceVote, voteOnAlliance, activeAllianceVoteFor, expiredAllianceVotes, resolveAllianceVoteRecord,
