@@ -46,7 +46,7 @@ The long-term competitive container ON TOP of the weekly crown.
 - State: `s.season {number, startedAt, endsAt}`, `s.seasonHistory[]`, per-tribe `seasonCrowns`,
   `s.seasonChampRoleId`. Helpers in `tribes.js`; rotation unit-tested.
 
-## 3. Daily hook — IN PROGRESS
+## 3. Daily hook — DONE (commit a20b0fa)
 Convert weekly check-ins into daily logins by making the (now auto-running) arena pay PERSONAL progress and by
 adding a light daily quest. Folds in the "arena engagement layer".
 - **Arena scoring pays personal Tides.** Scoring a point in any arena awards the scorer Tides (personal,
@@ -55,12 +55,16 @@ adding a light daily quest. Folds in the "arena engagement layer".
 - **Daily play bonus + streak.** A member's first arena score of the UTC day pays a bonus and ticks a daily
   streak; the streak resets if a day is missed. Auto-tracked, no new command.
 
-## 4. Public spectacle + catch-up — PLANNED
+## 4. Public spectacle + catch-up — DONE
 Make the drama visible (draws lurkers/newcomers) and keep last place from quitting.
-- **Public broadcast** of big moments (war results, weekly crownings, season champions) to a public spectacle
-  channel, not just the private thrones.
-- **Underdog catch-up**: bottom-standing tribes earn a bonus multiplier on event payouts (arena/muster) so the
-  gap does not run away. Optionally a bounty for beating the reigning champion.
+- **Public broadcast** (`broadcastSpectacle`): war results, weekly crownings, and season champions now post to
+  a public spectacle channel (`config.tribeSpectacleChannelId`, falls back to tribe-announcements), not just the
+  private thrones.
+- **Underdog catch-up** (`underdogMultiplier`, `UNDERDOG_MULT` = 1.5): tribes in the bottom half of the live
+  standings earn 1.5x treasury + glory on arena wins, so last place can climb instead of quitting. Neutral with
+  fewer than 3 tribes. Applied to arena payouts (the high-frequency faucet); muster/challenge payouts live in
+  tribes.js internals and are a candidate for the same treatment later. A "beat the reigning champion" bounty is
+  deferred.
 
 ## 5. Arena expansion — ONGOING
 Keep variety high. 11 types live (race, trivia, scramble, blitz, math, typing, riddle, emoji, truefalse,
@@ -72,6 +76,6 @@ reaction, pattern), auto-started through the day (`maybeAutoStartArena`) with a 
 ## Status
 - [x] 1. Stronghold defense
 - [x] 2. Seasons
-- [ ] 3. Daily hook
-- [ ] 4. Public spectacle + catch-up
+- [x] 3. Daily hook
+- [x] 4. Public spectacle + catch-up
 - [ ] 5. More arena games

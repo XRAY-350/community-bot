@@ -149,6 +149,10 @@ const config = {
   arenaAutoStartHour: num('ARENA_AUTO_START_HOUR', 10),  // earliest ET hour an auto-arena may fire
   arenaAutoEndHour: num('ARENA_AUTO_END_HOUR', 24),      // latest (exclusive) ET hour
 
+  // Public "spectacle" channel for big tribe moments (war results, crownings, season champions) so lurkers
+  // and newcomers see the drama. Empty = fall back to the tribe-announcements channel.
+  tribeSpectacleChannelId: opt('TRIBE_SPECTACLE_CHANNEL_ID', ''),
+
   // Daily digest — a 24h recap of every job (posted to the mod-conflict channel) as an embed.
   digestEnabled: bool('DIGEST_ENABLED', true),
   digestHour: num('DIGEST_HOUR', 9), // local server-time hour (0-23) to post the daily digest

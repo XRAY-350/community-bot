@@ -542,6 +542,24 @@ async function ensureTribesHub(guild, config) {
 }
 // Tribe-announcements channel (owner, 2026-08-04) — sits just ABOVE the hub, everyone can read but not post
 // (staff can, for general announcements); the bot posts challenge results here (pinging every tribe). Idempotent.
+// Phase 6 spectacle: broadcast a big moment (war result, crowning, season champion) to a public channel so
+// lurkers and newcomers see the drama, not just the tribes involved. Falls back to tribe-announcements.
+async function broadcastSpectacle(guild, content, roleIds = []) {
+  let ch = null;
+  if (config.tribeSpectacleChannelId) ch = await guild.channels.fetch(config.tribeSpectacleChannelId).catch(() => null);
+  if (!ch) ch = await ensureTribeAnnounce(guild, config).catch(() => null);
+  if (ch) await ch.send({ content, allowedMentions: { roles: roleIds } }).catch(() => {});
+}
+// Phase 6 catch-up: tribes in the bottom half of the live standings earn a bonus multiplier on event payouts
+// so last place can climb back instead of quitting. Neutral (1x) when there are too few tribes to matter.
+const UNDERDOG_MULT = 1.5;
+function underdogMultiplier(guild, tribeKey) {
+  const board = tribes.standings(guild);   // live rank: glory, then treasury, then members
+  if (board.length < 3) return 1;
+  const idx = board.findIndex(t => t.key === tribeKey);
+  if (idx < 0) return 1;
+  return idx >= Math.ceil(board.length / 2) ? UNDERDOG_MULT : 1;   // bottom half are underdogs
+}
 async function ensureTribeAnnounce(guild, config) {
   const info = tribes.getAnnounceInfo();
   let ch = info && await guild.channels.fetch(info.channelId).catch(() => null);
@@ -593,6 +611,8 @@ async function processWeeklyCrownIfDue(guild) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
+  // Spectacle: announce the weekly crowning publicly too, and note it counts toward the Season Champion.
+  await broadcastSpectacle(guild, `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes this week's Crown!\n> Most Glory this week (**${result.glory}**). That's season crown **#${tribe.seasonCrowns || 1}** toward the 🏆 Season Champion.`, [tribe.roleId].filter(Boolean));
 }
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
@@ -620,8 +640,7 @@ async function processSeasonEndIfDue(guild) {
   const msg = champion
     ? `# 🏆 Season ${previousNumber} Champion: ${champTribe?.emoji || '🏴'} ${champion.name}!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} this season and now wear <@&${champRole?.id}> until Season ${season.number} is decided.\n**Season ${season.number}** begins now and runs to <t:${endsAt}:D>. Season crowns reset — the race is wide open. (Treasury, ranks, and unlocks all carry over.)`
     : `# 🏁 Season ${previousNumber} ended — no champion.\nNo tribe claimed a weekly crown this season. **Season ${season.number}** begins now, running to <t:${endsAt}:D>. Go make history.`;
-  const announce = await ensureTribeAnnounce(guild, config).catch(() => null);
-  if (announce) await announce.send({ content: msg, allowedMentions: { parse: [] } }).catch(() => {});
+  await broadcastSpectacle(guild, msg, champTribe ? [champTribe.roleId].filter(Boolean) : []);
   if (champTribe && champTribe.throneId) { const throne = await guild.channels.fetch(champTribe.throneId).catch(() => null); if (throne) await throneSend(throne, { content: msg, allowedMentions: { parse: [] } }).catch(() => {}); }
   console.log(`[tribe season] Season ${previousNumber} ended (champion=${champion ? champion.key : 'none'}); Season ${season.number} started.`);
 }
@@ -884,6 +903,8 @@ async function executeWar(guild, war, note = '') {
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: summary, allowedMentions: { parse: [] } });
   }
+  // Spectacle: also broadcast the war result publicly so the whole server sees the drama (Phase 6).
+  await broadcastSpectacle(guild, summary, [attacker.roleId, defender.roleId].filter(Boolean));
   await refreshThronePanel(guild, tribes.get(attacker.key)).catch(() => {});
   await refreshThronePanel(guild, tribes.get(defender.key)).catch(() => {});
 }
@@ -1215,12 +1236,15 @@ async function endArena(guild) {
   if (arena.TYPED_TYPES.includes(a.type) && ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'arena typed round over: re-lock' }).catch(() => {});
   let resultText;
   if (win) {
-    tribes.addTreasury(win.key, arena.WIN_TREASURY);
-    tribes.addGlory(win.key, arena.WIN_GLORY);
-    resultText = `# 🏆 ${label} — ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${arena.WIN_GLORY} Glory** and **+${arena.WIN_TREASURY} Treasury**.\n\n${arenaScoreboard(a)}`;
+    const mult = underdogMultiplier(guild, win.key);
+    const treas = Math.round(arena.WIN_TREASURY * mult), glory = Math.round(arena.WIN_GLORY * mult);
+    tribes.addTreasury(win.key, treas);
+    tribes.addGlory(win.key, glory);
+    const bonusNote = mult > 1 ? ` (underdog bonus ×${mult})` : '';
+    resultText = `# 🏆 ${label}: ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${glory} Glory** and **+${treas} Treasury**${bonusNote}.\n\n${arenaScoreboard(a)}`;
     await refreshThronePanel(guild, tribes.get(win.key)).catch(() => {});
   } else {
-    resultText = `# 🏁 ${label} over\nNo tribe scored — no reward this time.`;
+    resultText = `# 🏁 ${label} over\nNo tribe scored, no reward this time.`;
   }
   // MVP: the event's top individual scorer gets a bonus + a shout (personal recognition drives retention).
   let mvpLine = '', mvpId = null;
