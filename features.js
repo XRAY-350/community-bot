@@ -47,7 +47,7 @@ const REGISTRY = [
   { key: 'roleselect',  audience: 'staff',  built: true,  commands: ['roleselect-role'] }, // #roles picker itself has no command (built by a one-off script); this is just the admin add/remove tool
   { key: 'permguard',   audience: 'core',   built: true,  commands: ['permguard'] }, // channel-permission drift guard (auto-sweep + owner resnapshot command)
   { key: 'perms',       audience: 'core',   built: true,  commands: ['perms'] }, // bot-owner permission inspector/auditor (tier view, channel access, grand audit)
-  { key: 'contest',     audience: 'member', built: true,  commands: ['contest', 'contest-submit'],
+  { key: 'contest',     audience: 'member', built: true,  commands: ['contest', 'contest-submit', 'event-award'],
     help: { name: '🎨 `/contest-submit`: enter the monthly contest', value: 'Each month there\'s a **Drawing**, **Photography** and **Writing** contest with a theme. Post your entry in its channel (one per person) and **vote with 🩷**: most reactions wins the 🏆 Contest Winner role! Want to stay anonymous? `/contest-submit` posts your entry with your name hidden. Organizers run it with `/contest`.' } },
 
   // ---- planned / dark (seeded OFF) ----

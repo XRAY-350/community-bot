@@ -496,6 +496,7 @@ async function buildEventPanel(guild) {
     new ButtonBuilder().setCustomId('evp_end').setEmoji('🏁').setLabel('End round').setStyle(ButtonStyle.Danger).setDisabled(!active));
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('evp_status').setEmoji('📊').setLabel('Standings').setStyle(ButtonStyle.Primary).setDisabled(!active),
+    new ButtonBuilder().setCustomId('evp_reveal').setEmoji('🕵️').setLabel('Who entered').setStyle(ButtonStyle.Secondary).setDisabled(!active),
     new ButtonBuilder().setCustomId('evp_refresh').setEmoji('🔄').setLabel('Refresh').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('evp_setup').setEmoji('🎨').setLabel(setUp ? 'Repair setup' : 'Setup').setStyle(ButtonStyle.Secondary));
   return { embeds: [e], components: [row1, row2] };
@@ -520,6 +521,25 @@ async function handleEventPanel(interaction) {
   if (id === 'evp_status') {
     const embed = await status(guild);
     return interaction.reply({ embeds: [embed], flags: EPH });
+  }
+
+  // "Who entered": de-anonymized entrant list so an organizer knows who to award (public anonymity untouched).
+  if (id === 'evp_reveal') {
+    await interaction.deferReply({ flags: EPH });
+    const data = await revealEntries(guild);
+    if (!data.round) return interaction.editReply('No active round to reveal.');
+    const blocks = [`## 🕵️ Who entered: real submitters\n-# ${data.round.theme} · private to you · public anonymity untouched`];
+    for (const c of data.contests) {
+      if (!c.entries.length) { blocks.push(`### ${c.emoji} ${c.label}\n> _no entries_`); continue; }
+      const lines = [];
+      for (const e of c.entries) {
+        const m = await guild.members.fetch(e.memberId).catch(() => null);
+        const nm = m ? m.displayName : e.memberId;
+        lines.push(`> ${e.anonymous ? '🕶️' : '👤'} **${nm}** (<@${e.memberId}>) · ${e.votes} ${VOTE_EMOJI}${e.anonymous ? ' · _anon_' : ''} · [entry](https://discord.com/channels/${guild.id}/${c.channelId}/${e.messageId})`);
+      }
+      blocks.push(`### ${c.emoji} ${c.label} (${c.entries.length})\n${lines.join('\n')}`);
+    }
+    return interaction.editReply({ content: blocks.join('\n').slice(0, 1950), allowedMentions: { parse: [] } });
   }
 
   if (id === 'evp_setup') {

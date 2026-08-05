@@ -3338,6 +3338,12 @@ client.once('ready', async () => {
         .addAttachmentOption(o => o.setName('image').setDescription('Your entry image (Drawing/Photography, required there)').setRequired(false))
         .addStringOption(o => o.setName('text').setDescription('Your written entry (Writing)').setRequired(false).setMaxLength(2000))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('event-award').setDescription('Award tribe points to the winners of your event (fuses any event with the tribe fight)')
+        .addUserOption(o => o.setName('first').setDescription('1st place (their tribe gets the most)').setRequired(true))
+        .addUserOption(o => o.setName('second').setDescription('2nd place (optional)').setRequired(false))
+        .addUserOption(o => o.setName('third').setDescription('3rd place (optional)').setRequired(false))
+        .addStringOption(o => o.setName('event').setDescription('Event name for the announcement, e.g. Black Trivia Quiz').setRequired(false).setMaxLength(80))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageEvents),   // organizers hold ManageEvents; handler also allows staff
       new ContextMenuCommandBuilder().setName('Report to watchlist').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Send to corner').setType(ApplicationCommandType.Message)
@@ -6732,6 +6738,34 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'prove') {
     return pgStart(interaction).catch(e => { console.error('[proving] start:', e.message); return interaction.reply({ content: 'Couldn’t start the gauntlet.', flags: MessageFlags.Ephemeral }).catch(() => {}); });
+  }
+  if (name === 'event-award') {
+    // Organizer (ManageEvents / Event Organizer role) or staff. Fuses any organizer-run event with the tribe
+    // fight: place your top finishers, their tribes bank Glory + Treasury by placement (Ami's request).
+    const canManage = interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageEvents)
+      || opspanel.memberTier(interaction.member) || interaction.member?.roles?.cache?.has('1529976148706984110');
+    if (!canManage) return interaction.reply({ content: 'Only event organizers or staff can award event points.', flags: MessageFlags.Ephemeral });
+    const AWARD = [50, 30, 10];   // Glory + Treasury to 1st / 2nd / 3rd place tribes
+    const placed = [interaction.options.getMember('first'), interaction.options.getMember('second'), interaction.options.getMember('third')];
+    const eventName = (interaction.options.getString('event') || 'the event').slice(0, 80);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const lines = [], announced = [], creditedTribes = new Set();
+    for (let i = 0; i < placed.length; i++) {
+      const m = placed[i]; if (!m) continue;
+      const t = tribes.memberTribe(m);
+      if (!t) { lines.push(`${['🥇', '🥈', '🥉'][i]} <@${m.id}>: no tribe, nothing to award.`); continue; }
+      const amt = AWARD[i];
+      tribes.addGlory(t.key, amt); tribes.addTreasury(t.key, amt);
+      creditedTribes.add(t.key);
+      lines.push(`${['🥇', '🥈', '🥉'][i]} <@${m.id}> → ${tribeName(t.key)}: **+${amt} Glory, +${amt} Treasury**`);
+      announced.push(`${['🥇', '🥈', '🥉'][i]} ${tribeName(t.key)} (via <@${m.id}>): +${amt} Glory`);
+    }
+    if (!announced.length) return interaction.editReply(`No tribe points awarded, none of those members are in a tribe.\n${lines.join('\n')}`);
+    for (const k of creditedTribes) { lore.record({ type: 'arena', title: `${tribes.get(k)?.shortName || k} earned points at ${eventName}`, tribes: [k] }); checkTribeQuests(interaction.guild, k).catch(() => {}); }
+    // Public announcement so the tribes see the event fed their standing.
+    const spec = await getSpectacleChannel(interaction.guild).catch(() => null);
+    if (spec) await spec.send({ content: `# 🎉 ${eventName}: the tribes earn!\n${copy.herald.open()} <@${interaction.user.id}>'s event feeds the tribe fight:\n${announced.join('\n')}`, allowedMentions: { parse: [] } }).catch(() => {});
+    return interaction.editReply(`✅ Awarded, and announced${spec ? ` in <#${spec.id}>` : ''}:\n${lines.join('\n')}`);
   }
   if (name === 'dashboard') {
     return interaction.reply({ ...pubdash.hubPanel(interaction.guild.id), flags: MessageFlags.Ephemeral });
