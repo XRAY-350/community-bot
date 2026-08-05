@@ -93,15 +93,16 @@ All must be async-friendly and self-scored (no live cross-player timing needed).
   stacks into a wall of embeds. Do not fire it independently.
 - Feature flag: `provingGrounds`, fail-off, seeded dark until built and tuned, then flipped live.
 
-## Build order (when we build it)
-1. proving.js state (daily attempt records, weekly accumulation, resets).
-2. Entry point (command/button) plus the ephemeral attempt flow.
-3. Knowledge Gauntlet (reuse the banks, streak survival).
-4. Score-Attack ladder.
-5. Puzzles (cryptogram, word ladder, anagram, logic-sequence generators).
-6. Daily leaderboard plus the day's-end wrap.
-7. Weekly Prover track, weekly reveal, tribe rewards, Chronicle/quests/achievements hooks.
-8. `provingGrounds` feature flag, tuning, go-live.
+## Build order + status (updated 2026-08-05)
+1. [DONE] proving.js state (daily attempt records, weekly accumulation, resets, per-member seeds).
+2. [DONE] Entry point (`/prove`) plus the ephemeral attempt flow.
+3. [DONE] Knowledge Gauntlet (reuse the banks, streak survival).
+4. [TODO] Score-Attack ladder (rotation infra in place; Gauntlet is the only game so far).
+5. [TODO] Puzzles (cryptogram, word ladder, anagram, logic-sequence generators).
+6. [PARTIAL] Daily leaderboard is built (shown after you play); the day's-end PUBLIC wrap is STILL TODO.
+7. [DONE] Weekly Prover track, weekly reveal, top-tribe bonus. (Tides/Treasury rewards done; a dedicated
+   Prover achievement counter is a small TODO.)
+8. [PARTIAL] `provingGrounds` feature flag exists + seeded DARK; tuning + go-live pending owner live-test.
 
 ## Format rules (owner-confirmed 2026-08-05)
 - Delivery is private and ephemeral (individual, no audience).

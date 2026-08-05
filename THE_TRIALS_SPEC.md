@@ -104,14 +104,15 @@ contribute, not for one carry. A grand, live Muster.
   into a wall of embeds.
 - Feature flag: `theTrials`, fail-off, seeded dark until built and tuned, then flipped live.
 
-## Build order (when we build it)
-1. Collaborative scoring engine (distinct contributors, breadth multiplier, voice bonus).
-2. The Assembly (reuse banks, collaborative accumulation) as the first game.
-3. Scheduled simultaneous Trial (reuse sealed plumbing) plus the staged reveal.
-4. Muster Trial (leader-rallied) plus the daily board and day's-end wrap.
-5. The Relay and The Mosaic games.
-6. Rewards, quests, achievements, and Chronicle hooks.
-7. `theTrials` feature flag, tuning, go-live.
+## Build order + status (updated 2026-08-05)
+1. [DONE] Collaborative scoring engine (distinct contributors, breadth multiplier, voice bonus).
+2. [DONE] The Assembly (reuse banks, collaborative accumulation) as the first game.
+3. [DONE] Scheduled simultaneous Trial (reuse sealed plumbing) plus the staged reveal + resume-on-restart.
+4. [PARTIAL] Muster Trial (leader-rallied): the launch IS built (`/tribe-admin trial muster:true`); the
+   dedicated daily BOARD + day's-end wrap for leader-run Trials are STILL TODO.
+5. [TODO] The Relay and The Mosaic games (rotation infra in place; The Assembly is the only game so far).
+6. [DONE] Rewards, quests, and Chronicle/lore hooks. (An achievements hook for Trial wins is a small TODO.)
+7. [PARTIAL] `theTrials` feature flag exists + seeded DARK; tuning + go-live pending owner live-test.
 
 ## Muster relationship (resolved 2026-08-05, owner + Fable agree)
 KEEP BOTH. The lightweight Muster (quick roll-call, banks turnout Treasury/Glory) stays as the
