@@ -44,6 +44,7 @@ const recruitment = require('./recruitment');
 const lore = require('./lore');
 const quests = require('./quests');
 const sealed = require('./sealed');
+const proving = require('./proving');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
@@ -1991,6 +1992,96 @@ async function trialAutoTick(guild) {
   if (r && r.ok) console.log('[trial] auto-started (scheduled Assembly)');
 }
 
+// ==== PROVING GROUNDS (spec: PROVING_GROUNDS_SPEC.md) — solo async daily gauntlet ======================
+// Ephemeral, per-member, PER-MEMBER question draws (no shared answer to leak). One attempt per member per day;
+// score feeds a daily leaderboard + a weekly Prover track (culminates + resets at the Crown boundary), and
+// banks a little for your tribe. v1 game: the Knowledge Gauntlet (streak survival). Score-Attack + Puzzles TODO.
+const PG_TIDES_PER = 3;              // Tides to the player per point of score (in their tribe)
+const PG_TREASURY_PER = 5;           // Treasury to the player's tribe per point
+const PG_GAUNTLET_MAX = 25;          // safety cap on gauntlet length
+const _pgRuns = new Map();           // uid -> { questions, idx, correct, tribeKey } (in-memory; a restart abandons a run)
+function pgBuiltGames() { return ['gauntlet']; }   // only the games that are actually built rotate in for now
+async function pgBuildGauntlet() {
+  // per-member fresh random draw = per-member seed, so there is no single daily answer to share.
+  const f = await arena.fetchTrivia(PG_GAUNTLET_MAX, null);
+  return (f && f.length) ? f : arena.localTrivia(PG_GAUNTLET_MAX, []);
+}
+function pgGauntletRender(run) {
+  const q = run.questions[run.idx];
+  const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
+    new ButtonBuilder().setCustomId(`pg:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
+  return { content: `# 🏅 Proving Grounds, Knowledge Gauntlet\nStreak: **${run.correct}**. One wrong ends your run.\n\n**${q.q}**`, components: [row], flags: MessageFlags.Ephemeral };
+}
+async function pgStart(interaction) {
+  if (!features.enabled('provingGrounds')) return interaction.reply({ content: 'Proving Grounds isn’t enabled yet.', flags: MessageFlags.Ephemeral });
+  const uid = interaction.user.id;
+  if (proving.playedToday(uid)) {
+    return interaction.reply({ content: `You’ve already run today’s gauntlet. Come back tomorrow. ${provingRankLine(uid)}`, flags: MessageFlags.Ephemeral });
+  }
+  const mine = tribes.memberTribe(interaction.member);
+  if (!proving.startAttempt(uid, mine ? mine.key : null)) return interaction.reply({ content: 'You’ve already attempted today.', flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const questions = await pgBuildGauntlet();
+  if (!questions.length) { proving.finishAttempt(uid, mine ? mine.key : null, 0); return interaction.editReply('Couldn’t load the gauntlet, try again in a moment.'); }
+  const run = { questions, idx: 0, correct: 0, tribeKey: mine ? mine.key : null };
+  _pgRuns.set(uid, run);
+  return interaction.editReply(pgGauntletRender(run));
+}
+function provingRankLine(uid) {
+  const wk = proving.weeklyBoard(100); const pos = wk.findIndex(x => x.uid === uid);
+  const total = wk[pos] ? wk[pos].score : 0;
+  return pos >= 0 ? `This week: **${total}** Prover points (rank #${pos + 1}).` : '';
+}
+async function pgAnswer(interaction) {
+  const uid = interaction.user.id;
+  const run = _pgRuns.get(uid);
+  if (!run) return interaction.reply({ content: 'That run has ended. Start again tomorrow.', flags: MessageFlags.Ephemeral });
+  const q = run.questions[run.idx];
+  const correct = Number(interaction.customId.split(':')[1]) === q.answer;
+  if (correct) {
+    run.correct += 1; run.idx += 1;
+    if (run.idx >= run.questions.length) return pgFinish(interaction, run, true);   // cleared them all
+    return interaction.update(pgGauntletRender(run));
+  }
+  return pgFinish(interaction, run, false);
+}
+async function pgFinish(interaction, run, cleared) {
+  const uid = interaction.user.id;
+  _pgRuns.delete(uid);
+  const score = run.correct;
+  proving.finishAttempt(uid, run.tribeKey, score);
+  // rewards: personal Tides (if in a tribe) + a little tribe Treasury.
+  if (run.tribeKey && score > 0) { tribes.addTides(run.tribeKey, uid, score * PG_TIDES_PER); tribes.addTreasury(run.tribeKey, score * PG_TREASURY_PER); }
+  const board = proving.dailyBoard(Date.now(), 100); const pos = board.findIndex(x => x.uid === uid);
+  const line = `# 🏅 ${cleared ? 'Flawless run!' : 'Run over.'}\nYou cleared **${score}**${cleared ? ' (the whole gauntlet!)' : ''}.${run.tribeKey && score > 0 ? ` +${score * PG_TIDES_PER} points for you, +${score * PG_TREASURY_PER} Treasury for your tribe.` : ''}\n-# Today's rank: ${pos >= 0 ? `#${pos + 1}` : 'unranked'}. ${provingRankLine(uid)}`;
+  return interaction.update({ content: line, components: [] }).catch(() => interaction.reply({ content: line, flags: MessageFlags.Ephemeral }).catch(() => {}));
+}
+// Weekly Prover reveal: when the week rolls over, reveal the just-ended top provers + top tribe, then reset.
+async function proverWeeklyIfDue(guild) {
+  if (!features.enabled('provingGrounds') || !proving.weeklyDue(Date.now())) return;
+  const prev = proving.rolloverWeek(Date.now());
+  if (!prev.provers.length) return;
+  // top tribe gets a bonus
+  const topTribe = prev.tribes[0];
+  if (topTribe && topTribe.key) { tribes.addTreasury(topTribe.key, Math.round(arena.WIN_TREASURY * 1.5)); tribes.addGlory(topTribe.key, Math.round(arena.WIN_GLORY * 1.5)); }
+  const champ = prev.provers[0];
+  if (champ && champ.uid) { const m = await guild.members.fetch(champ.uid).catch(() => null); const t = m && tribes.memberTribe(m); if (t) { achievements && features.enabled('achievements') && achievements.bumpAndCheck(champ.uid, 'prestige'); } }
+  lore.record({ type: 'chronicle', title: `Prover of the Week: ${prev.provers[0] ? `<@${prev.provers[0].uid}>` : 'nobody'}` });
+  enqueueSpectacle(SPECTACLE_PRIORITY.proverWeek, 'proverWeek', () => revealProverWeek(guild, prev));
+}
+async function revealProverWeek(guild, prev) {
+  const ch = await getSpectacleChannel(guild); if (!ch) return;
+  await ch.send({ content: `# 🏅 Prover of the Week\n${copy.herald.open()} The week's solo gauntlets are tallied.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await warSleep(2000);
+  const medals = ['🥇', '🥈', '🥉'];
+  const top = prev.provers.slice(0, 5);
+  for (let i = top.length - 1; i >= 0; i--) {
+    await ch.send({ content: `${medals[i] || `**${i + 1}.**`} <@${top[i].uid}>: **${top[i].score}** Prover points`, allowedMentions: { parse: [] } }).catch(() => {});
+    await warSleep(1500);
+  }
+  if (prev.tribes[0]) await ch.send({ content: `-# 🏴 Most active tribe: ${tribeName(prev.tribes[0].key)} (their provers earn a bonus).`, allowedMentions: { parse: [] } }).catch(() => {});
+}
+
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
 // a big one by recruiting. Costs/gates match the locked spec table exactly.
@@ -3097,6 +3188,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('appeal-strike-setup').setDescription('Create the strike-appeals channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('help').setDescription('What can this bot do? The member features').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('prove').setDescription('Proving Grounds: run today’s solo gauntlet (once a day)').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('dashboard').setDescription('Your member hub: status, server info, and every member feature')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('dashboard-setup').setDescription('Post + pin the public member hub panel in this channel (admin)')
@@ -3423,6 +3515,9 @@ client.once('ready', async () => {
   // fires the daily scheduled Trial at peak (own once-a-day marker).
   if (dguild) await reconcileTrial(dguild).catch(e => console.error(`[trial] boot reconcile: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => trialAutoTick(g)).catch(() => {}), 3600000);
+  // Proving Grounds weekly Prover reveal (dark until enabled): boot catch-up + hourly, fires at the week rollover.
+  if (dguild) await proverWeeklyIfDue(dguild).catch(e => console.error(`[proving] boot weekly: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => proverWeeklyIfDue(g)).catch(() => {}), 3600000);
   try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
@@ -5718,6 +5813,9 @@ client.on('interactionCreate', async (interaction) => {
   // Arena: trivia answer button. The current-question message id guards against stale clicks on an
   // already-advanced question — and since interaction handlers run to completion single-threaded, the first
   // correct click scores + advances (changing messageId) before any concurrent click's handler runs.
+  if (interaction.isButton?.() && /^pg:\d+$/.test(interaction.customId)) {
+    return pgAnswer(interaction).catch(e => { console.error('[proving] answer:', e.message); return interaction.reply({ content: 'Something went wrong.', flags: MessageFlags.Ephemeral }).catch(() => {}); });
+  }
   if (interaction.isButton?.() && interaction.customId.startsWith('sealedans:')) {
     const [, tribeKey, qNumStr, optStr] = interaction.customId.split(':');
     const a = sealed.get();
@@ -6631,6 +6729,9 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'help') {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
+  }
+  if (name === 'prove') {
+    return pgStart(interaction).catch(e => { console.error('[proving] start:', e.message); return interaction.reply({ content: 'Couldn’t start the gauntlet.', flags: MessageFlags.Ephemeral }).catch(() => {}); });
   }
   if (name === 'dashboard') {
     return interaction.reply({ ...pubdash.hubPanel(interaction.guild.id), flags: MessageFlags.Ephemeral });

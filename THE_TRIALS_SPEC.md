@@ -1,7 +1,9 @@
 # The Trials, Spec (v1)
 
-**Status:** spec only, not built. Second of three throne-competition modes. Gets its own
-net-new game pool (like Proving Grounds), and is framed as an evolution of the Muster.
+**Status:** CORE BUILT + deployed DARK (2026-08-05): The Assembly game, scheduled + leader-Muster
+launch, collaborative breadth + VC scoring, staged reveal, resume-on-restart. FOLLOW-UPS still to
+build: the Relay + Mosaic games, and the Muster-Trial daily board. Pending owner test + `theTrials`
+flag flip. Second of three throne-competition modes, framed as an evolution of the Muster.
 
 ## Concept
 Collective effort. Where the sealed arena is individual speed and Proving Grounds is solo
