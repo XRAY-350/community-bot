@@ -312,6 +312,25 @@ async function applyRetheme(guild, tribe, { color, color2, name, shortName }) {
   await refreshThronePanel(guild, fresh).catch(() => {});
   return { ok: true, content: `🎨 **${fresh.shortName || fresh.name}** has been ${name || shortName ? 'renamed and ' : ''}recoloured.` };
 }
+// Apply a role-icon change to a tribe's WHOLE role set (base + leader + General + every rank), so the icon
+// stays matched across all of them the same way a retheme's colours do (owner: updating the icon must hit the
+// leader role too, not only the base role). iconPatch = { unicodeEmoji, icon } (a role can hold one or the
+// other, so each path nulls the one it isn't setting). Returns { done, failed }.
+async function applyIconToTribeRoles(guild, tribe, iconPatch, reason) {
+  const rankRoleObjs = (tribe.ranks || []).map(x => guild.roles.cache.get(x.roleId)).filter(Boolean);
+  const roles = [
+    guild.roles.cache.get(tribe.roleId),
+    tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId),
+    tribe.staffRankRoleId && guild.roles.cache.get(tribe.staffRankRoleId),
+    ...rankRoleObjs,
+  ].filter(Boolean);
+  let done = 0, failed = 0;
+  for (const r of roles) {
+    const ok = await r.edit(iconPatch, reason).then(() => true).catch(e => { console.error('[tribe icon]', r.id, e.message); return false; });
+    if (ok) done++; else failed++;
+  }
+  return { done, failed };
+}
 // Posts the "do you want to join?" Accept/Decline card — shared by a leader's direct /tribe invite (owner,
 // 2026-08-03: "invite should get consent" — skips straight to this, no separate approval needed since the
 // leader inviting IS the approval) and an approved member nomination.
@@ -6369,8 +6388,10 @@ client.on('interactionCreate', async (interaction) => {
       if (!image && !raw) return interaction.reply({ content: 'Give an **emoji**, upload an **image**, or pass `none` to clear.', flags: MessageFlags.Ephemeral });
       // Clear
       if (!image && /^(none|clear|off)$/i.test(raw)) {
-        await role.edit({ unicodeEmoji: null, icon: null }, `Tribe icon cleared by ${interaction.user.tag}`).catch(() => {});
-        return interaction.reply({ content: `🖼️ Cleared **${tribe.shortName || tribe.name}**’s role icon.`, flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await applyIconToTribeRoles(interaction.guild, tribe, { unicodeEmoji: null, icon: null }, `Tribe icon cleared by ${interaction.user.tag}`);
+        await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
+        return interaction.editReply(`🖼️ Cleared **${tribe.shortName || tribe.name}**’s role icons (leader, General, and ranks too).`);
       }
       // Image upload wins if both are given. Validate type + size (Discord: image, ≤256KB), download to a
       // buffer, set as the role icon (image role icons need boost tier 2+; this server is tier 3).
@@ -6381,18 +6402,19 @@ client.on('interactionCreate', async (interaction) => {
         let buf;
         try { const res = await fetch(image.url); buf = Buffer.from(await res.arrayBuffer()); }
         catch (e) { return interaction.editReply('Couldn’t download that image. Try again.'); }
-        const ok = await role.edit({ icon: buf, unicodeEmoji: null }, `Tribe icon (image) set by ${interaction.user.tag}`).then(() => true).catch(e => { console.error('[tribe icon]', e.message); return false; });
-        if (!ok) return interaction.editReply('Couldn’t set that image as the role icon. It may not be square, or Discord rejected it.');
+        const { done } = await applyIconToTribeRoles(interaction.guild, tribe, { icon: buf, unicodeEmoji: null }, `Tribe icon (image) set by ${interaction.user.tag}`);
+        if (!done) return interaction.editReply('Couldn’t set that image as the role icon. It may not be square, or Discord rejected it.');
         await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
-        return interaction.editReply(`🖼️ Set **${tribe.shortName || tribe.name}**’s role icon to your uploaded image.`);
+        return interaction.editReply(`🖼️ Set **${tribe.shortName || tribe.name}**’s role icon (leader, General, and ranks too) to your uploaded image.`);
       }
       // Emoji path — grab the first emoji glyph.
       const m = raw.match(/\p{Extended_Pictographic}/u);
       if (!m) return interaction.reply({ content: 'Give a single emoji (e.g. 🔥), upload an image, or `none` to clear.', flags: MessageFlags.Ephemeral });
-      const ok = await role.edit({ unicodeEmoji: m[0], icon: null }, `Tribe icon set by ${interaction.user.tag}`).then(() => true).catch(() => false);
-      if (!ok) return interaction.reply({ content: 'Couldn’t set that as the role icon. (Emoji may not be supported.)', flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const { done } = await applyIconToTribeRoles(interaction.guild, tribe, { unicodeEmoji: m[0], icon: null }, `Tribe icon set by ${interaction.user.tag}`);
+      if (!done) return interaction.editReply('Couldn’t set that as the role icon. (Emoji may not be supported.)');
       await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
-      return interaction.reply({ content: `🖼️ Set **${tribe.shortName || tribe.name}**’s role icon to ${m[0]}.`, flags: MessageFlags.Ephemeral });
+      return interaction.editReply(`🖼️ Set **${tribe.shortName || tribe.name}**’s role icon (leader, General, and ranks too) to ${m[0]}.`);
     }
     if (sub === 'muster') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
