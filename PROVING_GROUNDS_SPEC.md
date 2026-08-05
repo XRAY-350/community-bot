@@ -1,8 +1,10 @@
 # Proving Grounds, Spec (v1)
 
-**Status:** spec only, not built. Third of three throne-competition modes, and the FIRST
-mode to introduce net-new games (its own pool). The regular arena and sealed arena share the
-existing game pool; Proving Grounds gets brand-new games.
+**Status:** CORE BUILT + deployed DARK (2026-08-05): proving.js state (daily attempt + weekly
+Prover track + per-member seeds), the ephemeral Knowledge Gauntlet via `/prove`, daily leaderboard,
+weekly Prover reveal + top-tribe bonus. FOLLOW-UPS still to build: the Score-Attack + Puzzle games
+(rotation infra is in place) and the daily public wrap. Pending owner test + `provingGrounds` flag flip.
+Third of three throne-competition modes, and the FIRST to introduce net-new games.
 
 ## Concept
 A solo async gauntlet. Where the regular and sealed arenas are tribe-vs-tribe and loud,
