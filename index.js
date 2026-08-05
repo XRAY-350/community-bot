@@ -3812,12 +3812,17 @@ function ruleRow(customId) {
 // The "Send to corner" reason/duration/sweep modal. The rule (picked via the corner_rule_pick select
 // BEFORE this modal shows — a modal can't hold the rule dropdown) is carried in the customId so the
 // submit handler can fold it into the reason. ruleN is a 1-based rule number or null.
-function cornerReasonModal(memberId, channelId, messageId, ruleN) {
-  return new ModalBuilder().setCustomId(`corner_reason:${memberId}:${channelId}:${messageId}:${ruleN || 'x'}`).setTitle('Send to corner').addComponents(
+function cornerReasonModal(memberId, channelId, messageId, ruleN, isTrial = false) {
+  const rows = [
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = indefinite; 30s/10m/2h/1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
+  ];
+  // Trial mods can only corner ONE target at a time — no bulk (also/sweep). Omit those fields for them (the
+  // /corner slash + the submit handler enforce the same rule as a backstop).
+  if (!isTrial) rows.push(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('also').setLabel('Also corner (paste @IDs, space-separated)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder('blank = no · same duration/reason')),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
+  return new ModalBuilder().setCustomId(`corner_reason:${memberId}:${channelId}:${messageId}:${ruleN || 'x'}`).setTitle('Send to corner').addComponents(...rows);
 }
 function banConfirmRow(userId, label) {
   return new ActionRowBuilder().addComponents(
@@ -3872,7 +3877,7 @@ async function handleWatchlistButton(interaction) {
     // right-click uses, keyed to the flagged message from the alert's jump link (blank duration = indefinite).
     const ref = originalRefFromAlert(keep[0]);
     if (!ref) return interaction.reply({ content: 'Couldn’t locate the flagged message to corner from. Use `/corner @them` or right-click the message.', flags: MessageFlags.Ephemeral });
-    return interaction.showModal(cornerReasonModal(userId, ref.channelId, ref.messageId, null));
+    return interaction.showModal(cornerReasonModal(userId, ref.channelId, ref.messageId, null, isTrialMod(interaction)));
   }
   if (action === 'wl_ban') { // legacy direct-ban buttons on older reports
     return interaction.update({ components: [banConfirmRow(userId, 'Confirm ban')] }).catch(() => {});
@@ -4282,7 +4287,7 @@ client.on('interactionCreate', async (interaction) => {
     const [, memberId, channelId, messageId] = interaction.customId.split(':');
     if (!opspanel.tierOf(interaction) && !miniModCanActOn(interaction, channelId)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
     const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
-    return interaction.showModal(cornerReasonModal(memberId, channelId, messageId, ruleN));
+    return interaction.showModal(cornerReasonModal(memberId, channelId, messageId, ruleN, isTrialMod(interaction)));
   }
   // #roles pickers (roleselect.js) — any member, no staff gate.
   // Age/Color: single-select dropdown — swap to the chosen role, stripping any other held role in the
@@ -4387,6 +4392,7 @@ client.on('interactionCreate', async (interaction) => {
       // this channel in the last N minutes). Merged into ONE deduped set so nobody is cornered twice.
       let alsoStr = ''; try { alsoStr = (interaction.fields.getTextInputValue('also') || '').trim(); } catch { /* older modal */ }
       let sweepStr = ''; try { sweepStr = (interaction.fields.getTextInputValue('sweep') || '').trim(); } catch { /* older modal */ }
+      if (isTrialMod(interaction)) { alsoStr = ''; sweepStr = ''; }   // trial mods are single-target only (fields are also hidden for them)
       const extras = [], seenExtra = new Set([member.id]);
       const unknownAlso = [];
       if (alsoStr) {
@@ -6782,6 +6788,8 @@ client.on('interactionCreate', async (interaction) => {
         if (!ruleN && !customReason) return interaction.reply({ content: 'As a **trial mod**, you must pick a **rule** or give a **reason** to corner someone.', flags: MessageFlags.Ephemeral });
         if (!durationMs) return interaction.reply({ content: 'As a **trial mod**, you must set a **duration**, max **1 hour** (e.g. `30m`, `1h`).', flags: MessageFlags.Ephemeral });
         if (durationMs > 3600000) return interaction.reply({ content: 'As a **trial mod**, a corner can be **at most 1 hour**.', flags: MessageFlags.Ephemeral });
+        if ((interaction.options.getString('also') || '').trim() || (interaction.options.getString('sweep') || '').trim())
+          return interaction.reply({ content: 'As a **trial mod**, you can only corner **one member at a time** — `also` and `sweep` are mod-only.', flags: MessageFlags.Ephemeral });
       }
       // Multi-corner: `also` (named IDs) and/or `sweep` (everyone non-staff active in THIS channel in the last
       // N minutes) → corner the whole deduped set at once, same duration/reason. Either option triggers it.
