@@ -786,6 +786,28 @@ async function ensureTribeAnnounce(guild, config) {
   tribes.setAnnounceInfo(ch.id);
   return ch;
 }
+// Dedicated ARENA channel so the frequent challenge battles don't clutter tribe-announcements (owner request).
+// Auto-creates once, stored in tribes state, slotted next to the hub. Falls back to announcements if creation fails.
+async function ensureArenaChannel(guild, config) {
+  const info = tribes.getArenaInfo();
+  let ch = info && await guild.channels.fetch(info.channelId).catch(() => null);
+  if (ch) return ch;
+  const hubInfo = tribes.getHubInfo();
+  const hub = hubInfo && await guild.channels.fetch(hubInfo.channelId).catch(() => null);
+  const P = PermissionsBitField.Flags;
+  try {
+    ch = await guild.channels.create({
+      name: '⚔️┆ᴛʀɪʙᴇ-ᴀʀᴇɴᴀ', type: ChannelType.GuildText, parent: hub?.parentId || undefined,
+      topic: 'Live cross-tribe challenge battles. Play here when one starts.',
+      // Everyone can talk here (typed challenges need it); the bot re-locks/opens per round as usual.
+      permissionOverwrites: [{ id: guild.id, allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessages] }],
+      reason: 'Dedicated tribe arena channel (owner request)',
+    });
+  } catch (e) { console.error('[arena] channel create:', e.message); return ensureTribeAnnounce(guild, config).catch(() => null); }
+  if (hub) await ch.setPosition(Math.max(0, hub.position)).catch(() => {});
+  tribes.setArenaInfo(ch.id);
+  return ch;
+}
 // ---- Weekly crown cycle (see TRIBE_PHASE5_SPEC.md section 6) ----
 // A single server-wide role, granted to every CURRENT member of the highest-Glory tribe each week, stripped
 // from whoever held it before. Bragging rights only (owner: "the reward should just be a role/bragging
@@ -1376,7 +1398,7 @@ function tribeName(key) { const t = tribes.get(key); return t ? `${t.emoji || '�
 // LOBBY (owner) — a general ping in tribe-announcements + a per-tribe heads-up in each throne — then beginArena
 // actually launches the game. The lobby throne pings double as the event pings and are cleaned up at endArena.
 async function startArenaCountdown(guild, type, minutes, startedById, downtime = false) {
-  const channel = await ensureTribeAnnounce(guild, config);
+  const channel = await ensureArenaChannel(guild, config);
   if (!channel) throw new Error('no tribe-announcements channel');
   const startsAt = Date.now() + ARENA_LOBBY_MS;
   const label = ARENA_LABEL[type] || type;
@@ -1410,7 +1432,7 @@ async function beginArena(guild) {
   const minutes = pending.minutes || ARENA_DEFAULTS[type] || 5;
   const label = ARENA_LABEL[type] || type;
   const thronePings = pending.thronePings || {};
-  const channel = await guild.channels.fetch(pending.channelId).catch(() => null) || await ensureTribeAnnounce(guild, config);
+  const channel = await guild.channels.fetch(pending.channelId).catch(() => null) || await ensureArenaChannel(guild, config);
   if (!channel) { console.error('[arena] begin: no tribe-announcements channel'); return; }
   if (arena.TYPED_TYPES.includes(type)) await channel.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'arena typed round: allow answers' }).catch(() => {});
   const endsAt = Date.now() + minutes * 60000;
@@ -7056,8 +7078,8 @@ client.on('interactionCreate', async (interaction) => {
       { const blocked = arena.startBlocked(); if (blocked) return interaction.reply({ content: blocked, flags: MessageFlags.Ephemeral }); }
       const type = interaction.options.getString('type');
       const minutes = interaction.options.getInteger('minutes') || ARENA_DEFAULTS[type] || 5;
-      const announceCh = await ensureTribeAnnounce(interaction.guild, config).catch(() => null);
-      await interaction.reply({ content: `🎪 Announced **${ARENA_LABEL[type] || type}** in ${announceCh ? `<#${announceCh.id}>` : 'tribe-announcements'} — it begins in **5 minutes** so everyone can gather, then runs for **${minutes} min**.`, flags: MessageFlags.Ephemeral });
+      const announceCh = await ensureArenaChannel(interaction.guild, config).catch(() => null);
+      await interaction.reply({ content: `🎪 Announced **${ARENA_LABEL[type] || type}** in ${announceCh ? `<#${announceCh.id}>` : 'the arena'} — it begins in **5 minutes** so everyone can gather, then runs for **${minutes} min**.`, flags: MessageFlags.Ephemeral });
       try { await startArenaCountdown(interaction.guild, type, minutes, interaction.user.id); }
       catch (e) { console.error('[arena] start:', e.message); return interaction.followUp({ content: `Couldn’t launch it: ${e.message}`, flags: MessageFlags.Ephemeral }).catch(() => {}); }
       return;

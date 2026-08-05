@@ -27,6 +27,8 @@ function setHubInfo(channelId, messageId) { const s = load(); s.hub = { channelI
 // Tribe-announcements channel (owner, 2026-08-04) — sits above the hub, shows challenge results + tribe news.
 function getAnnounceInfo() { return load().announce || null; }
 function setAnnounceInfo(channelId) { const s = load(); s.announce = { channelId }; save(s); }
+function getArenaInfo() { return load().arena || null; }
+function setArenaInfo(channelId) { const s = load(); s.arena = { channelId }; save(s); }
 // Resolve a tribe from a free-text arg: exact key, or case-insensitive name/shortName contains.
 function resolve(query) {
   if (!query) return null;
@@ -648,7 +650,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   getPrestige, resetMemberTides, addPrestige, prestigeLog,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
-  startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo,
+  startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo, getArenaInfo, setArenaInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone, dueForChronicle, markChronicleDone, weekStartMs,
   SEASON_LEN_MS, ensureSeason, getSeason, addSeasonCrown, seasonStandings, dueForSeasonEnd, seasonHistory, currentChampionKey, endSeasonAndRotate,
