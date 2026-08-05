@@ -71,6 +71,13 @@ const REGISTRY = [
     help: { name: '🏺 Relics', value: 'A tribe that wins an Age is minted a Relic: a permanent trophy on your throne, plus a small edge that stacks with more Relics but fades over the Ages so nobody runs away with it forever. Relics can be lost in war.' } },
   { key: 'prestige',    audience: 'member', built: true,    // capped-out members Prestige for a permanent title (Phase 7 depth), ties into achievements. Throne button. LIVE.
     help: { name: '⭐ Prestige', value: 'Maxed out your tribe rank? Prestige to reset your climb for a permanent honour title and a lasting mark in your tribe’s history. Find it on your throne once you reach the top rung.' } },
+  // ---- Throne-competition modes (specs: SEALED_ARENA / THE_TRIALS / PROVING_GROUNDS). Built DARK, flipped when tuned. ----
+  { key: 'sealedArena',   audience: 'member', built: false,  // sealed arena: every tribe runs the same live challenge blind in its own throne, race-the-clock scored, staged reveal. No new command; scheduled + staff launch.
+    help: { name: '🚪 Sealed Arena', value: 'The whole server competes at once, but each tribe races behind closed doors in its own throne, blind to the rest. Go all out, then the results are revealed to everyone.' } },
+  { key: 'theTrials',     audience: 'member', built: false,  // the trials: collaborative sealed mode, breadth + voice scored, evolution of the Muster. Scheduled + leader-rallied.
+    help: { name: '⚔️ The Trials', value: 'Rally your tribe into your voice channel and take on a Trial together. Everyone who chips in counts, and the tribe that pulls together best wins the reveal.' } },
+  { key: 'provingGrounds', audience: 'member', built: false, // proving grounds: solo async daily gauntlet, per-member seeds, weekly Prover track. Ephemeral.
+    help: { name: '🏅 Proving Grounds', value: 'A solo daily gauntlet you run on your own time. Climb the daily leaderboard and the weekly Prover track, and your score still earns for your tribe.' } },
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist

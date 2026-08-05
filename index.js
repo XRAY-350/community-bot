@@ -635,6 +635,26 @@ async function broadcastSpectacle(guild, content, roleIds = []) {
   const ch = await getSpectacleChannel(guild);
   if (ch) await ch.send({ content, allowedMentions: { roles: roleIds } }).catch(() => {});
 }
+// ---- Shared spectacle announcement queue (Fable review: stop weekly-boundary reveals stacking) --------
+// Big Herald moments (coronation, Age champion, Chronicle, Prover of the Week, Trial + sealed results) would
+// otherwise fire at once on a busy/reset day and become a wall of embeds. This serializes them: one at a
+// time, spaced by SPECTACLE_GAP_MS, highest priority first among whatever is pending. Fire-and-forget.
+const SPECTACLE_GAP_MS = 5000;
+const SPECTACLE_PRIORITY = { coronation: 100, ageChampion: 95, chronicle: 80, proverWeek: 70, trialResult: 60, sealedResult: 55, other: 10 };
+const _spectaclePending = [];
+let _spectacleChain = Promise.resolve();
+// enqueue a reveal. run = async () => { ... does the posting ... }. Returns the chain tail (awaitable if needed).
+function enqueueSpectacle(priority, label, run) {
+  _spectaclePending.push({ priority: priority || SPECTACLE_PRIORITY.other, label: label || 'spectacle', run });
+  _spectacleChain = _spectacleChain.then(async () => {
+    if (!_spectaclePending.length) return;
+    _spectaclePending.sort((a, b) => b.priority - a.priority);   // highest priority first among what's pending now
+    const item = _spectaclePending.shift();
+    try { await item.run(); } catch (e) { console.error('[spectacle-queue]', item.label, e.message); }
+    await warSleep(SPECTACLE_GAP_MS);   // spacing so reveals don't stack
+  });
+  return _spectacleChain;
+}
 async function getChronicleChannel(guild) {
   if (config.tribeChronicleChannelId) { const c = await guild.channels.fetch(config.tribeChronicleChannelId).catch(() => null); if (c) return c; }
   return getSpectacleChannel(guild);
@@ -667,8 +687,11 @@ async function processChronicleIfDue(guild) {
   if (arenas.length) parts.push(`🎪 **The Arena.** ${arenas.length} contest${arenas.length === 1 ? ' was' : 's were'} fought${topArena ? `, and ${tribeName(topArena[0])} claimed the most (${topArena[1]})` : ''}.`);
   if (musters.length) parts.push(`${I.muster} **The Muster.** ${musters.length} call${musters.length === 1 ? '' : 's'} to arms went out across the tribes.`);
   parts.push(`-# ${copy.herald.SIGNOFF}`);
-  const ch = await getChronicleChannel(guild);
-  if (ch) await ch.send({ content: parts.join('\n\n').slice(0, 4000), allowedMentions: { parse: [] } }).catch(() => {});
+  const chronicleBody = parts.join('\n\n').slice(0, 4000);
+  enqueueSpectacle(SPECTACLE_PRIORITY.chronicle, 'chronicle', async () => {
+    const ch = await getChronicleChannel(guild);
+    if (ch) await ch.send({ content: chronicleBody, allowedMentions: { parse: [] } }).catch(() => {});
+  });
   lore.record({ type: 'chronicle', title: 'A chapter of the Chronicle was written' });
   console.log('[tribe chronicle] wrote a weekly chapter.');
 }
@@ -795,7 +818,7 @@ async function processWeeklyCrownIfDue(guild) {
   }
   // Spectacle: a staged CORONATION plays out in the public channel (detached, ~10s), reusing the war-show engine.
   const season = tribes.getSeason();
-  broadcastCoronation(guild, tribe, result, crownRole, preBoard, season).catch(e => console.error('[coronation]', e.message));
+  enqueueSpectacle(SPECTACLE_PRIORITY.coronation, 'coronation', () => broadcastCoronation(guild, tribe, result, crownRole, preBoard, season));
   lore.record({ type: 'crown', title: `${tribe.shortName || tribe.name} took a weekly Crown`, detail: `${result.glory} Glory`, tribes: [tribe.key], age: season?.number });
   checkTribeQuests(guild, tribe.key).catch(() => {});
 }
@@ -847,7 +870,7 @@ async function processSeasonEndIfDue(guild) {
   const msg = champion
     ? `# 🏆 ${previousName} ends: ${champTribe?.emoji || '🏴'} **${champion.name}** are its Champion!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} across the age and now wear <@&${champRole?.id}>. Their name is written into the Hall of Fame forever.${relicLine}\n**${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. The age's crowns reset, so the race is wide open. Treasury, ranks, and unlocks all carry over.`
     : `# 🏁 ${previousName} ends with no Champion.\nNo tribe claimed a weekly crown across the age. **${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. Go make history.`;
-  await broadcastSpectacle(guild, msg, champTribe ? [champTribe.roleId].filter(Boolean) : []);
+  enqueueSpectacle(SPECTACLE_PRIORITY.ageChampion, 'ageChampion', () => broadcastSpectacle(guild, msg, champTribe ? [champTribe.roleId].filter(Boolean) : []));
   if (champTribe && champTribe.throneId) { const throne = await guild.channels.fetch(champTribe.throneId).catch(() => null); if (throne) await throneSend(throne, { content: msg, allowedMentions: { parse: [] } }).catch(() => {}); }
   lore.record({ type: champion ? 'age_champion' : 'age_end', title: champion ? `${champion.name} won ${previousName}` : `${previousName} ended with no champion`, detail: champion ? `${champion.crowns} crown${champion.crowns === 1 ? '' : 's'} across the age` : '', tribes: champTribe ? [champTribe.key] : [], age: previousNumber, ageName: previousName });
   lore.record({ type: 'age_begin', title: `${season.name} begins`, detail: `Age ${season.number} opens`, age: season.number, ageName: season.name });
