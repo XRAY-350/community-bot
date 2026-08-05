@@ -3312,6 +3312,9 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('create').setDescription('Found a brand-new tribe: opens a guided setup (identity, colours, land)')
           .addUserOption(o => o.setName('leader').setDescription('The tribe leader: an admin, or a mod naming themselves').setRequired(true)))
         .addSubcommand(s => s.setName('hub-setup').setDescription('Create (or refresh) the Tribes Hub reference + button channel'))
+        .addSubcommand(s => s.setName('ping-all').setDescription('Ping every tribe role at once (handy when tribe names have untypeable characters)')
+          .addStringOption(o => o.setName('message').setDescription('Optional text to post above the pings').setRequired(false))
+          .addBooleanOption(o => o.setName('leaders_only').setDescription('Ping just the leader roles instead of everyone (default: everyone)').setRequired(false)))
         .addSubcommand(s => s.setName('register').setDescription('Adopt an EXISTING role + channels as a tribe')
           .addStringOption(o => o.setName('key').setDescription('Short key, e.g. valith').setRequired(true))
           .addStringOption(o => o.setName('name').setDescription('Full tribe name').setRequired(true))
@@ -7167,6 +7170,18 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await ensureTribesHub(interaction.guild, config);
       return interaction.editReply(`🏴 Tribes Hub ${r.created ? 'created' : 'refreshed'} in <#${r.channelId}>.`);
+    }
+    if (sub === 'ping-all') {
+      const list = tribes.all();
+      if (!list.length) return interaction.reply({ content: 'There are no tribes to ping.', flags: MessageFlags.Ephemeral });
+      const leadersOnly = interaction.options.getBoolean('leaders_only') || false;
+      const roleIds = list.map(t => leadersOnly ? t.leaderRoleId : t.roleId).filter(Boolean);
+      if (!roleIds.length) return interaction.reply({ content: leadersOnly ? 'No tribe leader roles are set.' : 'No tribe roles found.', flags: MessageFlags.Ephemeral });
+      const message = interaction.options.getString('message');
+      // Mentions ping even though tribe roles are non-mentionable: the bot pings via allowedMentions.roles
+      // (it has Administrator). Posted as a public message in THIS channel so members actually get notified.
+      const content = (message ? `${message}\n\n` : '') + roleIds.map(id => `<@&${id}>`).join(' ');
+      return interaction.reply({ content, allowedMentions: { roles: roleIds } });
     }
     if (sub === 'create') {
       const leaderMember = interaction.options.getMember('leader');
