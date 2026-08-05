@@ -63,6 +63,8 @@ const REGISTRY = [
   { key: 'smartWatchLab', audience: 'core',  built: false }, // Eval sandbox: expanded terms + AI verdicts posted to a private admin lab channel, gradable to train the judge. When ON, the public watch-log reverts to plain keyword flags (AI moves to the lab). Needs SMARTWATCH_LAB_CHANNEL_ID.
   { key: 'achievements', audience: 'member', built: true,    // tribe achievements + equippable titles (Phase 6). Surfaced via the throne 🏅 Trophies button; no new commands. LIVE (owner: achievements go live now).
     help: { name: '🏅 Achievements & titles', value: 'Earn achievements for your tribe deeds (arena MVPs, play streaks, war wins, crowns, seasons) and equip a title to show off. Open your tribe’s throne panel and tap 🏅 Trophies.' } },
+  { key: 'recruitment', audience: 'member', built: false,   // reward recruiting members in + tribe growth milestones (Phase 6). No new commands; auto-awards on nomination/invite accept. DARK until tuned + flipped on (/features toggle recruitment on).
+    help: { name: '🌱 Recruitment rewards', value: 'Bring people into your tribe: when someone you nominate or invite joins, you earn Tides and your tribe banks treasury, and every tribe earns a bonus at member-count milestones.' } },
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist

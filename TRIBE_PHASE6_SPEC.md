@@ -92,6 +92,25 @@ Spacing is random-scheduled, not a fixed cooldown: `arena.recordEnd(now, downtim
 random mode-aware gap; a hard 1h floor (`COOLDOWN_MS`) still gates manual + auto. `DAILY_CAP` raised to 16
 (peak + downtime both run). ~12 events/day. All knobs in config + arena.js.
 
+## 7. Achievements & titles — DONE + LIVE (feature `achievements`, on)
+Per-member recognition. `achievements.js`: counter-based catalog (arena MVPs, play streaks, Tides, war wins,
+crowns, seasons), earned set + counters + one equippable title. Auto-awarded (gated) at arena MVP/streak/Tides
+(scoreArena/endArena, announced in the arena result), war wins (executeWar, honored in the summary), weekly
+crown + season champion (silent). UI on the throne panel (shown only when the flag is on): 🏅 Trophies (earned
++ locked, equip a title) and 🏛️ Hall of Fame (past Season Champions). Equipped titles render in the roster.
+Registry-driven; tune `CATALOG` anytime.
+
+## 8. Recruitment rewards — DONE, DARK (feature `recruitment`, off until tuned)
+Grow the server. `recruitment.js`: credit the recruiter when their nominee/invitee joins (Tides + tribe
+treasury, once per invitee) and pay a one-time treasury bonus at member-count growth milestones (10/25/50).
+Hooked into both tribenom_accept join paths (gate + no-gate) via `applyRecruitment`, announced in the tribe
+hall. Inert until `/features toggle recruitment on`; tune the constants in recruitment.js first.
+
+## Remaining (trivia / next)
+- Extend the underdog catch-up bonus to muster + weekly-challenge payouts (arena-only today).
+- Remove the now-dead tribehub_arena / tribehub_arena_pick handlers (kept as a stale-message safety net).
+- **War revamp** is the next project (owner).
+
 ## Status
 - [x] 1. Stronghold defense
 - [x] 2. Seasons

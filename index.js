@@ -40,6 +40,7 @@ const features = require('./features');
 const contest = require('./contest');
 const arena = require('./arena');
 const achievements = require('./achievements');
+const recruitment = require('./recruitment');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
@@ -120,6 +121,23 @@ async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe �
   await syncStaffRank(guild, member, tribe);
   if (tribe.hallId) { const hall = await guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
   return { ok: true, content: `${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; its ${tribes.leaderTitle(tribe)} must release you before you could ever join another.` };
+}
+// Recruitment rewards (Phase 6, gated by the `recruitment` flag): credit the recruiter when their invitee
+// joins, and pay a one-time treasury bonus when the tribe crosses a growth milestone. Announced in the hall.
+async function applyRecruitment(guild, tribe, invitee, recruiterId) {
+  if (recruiterId && recruiterId !== invitee.id && recruitment.creditRecruit(recruiterId, invitee.id)) {
+    tribes.addTides(tribe.key, recruiterId, recruitment.RECRUITER_TIDES);
+    tribes.addTreasury(tribe.key, recruitment.RECRUITER_TREASURY);
+    const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
+    if (hall) await hall.send({ content: `🎉 <@${recruiterId}> recruited <@${invitee.id}> into **${tribe.shortName || tribe.name}**! +${recruitment.RECRUITER_TIDES} Tides for the recruiter, +${recruitment.RECRUITER_TREASURY} treasury for the tribe.`, allowedMentions: { users: [recruiterId] } }).catch(() => {});
+  }
+  const count = guild.roles.cache.get(tribe.roleId)?.members.size || 0;
+  const gm = recruitment.checkGrowth(tribe.key, count);
+  if (gm) {
+    tribes.addTreasury(tribe.key, gm.treasury);
+    const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
+    if (hall) await hall.send({ content: `📈 **${tribe.shortName || tribe.name}** just hit **${gm.members} members**! The tribe banks +${gm.treasury} treasury.`, allowedMentions: { parse: [] } }).catch(() => {});
+  }
 }
 // A mod who co-signed another mod's founding request isn't just approving it, they're founding it TOGETHER
 // (owner, 2026-08-03: "they are meant to lead it together") — all 3 mods end up as equal co-leaders holding
@@ -4314,6 +4332,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     await interaction.deferUpdate();
     const r = await joinTribeSelfServe(guild, tribe, member, `Tribe invitation accepted, approved by ${nom.approvedBy}`);
+    if (r.ok && features.enabled('recruitment')) await applyRecruitment(guild, tribe, member, nom.nominatorId).catch(() => {});
     tribes.clearNomination(targetId);
     return interaction.editReply({ content: r.ok ? `✅ Welcome to **${tribe.shortName || tribe.name}**, <@${targetId}>!` : 'Couldn’t add the tribe role. Tell an admin.', components: [], allowedMentions: { users: [targetId] } });
   }
@@ -4337,6 +4356,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!guild || !member) return interaction.update({ content: 'Couldn’t look you up on the server. Try again from a server channel.', components: [] }).catch(() => {});
     await interaction.deferUpdate();
     const r = await joinTribeSelfServe(guild, tribe, member, `Tribe invitation accepted, approved by ${nom.approvedBy}`);
+    if (r.ok && features.enabled('recruitment')) await applyRecruitment(guild, tribe, member, nom.nominatorId).catch(() => {});
     tribes.clearNomination(targetId);
     return interaction.editReply({ content: r.ok ? `✅ Welcome to **${tribe.shortName || tribe.name}**, <@${targetId}>!` : 'Couldn’t add the tribe role. Tell an admin.', components: [], allowedMentions: { users: [targetId] } });
   }
