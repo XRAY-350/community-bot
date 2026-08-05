@@ -61,10 +61,6 @@ const config = {
   // converting to a Strike, with a one-click button). Deliberately tunable: the enforcement-model spec
   // doesn't finalize an exact number, so this is a clearly-labeled default, not a guess baked into logic.
   cornerRepeatAlertThreshold: Number(opt('CORNER_REPEAT_ALERT_THRESHOLD', '3')) || 3,
-  // Default duration for a message-flagged Corner (right-click "Send to corner" / the optional-reason
-  // modal) — this is "casual, temporary" per the rules, so it should NOT default to indefinite. Timed,
-  // tunable; staff can still /uncorner early or extend via the corner announcement's buttons.
-  cornerDefaultDurationMs: Number(opt('CORNER_DEFAULT_DURATION_MS', String(15 * 60 * 1000))) || 15 * 60 * 1000,
   // How long after a DENIED strike appeal before that same strike can be re-appealed. Not specified by
   // the enforcement-model spec — tunable, not a silent guess baked into logic.
   strikeAppealCooldownDays: Number(opt('STRIKE_APPEAL_COOLDOWN_DAYS', '7')) || 7,
