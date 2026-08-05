@@ -164,7 +164,7 @@ async function sweepRecruitment(guild) {
       tribes.addTides(tribe.key, p.recruiterId, recruitment.RECRUITER_TIDES);
       tribes.addTreasury(tribe.key, recruitment.RECRUITER_TREASURY);
       const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
-      if (hall) await hall.send({ content: `🎉 <@${p.recruiterId}> recruited <@${p.inviteeId}> into **${tribe.shortName || tribe.name}**, and they stuck around! +${recruitment.RECRUITER_TIDES} Tides for the recruiter, +${recruitment.RECRUITER_TREASURY} treasury for the tribe.`, allowedMentions: { users: [p.recruiterId] } }).catch(() => {});
+      if (hall) await hall.send({ content: `🎉 <@${p.recruiterId}> recruited <@${p.inviteeId}> into **${tribe.shortName || tribe.name}**, and they stuck around! +${recruitment.RECRUITER_TIDES} ${tribe.pointsName || 'points'} for the recruiter, +${recruitment.RECRUITER_TREASURY} treasury for the tribe.`, allowedMentions: { users: [p.recruiterId] } }).catch(() => {});
     }
     recruitment.resolvePending(p.inviteeId);
   }
@@ -558,11 +558,11 @@ function tribeHubEmbed() {
     + `## Weekly Quests & the Chronicle\n`
     + `Every week the tribes share three **🎯 Quests** (win arenas, answer musters, win a war, take the Crown); finishing one banks Treasury + Glory. And the bot writes a weekly **📜 Chronicle**, a chapter of all that happened.\n\n`
     + `## The Shop\n`
-    + `Each unlock has a members-or-crowns gate plus a treasury cost: 2nd text/voice channels, re-theme, external sounds, voice-quality boost, faster Tides, and a **custom tribe icon**. A maxed tribe keeps sinking treasury into repeatable **🏰 Stronghold Tiers** for war defense.\n\n`
+    + `Each unlock has a members-or-crowns gate plus a treasury cost: 2nd text/voice channels, re-theme, external sounds, voice-quality boost, faster points, and a **custom tribe icon**. A maxed tribe keeps sinking treasury into repeatable **🏰 Stronghold Tiers** for war defense.\n\n`
     + `## Musters\n`
     + `A leader can call a **muster**, a hall roll-call (about once a day). Answer it and the tribe banks treasury + glory for everyone who shows up.\n\n`
     + `## War & Alliances\n`
-    + `A leader can **Declare War**: your members vote first (24h majority); if it passes the target's leader Accepts or Declines (a coin flip then decides). Each war is **named** and plays out as a live, narrated battle, resolved by a Tides-weighted strength sim (not rank-based, no guaranteed win), 72h cooldown. The loser is raided for ~25% treasury and can lose a few members for 36h (never the leader), though **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) need a member vote too; allies defend each other and can gift treasury.\n\n`
+    + `A leader can **Declare War**: your members vote first (24h majority); if it passes the target's leader Accepts or Declines (a coin flip then decides). Each war is **named** and plays out as a live, narrated battle, resolved by a points-weighted strength sim (not rank-based, no guaranteed win), 72h cooldown. The loser is raided for ~25% treasury and can lose a few members for 36h (never the leader), though **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) need a member vote too; allies defend each other and can gift treasury.\n\n`
     + `## Challenges — the Arena\n`
     + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in tribe-announcements. **16 game types** rotate, from Reaction Race, Trivia and Word Scramble to Riddle Rush, Emoji Decode, Number Pattern and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
     + `## Every tribe's Throne\n`
@@ -1157,7 +1157,7 @@ async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, s
   const nameOf = id => guild.members.cache.get(id)?.displayName || 'a warrior';
   const aPct = Math.round(sim.attackerWinChance * 100);
   const board = (r, sA, sD, play) => `# ⚔️ ${aEmoji} ${aName}  vs  ${dEmoji} ${dName}\n### Round ${r}\n## ${aEmoji} ${sA}   ${sD} ${dEmoji}\n${warMomentumBar(sA, sD, target)}\n> ${play}`;
-  await ch.send({ content: `# ⚔️ ${meta.warName || 'WAR!'}\n${aEmoji} **${aName}** marches on ${dEmoji} **${dName}**. The horns sound, steel is drawn. First to **${target}** skirmishes takes it.\n-# Strength: ${aName} ${aPct}% vs ${dName} ${100 - aPct}%, by Tides + walls.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await ch.send({ content: `# ⚔️ ${meta.warName || 'WAR!'}\n${aEmoji} **${aName}** marches on ${dEmoji} **${dName}**. The horns sound, steel is drawn. First to **${target}** skirmishes takes it.\n-# Strength: ${aName} ${aPct}% vs ${dName} ${100 - aPct}%, by points + walls.`, allowedMentions: { parse: [] } }).catch(() => {});
   await warSleep(2500);
   const scoreMsg = await ch.send({ content: board(0, 0, 0, 'The battle begins…') }).catch(() => null);
   let sA = 0, sD = 0, mp = false; const tally = {};
@@ -1685,7 +1685,7 @@ const TRIBE_UNLOCKS = [
   { key: 'icon', emoji: '🖼️', label: 'Tribe Icon', desc: 'Set an emoji or image icon on your tribe role with `/tribe icon`.', memberGate: 12, crownGate: 2, cost: 450 },
   { key: 'vcboost', emoji: '🎙️', label: 'Voice quality boost', desc: 'Higher bitrate + full video quality on your tribe voice channel.', memberGate: 14, crownGate: 3, cost: 500 },
   { key: 'voice2', emoji: '🔈', label: '2nd voice channel', desc: 'A second voice channel added to your land.', memberGate: 16, crownGate: 3, cost: 600 },
-  { key: 'fastertides', emoji: '⚡', label: 'Faster Tides', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 20, crownGate: 4, cost: 800 },
+  { key: 'fastertides', emoji: '⚡', label: 'Faster Points', desc: 'Hall earn-cap drops from 60s to 45s.', memberGate: 20, crownGate: 4, cost: 800 },
 ];
 const TRIBE_CHANNEL_CAP = 6;
 const STARTING_TREASURY = 250;   // new tribes start with this so they can grab a first shop unlock (owner, 2026-08-04)
@@ -3957,7 +3957,7 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
   if (['admin', 'mod'].includes(opspanel.memberTier(member))) return;   // staff sit in the General slot instead, also above the ladder
   const earned = tribes.earnedRankIndex(tribe, member.id);
   const current = tribes.currentRankIndex(member, tribe);
-  if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + Tides', earned >= 1);
+  if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + points', earned >= 1);
 }
 
 client.on('messageCreate', async (msg) => {
@@ -4731,7 +4731,7 @@ client.on('interactionCreate', async (interaction) => {
     const season = tribes.ensureSeason(Date.now());
     const sBoard = tribes.seasonStandings(interaction.guild);
     const champLeader = sBoard[0] && sBoard[0].seasonCrowns > 0 ? sBoard[0] : null;
-    const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury · 👑×${t.seasonCrowns || 0} season`).join('\n');
+    const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury · 👑×${t.seasonCrowns || 0} Age`).join('\n');
     const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown (resets weekly). Age crowns (👑×) decide the Age Champion.' });
     const seasonLine = `## 🏆 ${season.name || `Age ${season.number}`}\n-# Age ${season.number} · ends <t:${Math.floor(season.endsAt / 1000)}:R> · ${champLeader ? `leading: ${champLeader.emoji || '🏴'} ${champLeader.shortName || champLeader.name} (👑×${champLeader.seasonCrowns})` : 'no crowns claimed yet'}`;
     return interaction.reply({ content: `${seasonLine}\n## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -4867,14 +4867,15 @@ client.on('interactionCreate', async (interaction) => {
       const atTop = ranks.length > 0 && !isStaffOrLeader && tribes.earnedRankIndex(tribe, uid) >= topIdx;
       const lvl = tribes.getPrestige(tribe.key, uid);
       const tides = tribes.getTides(tribe.key, uid);
+      const pts = tribe.pointsName || 'points';   // a tribe's own name for its activity points ("points" by default)
       const topName = ranks[topIdx]?.name || 'the top rank';
       const need = ranks[topIdx]?.tides || 0;
-      const head = `# ⭐ ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} · Prestige\n-# Reach **${topName}**, then Prestige: your Tides reset to zero, but you keep a permanent honour title and a mark in your tribe’s history. Climb back to Prestige again.`;
-      const status = `\n\nYour prestige: **${lvl}** ${'⭐'.repeat(Math.min(lvl, 10))}\nYour Tides: **${tides}**`;
+      const head = `# ⭐ ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} · Prestige\n-# Reach **${topName}**, then Prestige: your ${pts} reset to zero, but you keep a permanent honour title and a mark in your tribe’s history. Climb back to Prestige again.`;
+      const status = `\n\nYour prestige: **${lvl}** ${'⭐'.repeat(Math.min(lvl, 10))}\nYour ${pts}: **${tides}**`;
       if (isStaffOrLeader) return interaction.reply({ content: `${head}${status}\n\n-# Prestige is for the rank ladder. As ${tribes.isLeader(interaction.member, tribe) ? 'a leader' : 'staff'} you sit above it.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-      if (!atTop) return interaction.reply({ content: `${head}${status}\n\n-# Not yet eligible. Reach **${topName}** (needs ${need} Tides plus tenure) to Prestige.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribethrone_prestige_confirm:${tribe.key}`).setEmoji('⭐').setLabel('Prestige now — resets my Tides').setStyle(ButtonStyle.Danger));
-      return interaction.reply({ content: `${head}${status}\n\n**You’re eligible.** Prestiging resets your **${tides}** Tides to 0 and raises you to Prestige **${lvl + 1}**.`, components: [row], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (!atTop) return interaction.reply({ content: `${head}${status}\n\n-# Not yet eligible. Reach **${topName}** (needs ${need} ${pts} plus tenure) to Prestige.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribethrone_prestige_confirm:${tribe.key}`).setEmoji('⭐').setLabel(`Prestige now — resets my ${pts}`.slice(0, 80)).setStyle(ButtonStyle.Danger));
+      return interaction.reply({ content: `${head}${status}\n\n**You’re eligible.** Prestiging resets your **${tides}** ${pts} to 0 and raises you to Prestige **${lvl + 1}**.`, components: [row], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (act === 'prestige_confirm') {
       if (!features.enabled('prestige')) return interaction.reply({ content: 'Prestige isn’t enabled.', flags: MessageFlags.Ephemeral });
@@ -4895,7 +4896,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       lore.record({ type: 'prestige', title: `${interaction.member.displayName} reached Prestige ${lvl} in ${tribe.shortName || tribe.name}`, tribes: [tribe.key], level: lvl });
       await broadcastSpectacle(interaction.guild, `# ⭐ Prestige\n<@${uid}> of ${tribeName(tribe.key)} ascended to **Prestige ${lvl}**, resetting their climb for honour.`, [tribe.roleId].filter(Boolean));
-      return interaction.update({ content: `# ⭐ You are now Prestige ${lvl}!\nYour **${before}** Tides reset to 0. Climb again when you’re ready.${titleLine}\n-# Equip your title from 🏅 Trophies.`, components: [], allowedMentions: { parse: [] } });
+      return interaction.update({ content: `# ⭐ You are now Prestige ${lvl}!\nYour **${before}** ${tribe.pointsName || 'points'} reset to 0. Climb again when you’re ready.${titleLine}\n-# Equip your title from 🏅 Trophies.`, components: [], allowedMentions: { parse: [] } });
     }
     if (act === 'tithe') {
       // Tithe = convert your OWN activity points into this tribe's treasury (same as /tribe offer). Members only.

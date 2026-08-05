@@ -17,14 +17,14 @@ const CATALOG = [
   { id: 'streak7',  counter: 'streak', threshold: 7,  emoji: '🔥', name: 'Dedicated',      desc: 'Play the arena 7 days running.',     title: 'the Dedicated' },
   { id: 'streak30', counter: 'streak', threshold: 30, emoji: '⚡', name: 'Relentless',     desc: 'Play the arena 30 days running.',    title: 'the Relentless' },
   // Tides (current total)
-  { id: 'tides500', counter: 'tides',  threshold: 500,  emoji: '🌊', name: 'Rising Tide',  desc: 'Reach 500 Tides.' },
-  { id: 'tides2500',counter: 'tides',  threshold: 2500, emoji: '🌊', name: 'Tidebringer',  desc: 'Reach 2500 Tides.',                  title: 'the Tidebringer' },
+  { id: 'tides500', counter: 'tides',  threshold: 500,  emoji: '🌊', name: 'Rising Tide',  desc: 'Reach 500 points.' },
+  { id: 'tides2500',counter: 'tides',  threshold: 2500, emoji: '🌊', name: 'Tidebringer',  desc: 'Reach 2500 points.',                title: 'the Tidebringer' },
   // War (cumulative wins)
   { id: 'warwin1',  counter: 'warwin', threshold: 1,  emoji: '⚔️', name: 'Bloodied',       desc: 'Win a tribe war.',                   title: 'the Warrior' },
   { id: 'warwin5',  counter: 'warwin', threshold: 5,  emoji: '🗡️', name: 'Conqueror',      desc: 'Win 5 tribe wars.',                  title: 'the Conqueror' },
   // Crown + Season (cumulative)
   { id: 'crown1',   counter: 'crown',  threshold: 1,  emoji: '👑', name: 'Crowned',        desc: 'Hold a weekly Crown with your tribe.', title: 'the Crowned' },
-  { id: 'season1',  counter: 'season', threshold: 1,  emoji: '🏆', name: 'Champion',       desc: 'Win a Season with your tribe.',      title: 'the Champion' },
+  { id: 'season1',  counter: 'season', threshold: 1,  emoji: '🏆', name: 'Champion',       desc: 'Win an Age with your tribe.',        title: 'the Champion' },
   // Prestige (cumulative) — earned by Prestiging at the top rung; each grants a permanent honour title.
   { id: 'prestige1',counter: 'prestige', threshold: 1, emoji: '⭐', name: 'Ascended',       desc: 'Prestige once from the top rank.',   title: 'the Ascended' },
   { id: 'prestige3',counter: 'prestige', threshold: 3, emoji: '🌟', name: 'Exalted',        desc: 'Prestige three times.',              title: 'the Exalted' },
