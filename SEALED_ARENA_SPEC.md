@@ -1,4 +1,4 @@
-# Sealed Arena — Spec (v1)
+# Sealed Arena, Spec (v1)
 
 **Status:** spec only, not built. First of three planned throne-competition modes
 (this one first, by owner priority). The other two are sketched at the bottom.
@@ -20,12 +20,14 @@ Different from the other two modes on purpose:
 - **Name:** Sealed Arena.
 - **Live + simultaneous**, not async. The intensity is the point.
 - **Blind:** no throne can see another during play.
-- **Games:** the **13 timing-precise types only.** Reaction Race, Reaction Rush, and
+- **Games (what v1 PORTS from the existing arena):** the **13 timing-precise types only.**
+  This is the port list, NOT the final game set. New games are a separate open track (below).
+  Reaction Race, Reaction Rush, and
   Activity Blitz are EXCLUDED (reactions lack a precise server tap-time; Blitz is a
   server-wide async message count, not a per-throne race). Pool:
   - Button (7): Trivia, True or False, Number Pattern, Geography/Science/History/Animal Quiz.
   - Typed (6): Word Scramble, Math Sprint, Fast Fingers, Riddle Rush, Emoji Decode, Reverse Word.
-- **Scoring:** per-throne RELATIVE timing (fair regardless of send skew) — see below.
+- **Scoring:** per-throne RELATIVE timing (fair regardless of send skew), see below.
 - **Cadence:** 1 to 3 times a day at peak, with its OWN daily cap, separate from the
   regular arena so the two never collide.
 - **Reveal:** staged Herald reveal in the public spectacle channel, bottom to top,
@@ -60,7 +62,7 @@ Different from the other two modes on purpose:
   SERVER-side timestamps and each tribe is measured from its OWN prompt, the ~100-300ms
   skew between the 5 near-simultaneous sends cancels out completely. Comparable to the ms.
   - Typed answers: message `createdTimestamp`. Button answers: interaction `createdTimestamp`.
-  - This is why reaction games are excluded — no precise server tap-time.
+  - This is why reaction games are excluded: no precise server tap-time.
 - **Rank:** by correct answers (desc), tie-broken by aggregate speed (sum of relative
   response times on correct answers; lower is better).
 - **Underdog multiplier** (existing) applies to the PAYOUT, not the raw race, so it never
@@ -98,15 +100,20 @@ Different from the other two modes on purpose:
 7. Scheduler (peak cadence, own daily cap) + staff manual launch.
 8. `sealedArena` feature flag, tuning, go-live.
 
+## Companion track: NEW games (open, not settled)
+The 13 ported types are only what v1 REUSES. Net-new games built specifically for the
+sealed/closed modes (owner's "entirely new sets of games" idea) are a SEPARATE, still-open
+design task running in parallel, NOT v2 filler and NOT settled. Any new game for this mode
+must be timing-precise (typed or button answer with a server-side timestamp) to fit the
+speed-scored, per-throne backbone. To be designed with the owner.
+
 ## Deferred (v2+)
-- Bespoke NEW games unique to the sealed/closed modes ("entirely new sets of games" idea)
-  — to be designed next.
 - Sealed wager: a leader stakes Treasury on placing top-N (bank it or lose it).
 - Blind head-to-head: only two rival tribes, ties into the war/rivalry layer.
 - Quorum: a tribe only qualifies with at least K participants.
 
 ## The other two modes (later, sketched)
 - **The Trials:** same sealed simultaneous format, but scored on breadth (how many distinct
-  members contributed) — collaborative, "the tribe comes together." Rewards turnout.
+  members contributed), collaborative, "the tribe comes together." Rewards turnout.
 - **Proving Grounds:** async, longer window (hours), individual contributions anytime.
   Fits different timezones; lower intensity, higher accessibility.
