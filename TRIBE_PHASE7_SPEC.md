@@ -46,7 +46,7 @@ Three pillars from a design pass, adjusted by the owner:
 - [x] 1. Lore Log + Ages + Banners — lore.js event log (crowns/ages/arena/muster recorded); Seasons are now
   named Ages (generated names, history-book Hall of Fame, "Age Champion" role); /tribe banner sets a
   disk-stored member-made banner shown on /tribe info.
-- [ ] 2. Named wars + Coronation
+- [x] 2. Named wars + Coronation — wars auto-named (The War of the...), shown in the spectacle + recorded to lore with the aftermath; weekly crown is now a staged coronation (herald, transfer, fallen rivals, proclamation)
 - [ ] 3. Chronicle
 - [ ] 4. Quests + Relics + Prestige
 - [ ] 5. Herald voice + polish

@@ -655,6 +655,7 @@ async function processWeeklyCrownIfDue(guild) {
   if (!guild || !tribes.dueForWeeklyCrown(Date.now())) return;
   tribes.markWeeklyCrownDone(Date.now());   // mark BEFORE doing the work so an overlapping tick can't double-fire
   await ensureMembers(guild);
+  const preBoard = tribes.standings(guild);   // capture Glory BEFORE the reset, for the coronation's "fallen rivals"
   const result = tribes.resetWeeklyGlory(guild);
   const crownRole = await ensureCrownRole(guild);
   if (crownRole) for (const m of [...crownRole.members.values()]) await m.roles.remove(crownRole.id, 'Weekly crown reset').catch(() => {});
@@ -668,10 +669,24 @@ async function processWeeklyCrownIfDue(guild) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
-  // Spectacle: announce the weekly crowning publicly too, and note it counts toward the Age Champion.
+  // Spectacle: a staged CORONATION plays out in the public channel (detached, ~10s), reusing the war-show engine.
   const season = tribes.getSeason();
-  await broadcastSpectacle(guild, `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes this week's Crown!\n> Most Glory this week (**${result.glory}**). Their **${tribe.seasonCrowns || 1}** crown of ${season?.name || 'the age'}, toward the 🏆 Age Champion.`, [tribe.roleId].filter(Boolean));
+  broadcastCoronation(guild, tribe, result, crownRole, preBoard, season).catch(e => console.error('[coronation]', e.message));
   lore.record({ type: 'crown', title: `${tribe.shortName || tribe.name} took a weekly Crown`, detail: `${result.glory} Glory`, tribes: [tribe.key], age: season?.number });
+}
+// The weekly crown as a STAGED ceremony (Phase 7, owner: "the Sunday crown becomes a staged sequence").
+// Herald -> crown transfer -> fallen rivals acknowledged -> closing proclamation. Public, detached.
+async function broadcastCoronation(guild, tribe, result, crownRole, preBoard, season) {
+  const ch = await getSpectacleChannel(guild);
+  if (!ch) return;
+  const emoji = tribe.emoji || '🏴', name = tribe.shortName || tribe.name;
+  await ch.send({ content: `# 📯 The week is ended.\nHear ye, hear ye. The Glory of the past seven days is tallied, and a Crown must pass.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await warSleep(3000);
+  await ch.send({ content: `# 👑 The Crown passes to ${emoji} **${name}**!\nThey stood highest with **${result.glory} Glory**. Every soul of ${name} now wears <@&${crownRole?.id}> until the next crowning.`, allowedMentions: { roles: crownRole ? [crownRole.id] : [], users: [] } }).catch(() => {});
+  await warSleep(3000);
+  const rivals = (preBoard || []).filter(t => t.key !== tribe.key && (t.glory || 0) > 0).slice(0, 4);
+  if (rivals.length) { await ch.send({ content: `-# They did not take it uncontested. ${rivals.map(r => `${r.emoji || '🏴'} ${r.shortName || r.name} (${r.glory})`).join(', ')} pressed them hard.`, allowedMentions: { parse: [] } }).catch(() => {}); await warSleep(2500); }
+  await ch.send({ content: `-# Long may ${name} reign. This is their **${tribe.seasonCrowns || 1}** crown of ${season?.name || 'the age'}, one step closer to the 🏆 Age Champion.`, allowedMentions: { parse: [] } }).catch(() => {});
 }
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
@@ -968,9 +983,11 @@ async function executeWar(guild, war, note = '') {
     const m = await guild.members.fetch(uid).catch(() => null);
     if (m) await captureMemberInto(guild, winner, m, `Captured in war: ${loser.shortName || loser.name} → ${winner.shortName || winner.name}`).catch(() => {});
   }
-  tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount: sim.raidAmount, capturedIds: sim.capturedIds });
+  const warName = makeWarName();   // every war is named (Phase 7)
+  tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount: sim.raidAmount, capturedIds: sim.capturedIds, warName });
   const attackerWon = sim.winnerKey === attacker.key;
   const wScore = attackerWon ? sim.scoreA : sim.scoreD, lScore = attackerWon ? sim.scoreD : sim.scoreA;
+  lore.record({ type: 'war', title: `${warName}: ${winner.shortName || winner.name} beat ${loser.shortName || loser.name} ${wScore}-${lScore}`, detail: `decided in ${sim.rounds.length} skirmishes`, tribes: [attacker.key, defender.key], winner: winner.key, warName });
   // War-win achievements for the victors (gated).
   let honorsLine = '';
   if (features.enabled('achievements')) {
@@ -992,12 +1009,15 @@ async function executeWar(guild, war, note = '') {
   await refreshThronePanel(guild, tribes.get(defender.key)).catch(() => {});
   // The GRAND part: a live, narrated battle plays out in the public spectacle channel. Detached (it takes
   // ~20s), so it never blocks the caller/interaction — the outcome above is already committed.
-  broadcastWarSpectacle(guild, attacker, defender, winner, loser, sim, { note, wScore, lScore }).catch(e => console.error('[war spectacle]', e.message));
+  broadcastWarSpectacle(guild, attacker, defender, winner, loser, sim, { note, wScore, lScore, warName }).catch(e => console.error('[war spectacle]', e.message));
 }
 // The live, narrated battle broadcast (owner: "grand, like a Madden quicksim"). Hybrid: one live-updating
 // scoreboard message + key-moment feed drops (first blood, lead changes, match point, the final blow). The
 // outcome is already committed in executeWar; this is pure theater, so a restart mid-show is harmless.
 const WAR_EVENTS = ['leads a charge', 'springs an ambush', 'breaches the gate', 'rallies the ranks', 'outflanks the enemy', 'storms the walls', 'holds the line under fire', 'turns the tide', 'crushes the vanguard', 'raids the flank', 'seizes the high ground', 'routs a column'];
+// Every war gets a NAME (Phase 7), template-generated so the Chronicle + Hall of Fame read like history.
+const WAR_NAME_NOUNS = ['Broken Gate', 'Red Dawn', 'Long Knives', 'Bitter Frost', 'Falling Crown', 'Iron Tide', 'Black Sails', 'Burning Fields', 'Shattered Wall', 'Last Bridge', 'Crimson Hour', 'Sundered Oath', 'Hollow Throne', 'Rising Ash', 'Silent Siege', 'Thousand Spears', 'Ninth Wave', 'Drowned Coast', 'Bleeding Standard', 'Cold Reckoning'];
+function makeWarName() { return `The War of the ${WAR_NAME_NOUNS[Math.floor(Math.random() * WAR_NAME_NOUNS.length)]}`; }
 const WAR_MVP_TIDES = 20;
 const warSleep = ms => new Promise(r => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
 function warMomentumBar(sA, sD, target) {
@@ -1014,7 +1034,7 @@ async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, s
   const nameOf = id => guild.members.cache.get(id)?.displayName || 'a warrior';
   const aPct = Math.round(sim.attackerWinChance * 100);
   const board = (r, sA, sD, play) => `# ⚔️ ${aEmoji} ${aName}  vs  ${dEmoji} ${dName}\n### Round ${r}\n## ${aEmoji} ${sA}   ${sD} ${dEmoji}\n${warMomentumBar(sA, sD, target)}\n> ${play}`;
-  await ch.send({ content: `# ⚔️ WAR!\n${aEmoji} **${aName}** marches on ${dEmoji} **${dName}**. The horns sound, steel is drawn. First to **${target}** skirmishes takes it.\n-# Strength: ${aName} ${aPct}% vs ${dName} ${100 - aPct}%, by Tides + walls.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await ch.send({ content: `# ⚔️ ${meta.warName || 'WAR!'}\n${aEmoji} **${aName}** marches on ${dEmoji} **${dName}**. The horns sound, steel is drawn. First to **${target}** skirmishes takes it.\n-# Strength: ${aName} ${aPct}% vs ${dName} ${100 - aPct}%, by Tides + walls.`, allowedMentions: { parse: [] } }).catch(() => {});
   await warSleep(2500);
   const scoreMsg = await ch.send({ content: board(0, 0, 0, 'The battle begins…') }).catch(() => null);
   let sA = 0, sD = 0, mp = false; const tally = {};
@@ -1040,7 +1060,7 @@ async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, s
   const cap = sim.capturedIds.length ? `Captured **${sim.capturedIds.length}**: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No captures.';
   const wall = sim.defWallTiers ? ` 🏰 ${dName}'s walls held the raid to ${Math.round(sim.raidPct * 100)}%.` : '';
   const roleIds = [attacker.roleId, defender.roleId].filter(Boolean);
-  await ch.send({ content: `# 🏆 ${wEmoji} **${wName}** win the war ${meta.wScore}-${meta.lScore}!\n> Raided **+${sim.raidAmount}** treasury and banked **+${tribes.WAR_GLORY_BONUS}** glory. ${cap}${wall}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds, users: mvpId ? [mvpId] : [] } }).catch(() => {});
+  await ch.send({ content: `# 🏆 ${wEmoji} **${wName}** win ${meta.warName || 'the war'} ${meta.wScore}-${meta.lScore}!\n-# ${meta.warName ? `${meta.warName}, decided in ${sim.rounds.length} skirmishes.` : ''}\n> Raided **+${sim.raidAmount}** treasury and banked **+${tribes.WAR_GLORY_BONUS}** glory. ${cap}${wall}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds, users: mvpId ? [mvpId] : [] } }).catch(() => {});
 }
 async function sweepExpiredWarVotes(guild) {
   for (const war of tribes.expiredWarVotes(Date.now())) await resolveWarVoteRecord(guild, war).catch(e => console.error('[tribe war] resolve:', e.message));
