@@ -104,8 +104,9 @@ function loadBank() {
 // { answer, display, key }: `answer` is what a player types to score, `display` is what's shown, `key` is
 // what to add to the per-game `used` list so a prompt doesn't repeat. index.js renders `display` per type.
 const TYPED_TYPES = ['scramble', 'math', 'typing', 'riddle', 'emoji'];
-const BUTTON_TYPES = ['trivia', 'truefalse'];   // answered by clicking an option button
+const BUTTON_TYPES = ['trivia', 'truefalse', 'pattern'];   // answered by clicking an option button
 const TF_QUESTIONS = 12;    // statements per True-or-False sprint
+const PATTERN_QUESTIONS = 8; // sequences per Number Pattern sprint
 
 const MATH_OPS = ['+', '-', '×'];
 function nextMath(used) {
@@ -231,6 +232,31 @@ function localBoolean(n) {
   return shuffle(TF_DEFAULT).slice(0, Math.min(n, TF_DEFAULT.length)).map(t => ({ q: t.q, options: ['True', 'False'], answer: t.a ? 0 : 1 }));
 }
 
+// Number Pattern (owner's idea): a 4-term sequence + 4 choices; pick the term that completes it. Fully
+// generated (infinite), returned in the SAME shape as trivia questions ({q, options, answer index}) so it
+// reuses the button flow (askNextTrivia + arena_ans). Four sub-patterns keep it varied.
+function genPattern(n) {
+  const out = [], seen = new Set();
+  let guard = 0;
+  while (out.length < n && guard++ < n * 25) {
+    const kind = randInt(4);
+    let seq, next;
+    if (kind === 0) { const a = 1 + randInt(9), d = 2 + randInt(9); seq = [a, a + d, a + 2 * d, a + 3 * d]; next = a + 4 * d; }        // arithmetic
+    else if (kind === 1) { const a = 1 + randInt(4), r = 2 + randInt(2); seq = [a, a * r, a * r * r, a * r * r * r]; next = a * r ** 4; } // geometric
+    else if (kind === 2) { const s = 1 + randInt(5); seq = [s * s, (s + 1) ** 2, (s + 2) ** 2, (s + 3) ** 2]; next = (s + 4) ** 2; }    // squares
+    else { let a = 1 + randInt(3), b = 1 + randInt(3); const seqF = [a, b]; for (let i = 0; i < 2; i++) { const c = a + b; seqF.push(c); a = b; b = c; } seq = seqF; next = a + b; } // fibonacci-like
+    const qKey = seq.join(',');
+    if (seen.has(qKey)) continue; seen.add(qKey);
+    const opts = new Set([next]);
+    let g2 = 0;
+    while (opts.size < 4 && g2++ < 40) { const cand = next + (1 + randInt(4)) * (randInt(2) ? 1 : -1); if (cand > 0 && !opts.has(cand)) opts.add(cand); }
+    while (opts.size < 4) opts.add(next + opts.size + 1);
+    const options = shuffle([...opts]).map(String);
+    out.push({ q: `What comes next?  \`${seq.join(', ')}, ?\``, options, answer: options.indexOf(String(next)) });
+  }
+  return out;
+}
+
 // Reaction Rush — each round targets one easy-to-click emoji; first tribe member to react scores.
 const REACTION_EMOJIS = ['🔥', '⚡', '🎯', '🏆', '💎', '🌟', '🚀', '🎉', '👑', '🐉', '🛡️', '⚔️', '🌈', '💯', '🍀'];
 function nextReaction(used) { const pool = REACTION_EMOJIS.filter(e => !(used || []).includes(e)); return pick(pool.length ? pool : REACTION_EMOJIS); }
@@ -261,9 +287,9 @@ async function fetchTrivia(n) {
 
 module.exports = {
   STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
-  TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS,
+  TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS, PATTERN_QUESTIONS,
   get, isActive, set, clear, update, addScore, markOnce, resetBucket, winner,
   recordEnd, startBlocked,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
-  nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS,
+  nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,
 };

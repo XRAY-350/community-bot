@@ -937,10 +937,26 @@ async function sweepExpiredAllianceVotes(guild) {
 // One active challenge at a time. Admin launches one into a public channel; the bot runs + scores it and the
 // winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
-const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4 };   // default minutes per type
+const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4, pattern: 6 };   // default minutes per type
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
 const _arenaTimers = { start: null, end: null, round: null };
 function clearArenaTimers() { for (const k of ['start', 'end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
+const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern'];
+const ARENA_AUTO_CHANCE = 0.5;   // per eligible tick, so timing isn't clockwork on the cooldown boundary
+// Auto-start (owner: "have the bot start them randomly at a daily cap instead of starting manually"). Called
+// on a ~30-min tick: within active ET hours, if nothing's running and we're off cooldown + under the daily
+// cap (all enforced by arena.startBlocked), roll a chance and launch a random type. The 3h cooldown naturally
+// spaces them across the day so they land ~cap times without ever exceeding it. Manual starts still work.
+async function maybeAutoStartArena(guild) {
+  if (!config.arenaAutoStart) return;
+  const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }));
+  if (hour < config.arenaAutoStartHour || hour >= config.arenaAutoEndHour) return;   // active hours only
+  if (arena.startBlocked()) return;   // already running/lobby, on cooldown, or daily cap reached
+  if (Math.random() > ARENA_AUTO_CHANCE) return;
+  const type = ARENA_ALL_TYPES[Math.floor(Math.random() * ARENA_ALL_TYPES.length)];
+  try { await startArenaCountdown(guild, type, ARENA_DEFAULTS[type] || 5, client.user.id); console.log(`[arena] auto-started ${type}`); }
+  catch (e) { console.error('[arena] auto-start:', e.message); }
+}
 
 async function arenaChannel(guild) { const a = arena.get(); if (!a) return null; return guild.channels.fetch(a.channelId).catch(() => null); }
 function tribeName(key) { const t = tribes.get(key); return t ? `${t.emoji || '🏴'} ${t.shortName || t.name}` : key; }
@@ -1005,13 +1021,15 @@ async function beginArena(guild) {
     const st = { ...base, answer: nx.answer, display: nx.display, used: [nx.key], round: 1 };
     const msg = await channel.send({ content: typedContent(type, st) });
     arena.set({ ...st, messageId: msg.id });
-  } else if (type === 'trivia' || type === 'truefalse') {
-    // Pre-fetch the whole batch from the online bank at launch (owner: "an online list that's virtually
-    // infinite") so mid-game network hiccups can't stall a round; fall back to the local bank if it fails.
-    const n = type === 'truefalse' ? arena.TF_QUESTIONS : arena.TRIVIA_QUESTIONS;
-    const fetched = type === 'truefalse' ? await arena.fetchBoolean(n) : await arena.fetchTrivia(n);
-    const questions = (fetched && fetched.length) ? fetched : (type === 'truefalse' ? arena.localBoolean(n) : arena.localTrivia(n, []));
-    arena.set({ ...base, questions, qNum: 0, source: fetched ? 'online' : 'local' });
+  } else if (arena.BUTTON_TYPES.includes(type)) {
+    // Button types (trivia/truefalse/pattern) share the questions[] + askNextTrivia + arena_ans flow. Online
+    // types pre-fetch the whole batch at launch (owner: "virtually infinite") with a local fallback; generated
+    // types (pattern) build the batch locally — either way it's a questions array of {q, options, answer}.
+    let questions = [], source = 'local';
+    if (type === 'trivia') { const f = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS); questions = (f && f.length) ? f : arena.localTrivia(arena.TRIVIA_QUESTIONS, []); source = f ? 'online' : 'local'; }
+    else if (type === 'truefalse') { const f = await arena.fetchBoolean(arena.TF_QUESTIONS); questions = (f && f.length) ? f : arena.localBoolean(arena.TF_QUESTIONS); source = f ? 'online' : 'local'; }
+    else if (type === 'pattern') { questions = arena.genPattern(arena.PATTERN_QUESTIONS); source = 'generated'; }
+    arena.set({ ...base, questions, qNum: 0, source });
     await askNextTrivia(guild);
   } else if (type === 'reaction') {
     // Reaction Rush: each round targets one emoji; the messageReactionAdd hook scores the first tribe member
@@ -1035,7 +1053,7 @@ async function beginArena(guild) {
   return arena.get();
 }
 const ARENA_LABEL = { race: 'Reaction Race', trivia: 'Trivia Sprint', scramble: 'Word Scramble', blitz: 'Activity Blitz',
-  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush' };
+  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush', pattern: 'Number Pattern' };
 function arenaScoreboard(a) {
   const rows = Object.entries(a.scores || {}).sort((x, y) => y[1] - x[1]);
   return rows.length ? rows.map(([k, v]) => `> ${tribeName(k)} — **${v}**`).join('\n') : '> _No points yet._';
@@ -1109,7 +1127,7 @@ async function askNextTrivia(guild) {
   const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
     new ButtonBuilder().setCustomId(`arena_ans:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
   const ch = await arenaChannel(guild); if (!ch) return;
-  const qLabel = a.type === 'truefalse' ? 'True or False' : 'Trivia';
+  const qLabel = a.type === 'truefalse' ? 'True or False' : a.type === 'pattern' ? 'Number Pattern' : 'Trivia';
   const msg = await ch.send({ content: `# ❓ ${qLabel} — Q${a.qNum + 1}/${questions.length}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
   arena.update({ answer: q.answer, qNum: a.qNum + 1, messageId: msg.id, answeredThisQ: [] });
   if (_arenaTimers.round) clearTimeout(_arenaTimers.round);
@@ -2329,7 +2347,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('arena').setDescription('Launch an interactive cross-tribe challenge in this channel (winner banks Glory + Treasury)')
           .addStringOption(o => o.setName('type').setDescription('Which challenge').setRequired(true)
             .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' },
-              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }))
+              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' }))
           .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
@@ -2575,6 +2593,9 @@ client.once('ready', async () => {
   if (dguild) for (const t of tribes.all()) await refreshThronePanel(dguild, t).catch(e => console.error(`[tribe throne] boot refresh ${t.key}: ${e.message}`));
   // An arena challenge left active by a pre-restart crash is resolved early (see reconcileArena).
   if (dguild) await reconcileArena(dguild).catch(e => console.error(`[arena] boot reconcile: ${e.message}`));
+  // Auto-start random arenas through the active day (owner). Checked every 30 min; the cooldown + daily cap
+  // (via arena.startBlocked) keep it from over-firing. Not run immediately on boot (let the bot settle first).
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartArena(g)).catch(() => {}), 30 * 60000);
   try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
@@ -4244,7 +4265,8 @@ client.on('interactionCreate', async (interaction) => {
       { label: 'Riddle Rush', value: 'riddle', emoji: '🧩', description: 'Type the answer to the riddle' },
       { label: 'Emoji Decode', value: 'emoji', emoji: '🧠', description: 'Guess what the emojis spell' },
       { label: 'True or False', value: 'truefalse', emoji: '✅', description: '12 statements, first correct scores' },
-      { label: 'Reaction Rush', value: 'reaction', emoji: '🎯', description: 'First to react with the target emoji' });
+      { label: 'Reaction Rush', value: 'reaction', emoji: '🎯', description: 'First to react with the target emoji' },
+      { label: 'Number Pattern', value: 'pattern', emoji: '🔢', description: 'Complete the sequence, 4 choices' });
     return interaction.reply({ content: '🎪 Which challenge? It runs here in the hub, and the winning tribe banks Glory + Treasury.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribehub_arena_pick') {

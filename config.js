@@ -143,6 +143,12 @@ const config = {
   conflictRepingHours: num('CONFLICT_REPING_HOURS', 24), // don't re-flag the same member more often
   conflictMaxPerSweep: num('CONFLICT_MAX_PER_SWEEP', 25), // cap flags per sweep so the channel isn't flooded
 
+  // Arena auto-start: the bot randomly launches arena challenges through the active day (up to the daily
+  // cap, respecting the cooldown) so activity happens without a leader manually starting one.
+  arenaAutoStart: bool('ARENA_AUTO_START', true),
+  arenaAutoStartHour: num('ARENA_AUTO_START_HOUR', 10),  // earliest ET hour an auto-arena may fire
+  arenaAutoEndHour: num('ARENA_AUTO_END_HOUR', 24),      // latest (exclusive) ET hour
+
   // Daily digest — a 24h recap of every job (posted to the mod-conflict channel) as an embed.
   digestEnabled: bool('DIGEST_ENABLED', true),
   digestHour: num('DIGEST_HOUR', 9), // local server-time hour (0-23) to post the daily digest
