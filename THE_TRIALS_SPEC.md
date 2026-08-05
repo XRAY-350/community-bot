@@ -60,10 +60,17 @@ contribute, not for one carry. A grand, live Muster.
 - **The Assembly:** a big question set. The tribe collectively answers as many as it can in the
   window; score scales with distinct contributors. Reuses the trivia/quiz banks, but the FORMAT
   is collaborative accumulation, not first-to-buzz.
-- **The Relay:** a chain where each correct answer must come from a DIFFERENT member than the
-  last, forcing rotation around the roster (rewards a broad, awake tribe).
-- **The Mosaic:** a puzzle split into pieces; different members solve different pieces; the tribe
-  assembles the whole. Shines with voice coordination.
+- **The Relay:** a chain that REWARDS rotation. A correct answer from a DIFFERENT member than the
+  last earns a rotation bonus. But rotation is a BONUS, not a gate (same principle as breadth): if
+  a small or sleepy tribe has to let one member carry, they still score, just without the bonus,
+  and a short timeout relaxes the "different member" rule if nobody else answers in time. No
+  deadlock, and a 3-awake-member tribe is never softlocked out of the game.
+- **The Mosaic:** a grid of N tiles, each an independent mini-puzzle (anagram, mini-trivia, or
+  rebus) that reveals ONE fragment of a final hidden phrase. Members claim and solve tiles IN
+  PARALLEL, which is exactly what rewards breadth and shines on voice ("I have tile 3, you take
+  5"). Once enough fragments are up, the tribe submits the full phrase for the big points. Every
+  tile and the final phrase have known answers, so validation is clean. This is the concrete
+  mechanic, not just a concept.
 - **Question freshness:** modes may repeat freely, but questions cannot (owner). Reuse the
   cross-game recency store so a repeated mode always draws fresh questions.
 
@@ -85,6 +92,14 @@ contribute, not for one carry. A grand, live Muster.
   Relay rotation rule, Mosaic piece-splitter).
 - Reuses the recency de-dup for question freshness, the Herald voice, the Muster hooks, and the
   spectacle/Chronicle reporting.
+- **RESUME on restart, do not resolve early.** Unlike the sealed arena's short rounds, a Trial is
+  a 15-20 minute event people gathered in VC for, so a mid-Trial restart must persist the game
+  state (elapsed window, per-tribe scores, contributors, tile/relay progress) and RESUME, not
+  resolve early and eat the event. More state to persist, worth it.
+- **Shared announcement queue (cross-mode):** the scheduled Trial reveal and the daily Muster-Trial
+  wrap go through the shared spectacle scheduler (fixed priority + spacing) alongside the
+  coronation, Age champion, Chronicle, and Prover of the Week, so reset/busy days do not stack
+  into a wall of embeds.
 - Feature flag: `theTrials`, fail-off, seeded dark until built and tuned, then flipped live.
 
 ## Build order (when we build it)
@@ -96,7 +111,8 @@ contribute, not for one carry. A grand, live Muster.
 6. Rewards, quests, achievements, and Chronicle hooks.
 7. `theTrials` feature flag, tuning, go-live.
 
-## Open call (flag your preference)
-The existing lightweight Muster (a quick roll-call that banks turnout Treasury/Glory): keep it as
-the fast option alongside the grand Muster Trial, or retire it so the Trial becomes the only
-Muster? My lean: keep both (the quick roll-call for a fast rally, the Trial for a real event).
+## Muster relationship (resolved 2026-08-05, owner + Fable agree)
+KEEP BOTH. The lightweight Muster (quick roll-call, banks turnout Treasury/Glory) stays as the
+fast, habit-forming rally; the grand Muster Trial is the marquee 15-20 minute event. Cheap actions
+drive habit, big events drive memory. Retiring the light one would turn every rally into a big
+commitment and cut how often leaders actually rally.

@@ -64,10 +64,17 @@ Different from the other two modes on purpose:
   skew between the 5 near-simultaneous sends cancels out completely. Comparable to the ms.
   - Typed answers: message `createdTimestamp`. Button answers: interaction `createdTimestamp`.
   - This is why reaction games are excluded: no precise server tap-time.
-- **Rank:** by correct answers (desc), tie-broken by aggregate speed (sum of relative
-  response times on correct answers; lower is better).
-- **Underdog multiplier** (existing) applies to the PAYOUT, not the raw race, so it never
-  distorts who actually won.
+- **Race the clock, NOT the headcount (size-fairness, critical).** Naive "fastest tribe wins"
+  lets a 40-person tribe roll 40 dice per question vs a 6-person tribe's 6, so big tribes would
+  win the raw race every time and the reveal (the emotional product) would decay. Instead each
+  tribe scores per question against a FIXED speed curve, not against each other's fastest: a
+  correct answer under ~2s (relative time) = full speed points, decaying to zero by the timeout,
+  plus a flat correctness point. A small sharp tribe maxes the same question a big one does; size
+  becomes insurance (more chances someone is fast/knows it), not a linear multiplier. A small
+  tribe can genuinely top the reveal.
+- **Rank:** by total score (correctness points + clock-speed points), summed across questions.
+- **Underdog multiplier** (existing) applies to the PAYOUT on top, softening the residual
+  knowledge-coverage edge a big roster still has.
 - **Battle-MVP:** the single fastest/most-correct individual across all thrones gets a
   shout + a Tides bonus in the reveal (mirrors the war-spectacle MVP).
 
@@ -86,6 +93,10 @@ Different from the other two modes on purpose:
   stamps each throne's prompt time.
 - **Reveal:** reuse the war-spectacle / coronation staging (`warSleep` delays) for the
   bottom-to-top reveal.
+- **Shared announcement queue (cross-mode):** big Herald moments (this reveal, coronation, Age
+  champion, Chronicle, Prover of the Week, Trial results) must SERIALIZE in a fixed priority
+  order with spacing, or reset day becomes a wall of stacked embeds. Build a small spectacle
+  scheduler/queue shared by all modes rather than each firing independently.
 - **Feature flag:** new `sealedArena` flag, fail-off, seeded dark until built + tuned,
   then flipped live (same pattern as quests/relics/prestige).
 - **Reused wholesale:** arena.js question banks + the cross-game recency de-dup, the typed

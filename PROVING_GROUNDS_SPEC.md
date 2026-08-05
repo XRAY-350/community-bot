@@ -29,6 +29,16 @@ reply, so nobody sees their answers and there is no live audience. Entry via a `
 command and/or a button in a Proving Grounds channel (or the dashboard). No per-throne channels
 and no concurrent live-game plumbing, so it is much lighter than the sealed arena.
 
+## Fairness: no single answer to leak (design decision)
+Ephemeral delivery hides a member's ATTEMPT, not the ANSWER: without care, someone posts the
+daily solution in general chat at 9am and guts the leaderboard. Fix: **per-member generated
+instances/seeds.** The whole pool is generatable per person (a shuffled Gauntlet draw, a
+per-member cryptogram / word ladder / anagram, a per-member Score-Attack seed), so there is no
+single shared daily answer to share. Scoring stays SCORE-based (streak length, rungs cleared,
+solved + speed), which keeps the leaderboard comparable across different instances as long as the
+generator holds difficulty roughly even. (A fixed shared "daily one-shot" would be leakable, which
+is a second reason those stay parked.)
+
 ## The daily loop
 1. At the daily reset, a new challenge opens (one game family, rotating day to day, so everyone
    faces the same game that day and the leaderboard is comparable).
@@ -75,6 +85,10 @@ All must be async-friendly and self-scored (no live cross-player timing needed).
 - Reuses the arena trivia/quiz banks plus the cross-game recency de-dup for the Knowledge Gauntlet;
   new generators for the puzzles and the score-attack ladder.
 - Reporting reuses the Herald voice and the spectacle/Chronicle hooks.
+- **Shared announcement queue (cross-mode):** the weekly Prover-of-the-Week reveal shares the
+  Crown/Glory boundary, so it must go through the shared spectacle scheduler (fixed priority +
+  spacing) alongside the coronation, Age champion, Chronicle, and Trial results, or reset day
+  stacks into a wall of embeds. Do not fire it independently.
 - Feature flag: `provingGrounds`, fail-off, seeded dark until built and tuned, then flipped live.
 
 ## Build order (when we build it)
