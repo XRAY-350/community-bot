@@ -39,6 +39,7 @@ const strikeAppeals = require('./strikeAppeals');
 const features = require('./features');
 const contest = require('./contest');
 const arena = require('./arena');
+const achievements = require('./achievements');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
@@ -442,7 +443,12 @@ function tribeThronePanel(tribe) {
       ? new ButtonBuilder().setCustomId(`tribethrone_allybreak:${k}`).setEmoji('💔').setLabel('Break Alliance').setStyle(ButtonStyle.Secondary)
       : new ButtonBuilder().setCustomId(`tribethrone_alliance:${k}`).setEmoji('🤝').setLabel('Propose Alliance').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tribethrone_allygift:${k}`).setEmoji('🎁').setLabel('Gift Treasury to Ally').setStyle(ButtonStyle.Secondary).setDisabled(!ally));
-  return { content, components: [memberRow, leaderRow1, leaderRow2, leaderRow3], allowedMentions: { parse: [] } };
+  // Recognition row (member-facing) — only shown when the achievements feature is enabled.
+  const rows = [memberRow, leaderRow1, leaderRow2, leaderRow3];
+  if (features.enabled('achievements')) rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`tribethrone_trophies:${k}`).setEmoji('🏅').setLabel('Trophies').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_halloffame:${k}`).setEmoji('🏛️').setLabel('Hall of Fame').setStyle(ButtonStyle.Secondary)));
+  return { content, components: rows, allowedMentions: { parse: [] } };
 }
 // Post + pin the panel in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
 // e.g. the channel already has 50 pins — all fail silently rather than blocking tribe creation on it).
@@ -607,6 +613,7 @@ async function processWeeklyCrownIfDue(guild) {
   if (!tribe) return;
   const tribeRole = guild.roles.cache.get(tribe.roleId);
   if (crownRole && tribeRole) for (const m of [...tribeRole.members.values()]) await m.roles.add(crownRole.id, `Weekly crown: ${tribe.key}`).catch(() => {});
+  if (features.enabled('achievements') && tribeRole) for (const m of tribeRole.members.values()) achievements.bumpAndCheck(m.id, 'crown');
   if (tribe.throneId) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
@@ -636,6 +643,7 @@ async function processSeasonEndIfDue(guild) {
   const champRole = await ensureSeasonChampionRole(guild);
   if (champRole) for (const m of [...champRole.members.values()]) await m.roles.remove(champRole.id, 'Season ended — champion rotates').catch(() => {});
   if (champRole && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of [...tr.members.values()]) await m.roles.add(champRole.id, `Season ${previousNumber} champion: ${champTribe.key}`).catch(() => {}); }
+  if (features.enabled('achievements') && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of tr.members.values()) achievements.bumpAndCheck(m.id, 'season'); }
   const endsAt = Math.floor(season.endsAt / 1000);
   const msg = champion
     ? `# 🏆 Season ${previousNumber} Champion: ${champTribe?.emoji || '🏴'} ${champion.name}!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} this season and now wear <@&${champRole?.id}> until Season ${season.number} is decided.\n**Season ${season.number}** begins now and runs to <t:${endsAt}:D>. Season crowns reset — the race is wide open. (Treasury, ranks, and unlocks all carry over.)`
@@ -897,7 +905,15 @@ async function executeWar(guild, war, note = '') {
   const oddsLine = `-# Odds were ${Math.round(sim.attackerWinChance * 100)}% ${attacker.shortName || attacker.name} · ${Math.round((1 - sim.attackerWinChance) * 100)}% ${defender.shortName || defender.name}, by Tides-weighted strength.`;
   const captureLine = sim.capturedIds.length ? `**${sim.capturedIds.length}** member${sim.capturedIds.length === 1 ? '' : 's'} captured: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No members captured (loser too small).';
   const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
-  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} wins!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}\n${oddsLine}${wallLine}`;
+  // War-win achievements for the victors (gated; empty when off). Awarded to every current winner member.
+  let honorsLine = '';
+  if (features.enabled('achievements')) {
+    const wRole = guild.roles.cache.get(winner.roleId);
+    const honored = [];
+    if (wRole) for (const m of wRole.members.values()) for (const a of achievements.bumpAndCheck(m.id, 'warwin')) honored.push(m.id);
+    if (honored.length) honorsLine = `\n-# 🏅 New war honors for ${[...new Set(honored)].slice(0, 10).map(id => `<@${id}>`).join(' ')}.`;
+  }
+  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} wins!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}\n${oddsLine}${wallLine}${honorsLine}`;
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
@@ -1009,6 +1025,10 @@ function scoreArena(tribeKey, userId, points = 1) {
     tribes.addTides(tribeKey, userId, TIDES_PER_ARENA_POINT * points);
     const daily = tribes.recordArenaPlay(userId, Date.now());
     if (daily.firstToday) tribes.addTides(tribeKey, userId, ARENA_DAILY_BONUS_TIDES);
+    if (features.enabled('achievements')) {   // dark until flipped on
+      if (daily.firstToday) for (const a of achievements.checkValue(userId, 'streak', daily.streak)) arena.pushNewAch(userId, a.id);
+      for (const a of achievements.checkValue(userId, 'tides', tribes.getTides(tribeKey, userId))) arena.pushNewAch(userId, a.id);
+    }
   }
   return total;
 }
@@ -1275,14 +1295,25 @@ async function endArena(guild) {
     const mvpMember = await guild.members.fetch(mvp.userId).catch(() => null);
     const mvpTribe = mvpMember && tribes.memberTribe(mvpMember);
     if (mvpTribe) tribes.addTides(mvpTribe.key, mvp.userId, ARENA_MVP_BONUS_TIDES);
+    if (features.enabled('achievements')) for (const a of achievements.bumpAndCheck(mvp.userId, 'mvp')) arena.pushNewAch(mvp.userId, a.id);
     const streak = tribes.getArenaStreak(mvp.userId);
     mvpLine = `\n-# 🥇 MVP: <@${mvp.userId}> with **${mvp.score}** point${mvp.score === 1 ? '' : 's'} (+${ARENA_MVP_BONUS_TIDES} Tides)${streak > 1 ? `, on a ${streak}-day streak 🔥` : ''}. Every scorer banked Tides toward their rank.`;
+  }
+  // Achievement unlocks earned this event (gated by the `achievements` flag; empty when off).
+  let achLine = '', achUsers = [];
+  if (features.enabled('achievements')) {
+    const na = arena.getNewAch();
+    if (na.length) {
+      achLine = '\n-# 🏅 Unlocked: ' + na.map(x => { const a = achievements.byId(x.id); return `<@${x.u}> ${a ? `${a.emoji} ${a.name}` : x.id}`; }).join(' · ');
+      achUsers = [...new Set(na.map(x => x.u))];
+    }
   }
   // Result in the tribe-announcements channel (where it ran), pinging every tribe (and the MVP).
   if (ch) {
     const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
-    const mentions = { roles: roleIds }; if (mvpId) mentions.users = [mvpId];
-    await ch.send({ content: `${resultText}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: mentions }).catch(() => {});
+    const users = [...new Set([...(mvpId ? [mvpId] : []), ...achUsers])];
+    const mentions = { roles: roleIds }; if (users.length) mentions.users = users;
+    await ch.send({ content: `${resultText}${mvpLine}${achLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: mentions }).catch(() => {});
   }
   arena.recordEnd(Date.now(), dt);   // stamp end + schedule the next auto (longer gap if downtime)
   arena.clear();
@@ -4466,7 +4497,8 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s perks are frozen — it’s short on leaders. An admin can restore them with \`/tribe-admin set-leader\`.`, flags: MessageFlags.Ephemeral });
     if (act === 'roster') {
       const members = tribes.roster(interaction.guild, tribe);
-      const body = (members.length ? members.map(m => `> ${m.displayName}`).join('\n') : '> _No members yet._').slice(0, 4000);
+      const showTitle = features.enabled('achievements');
+      const body = (members.length ? members.map(m => { const t = showTitle ? achievements.titleOf(m.id) : ''; return `> ${m.displayName}${t ? ` *${t}*` : ''}`; }).join('\n') : '> _No members yet._').slice(0, 4000);
       return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: Roster\n-# ${members.length} member${members.length === 1 ? '' : 's'}`, embeds: [new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body)], flags: MessageFlags.Ephemeral });
     }
     if (act === 'leaderboard') {
@@ -4475,6 +4507,26 @@ client.on('interactionCreate', async (interaction) => {
       if (!top.length) return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts}\n> No ${pts} earned yet. Chat in the hall to start climbing.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       const body = top.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} <@${t.userId}> · \`${t.points} ${pts}\``).join('\n');
       return interaction.reply({ content: `## ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}: ${pts} Leaderboard`, embeds: [new EmbedBuilder().setColor(tribe.color || 0x2A426A).setDescription(body)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (act === 'trophies') {
+      if (!features.enabled('achievements')) return interaction.reply({ content: 'Achievements aren’t enabled.', flags: MessageFlags.Ephemeral });
+      const uid = interaction.user.id;
+      const list = achievements.earnedList(uid);
+      const earned = list.filter(a => a.earned), locked = list.filter(a => !a.earned);
+      const title = achievements.titleOf(uid);
+      const parts = [earned.length ? '**Earned**\n' + earned.map(a => `${a.emoji} **${a.name}**: ${a.desc}${a.title ? ` (title: *${a.title}*)` : ''}`).join('\n') : '_Nothing yet. Play the arena, win wars, take crowns._'];
+      if (locked.length) parts.push('\n**Locked**\n' + locked.map(a => `🔒 ${a.emoji} ${a.name}: ${a.desc}`).join('\n'));
+      const embed = new EmbedBuilder().setColor(0xE67E22).setTitle('🏅 Your Trophies').setDescription(parts.join('\n').slice(0, 4000)).setFooter({ text: title ? `Equipped title: ${title}` : 'No title equipped' });
+      const equipable = achievements.titles(uid);
+      const components = equipable.length ? [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('tribethrone_equiptitle').setPlaceholder('Equip a title…').addOptions([{ label: 'No title', value: 'none' }, ...equipable.slice(0, 24).map(a => ({ label: a.title, value: a.id }))]))] : [];
+      return interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+    }
+    if (act === 'halloffame') {
+      const hist = tribes.seasonHistory().filter(h => h.championKey);
+      const season = tribes.getSeason();
+      const body = hist.length ? hist.map(h => `**Season ${h.number}:** ${h.championName} (${h.crowns} crown${h.crowns === 1 ? '' : 's'})`).join('\n') : '_No season has crowned a champion yet. Season 1 is underway._';
+      const embed = new EmbedBuilder().setColor(0xF1C40F).setTitle('🏛️ Hall of Fame').setDescription(body).setFooter({ text: season ? `Now: Season ${season.number}` : '' });
+      return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
     if (act === 'tithe') {
       // Tithe = convert your OWN activity points into this tribe's treasury (same as /tribe offer). Members only.
@@ -4635,6 +4687,12 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferUpdate();
     await applyTribeRank(interaction.guild, tribe, target, idx, `manual — set by <@${interaction.user.id}>`, false);
     return interaction.editReply({ content: `${tribe.emoji || '🌊'} Set <@${targetId}> to **${tribe.ranks[idx].name}** in ${tribe.shortName || tribe.name}.`, components: [], allowedMentions: { parse: [] } });
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribethrone_equiptitle') {
+    const v = interaction.values[0];
+    achievements.equip(interaction.user.id, v === 'none' ? null : v);
+    const t = achievements.titleOf(interaction.user.id);
+    return interaction.update({ content: t ? `✅ Equipped title: **${t}**.` : '✅ Title cleared.', embeds: [], components: [] });
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('tribethrone_war_pick:')) {
     const tribeKey = interaction.customId.split(':')[1];

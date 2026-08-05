@@ -43,6 +43,9 @@ function addScore(tribeKey, n = 1) { const a = get(); if (!a) return 0; a.scores
 // tribe scores. topMemberScorer returns the single highest-scoring member, or null if nobody scored.
 function addMemberScore(userId, n = 1) { const a = get(); if (!a) return 0; a.memberScores = a.memberScores || {}; a.memberScores[userId] = (a.memberScores[userId] || 0) + n; set(a); return a.memberScores[userId]; }
 function topMemberScorer() { const a = get(); if (!a || !a.memberScores) return null; let best = null, bs = 0; for (const [uid, v] of Object.entries(a.memberScores)) if (v > bs) { bs = v; best = uid; } return best ? { userId: best, score: bs } : null; }
+// Newly-earned achievements accrued during the current event (Phase 6), announced together in endArena.
+function pushNewAch(userId, achId) { const a = get(); if (!a) return; a.newAch = a.newAch || []; a.newAch.push({ u: userId, id: achId }); set(a); }
+function getNewAch() { const a = get(); return (a && a.newAch) || []; }
 // Mark a member as having participated this round/challenge (dedup). Returns false if already counted.
 function markOnce(bucket, id) { const a = get(); if (!a) return false; a[bucket] = a[bucket] || []; if (a[bucket].includes(id)) return false; a[bucket].push(id); set(a); return true; }
 function resetBucket(bucket) { const a = get(); if (!a) return; a[bucket] = []; set(a); }
@@ -309,7 +312,7 @@ async function fetchTrivia(n, category) {
 module.exports = {
   STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
   TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS, PATTERN_QUESTIONS, TRIVIA_CATEGORY,
-  get, isActive, set, clear, update, addScore, addMemberScore, topMemberScorer, markOnce, resetBucket, winner,
+  get, isActive, set, clear, update, addScore, addMemberScore, topMemberScorer, pushNewAch, getNewAch, markOnce, resetBucket, winner,
   recordEnd, startBlocked, autoStartDue, getNextAutoAt,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
   nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,

@@ -61,6 +61,8 @@ const REGISTRY = [
     help: { name: '⚖️ `/appeal strike`: appeal your own strike', value: 'Think a strike was unfair? `/appeal strike` opens a private thread just for you and staff to explain your side. One at a time; a denied appeal has a short cooldown before you can retry. The strike that crossed the ban threshold isn’t appealable this way.' } },
   { key: 'smartWatch',   audience: 'core',   built: false,  commands: ['grade'] }, // LLM contextual judge on the watch pipeline - cuts keyword false positives (needs ANTHROPIC_API_KEY; shadow-mode-first via SMARTWATCH_LIVE). /grade = owner-only card grading.
   { key: 'smartWatchLab', audience: 'core',  built: false }, // Eval sandbox: expanded terms + AI verdicts posted to a private admin lab channel, gradable to train the judge. When ON, the public watch-log reverts to plain keyword flags (AI moves to the lab). Needs SMARTWATCH_LAB_CHANNEL_ID.
+  { key: 'achievements', audience: 'member', built: true,    // tribe achievements + equippable titles (Phase 6). Surfaced via the throne 🏅 Trophies button; no new commands. LIVE (owner: achievements go live now).
+    help: { name: '🏅 Achievements & titles', value: 'Earn achievements for your tribe deeds (arena MVPs, play streaks, war wins, crowns, seasons) and equip a title to show off. Open your tribe’s throne panel and tap 🏅 Trophies.' } },
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist
