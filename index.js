@@ -6262,7 +6262,9 @@ client.on('interactionCreate', async (interaction) => {
       if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       const nm = interaction.options.getString('name').slice(0, 40);
       tribes.update(t.key, { staffRankTitle: nm });
-      if (t.staffRankRoleId) { const role = interaction.guild.roles.cache.get(t.staffRankRoleId); if (role) await role.setName(`${t.shortName || t.name} ${nm}`, 'tribe staff-rank rename').catch(() => {}); }
+      // A custom title drops the tribe-name prefix (that prefix only exists to disambiguate the DEFAULT
+      // "General" across tribes; a chosen name stands on its own) and renders in the server's small-caps font.
+      if (t.staffRankRoleId) { const role = interaction.guild.roles.cache.get(t.staffRankRoleId); if (role) await role.setName(`${t.emoji || '🏴'} ${toSmallCaps(nm)}`, 'tribe staff-rank rename').catch(() => {}); }
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** now calls its staff rank **${nm}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'ranks') {
