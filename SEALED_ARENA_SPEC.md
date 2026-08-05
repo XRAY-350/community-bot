@@ -20,8 +20,9 @@ Different from the other two modes on purpose:
 - **Name:** Sealed Arena.
 - **Live + simultaneous**, not async. The intensity is the point.
 - **Blind:** no throne can see another during play.
-- **Games (what v1 PORTS from the existing arena):** the **13 timing-precise types only.**
-  This is the port list, NOT the final game set. New games are a separate open track (below).
+- **Games:** draws from the **same shared pool as the regular arena** (which it already does),
+  using the **13 timing-precise types** (button + typed). This IS the sealed arena's final game
+  set, no new games for this mode (owner 2026-08-05); new games belong to the other two modes.
   Reaction Race, Reaction Rush, and
   Activity Blitz are EXCLUDED (reactions lack a precise server tap-time; Blitz is a
   server-wide async message count, not a per-throne race). Pool:
@@ -100,12 +101,12 @@ Different from the other two modes on purpose:
 7. Scheduler (peak cadence, own daily cap) + staff manual launch.
 8. `sealedArena` feature flag, tuning, go-live.
 
-## Companion track: NEW games (open, not settled)
-The 13 ported types are only what v1 REUSES. Net-new games built specifically for the
-sealed/closed modes (owner's "entirely new sets of games" idea) are a SEPARATE, still-open
-design task running in parallel, NOT v2 filler and NOT settled. Any new game for this mode
-must be timing-precise (typed or button answer with a server-side timestamp) to fit the
-speed-scored, per-throne backbone. To be designed with the owner.
+## New games are NOT for this mode
+Decided (owner 2026-08-05): the sealed arena shares the regular arena's EXISTING game pool,
+so it needs no new games of its own. The "entirely new sets of games" effort belongs to the
+OTHER two modes (The Trials, Proving Grounds), which each get their OWN pool, designed when
+we build them. (Any game the sealed arena ever uses still has to be timing-precise, typed or
+button, but that is not a v1 concern since it just reuses the shared pool.)
 
 ## Deferred (v2+)
 - Sealed wager: a leader stakes Treasury on placing top-N (bank it or lose it).
@@ -113,6 +114,7 @@ speed-scored, per-throne backbone. To be designed with the owner.
 - Quorum: a tribe only qualifies with at least K participants.
 
 ## The other two modes (later, sketched)
+Both get their OWN expanded game pool (the "new games" effort), designed when we build them.
 - **The Trials:** same sealed simultaneous format, but scored on breadth (how many distinct
   members contributed), collaborative, "the tribe comes together." Rewards turnout.
 - **Proving Grounds:** async, longer window (hours), individual contributions anytime.
