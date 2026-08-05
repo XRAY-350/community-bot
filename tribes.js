@@ -400,6 +400,31 @@ function cosignFounding(founderId, cosignerId) {
 }
 function clearFoundingRequest(founderId) { const s = load(); if (s.foundingRequests) delete s.foundingRequests[founderId]; save(s); }
 
+// ---- Member-founded tribe (owner 2026-08-05): ONE regular member may found ONE tribe, backed by 9 cosigns
+// from members (or trial mods) — no mod/admin/owner. Only one such petition, and one such tribe, at a time
+// server-wide. Kept in its OWN state (single object, not keyed by founder) so it never touches the mod path.
+const MEMBER_FOUND_COSIGNS = 9;                        // cosigns needed on top of the founder (10 founders total)
+const MEMBER_FOUND_EXPIRY_MS = 48 * 60 * 60 * 1000;    // petition lapses if it doesn't reach 9 in 48h
+function getMemberFounding() { return load().memberFounding || null; }
+function getMemberFoundedTribeKey() { return load().memberFoundedTribeKey || null; }
+// Returns the new request, or null if one is already open / a member-founded tribe already exists (one-at-a-time).
+function startMemberFounding(founderId, identity) {
+  const s = load();
+  if (s.memberFounding || s.memberFoundedTribeKey) return null;
+  s.memberFounding = { founderId, identity, cosigns: [], createdAt: Date.now() };
+  save(s); return s.memberFounding;
+}
+// Returns the updated request, or null if no request / founder tried to self-sign / already signed.
+function cosignMemberFounding(cosignerId) {
+  const s = load(); const r = s.memberFounding; if (!r) return null;
+  if (cosignerId === r.founderId || r.cosigns.includes(cosignerId)) return null;
+  r.cosigns.push(cosignerId); save(s); return r;
+}
+function setMemberFoundingMessage(channelId, messageId) { const s = load(); if (s.memberFounding) { s.memberFounding.channelId = channelId; s.memberFounding.messageId = messageId; save(s); } }
+function clearMemberFounding() { const s = load(); delete s.memberFounding; save(s); }
+// On successful founding: record the live slot AND clear the pending petition, atomically.
+function setMemberFoundedTribe(key) { const s = load(); s.memberFoundedTribeKey = key; delete s.memberFounding; save(s); }
+
 // Entrance gate: an optional per-tribe question a new applicant must answer correctly to SELF-join via the
 // #roles picker (owner, 2026-08-03: Valith wanted one, "will mean all of them will have to get one as well" —
 // so this is a general tribe feature, not Valith-only, just OFF by default for tribes that don't set one).
@@ -633,7 +658,7 @@ function clearLeaderEnforce(key) { return update(key, { leaderEnforce: null }); 
 function isFrozen(tribe) { const e = tribe && tribe.leaderEnforce; return !!(e && (e.stage === 'frozen' || e.stage === 'disband_pending')); }
 // Remove a tribe's record entirely (disband). Returns the removed record so the caller can clean up the
 // Discord roles/channels — this only touches the framework's own state.
-function removeTribe(key) { const s = load(); const rec = s.tribes && s.tribes[key]; if (!rec) return null; delete s.tribes[key]; save(s); return rec; }
+function removeTribe(key) { const s = load(); const rec = s.tribes && s.tribes[key]; if (!rec) return null; delete s.tribes[key]; if (s.memberFoundedTribeKey === key) delete s.memberFoundedTribeKey; save(s); return rec; }
 // Free retheme tokens (owner, 2026-08-04: "when a tribe loses a leader they get a free retheme"). Granted
 // when a tribe drops a leader, spendable on /tribe retheme even without the paid Re-theme unlock. A counter,
 // so losing leaders more than once accrues more (each consumed one at a time).
@@ -658,6 +683,8 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
   startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,
+  MEMBER_FOUND_COSIGNS, MEMBER_FOUND_EXPIRY_MS, getMemberFounding, getMemberFoundedTribeKey, startMemberFounding,
+  cosignMemberFounding, setMemberFoundingMessage, clearMemberFounding, setMemberFoundedTribe,
   setEntranceGate, getEntranceGate, clearEntranceGate,
   WAR_VOTE_MS, WAR_VOTE_TURNOUT, WAR_COOLDOWN_MS, CAPTURE_LOCK_MS, WAR_TREASURY_RAID_PCT, WAR_GLORY_BONUS,
   WAR_CAPTURE_PCT, WAR_CAPTURE_CAP, WAR_CAPTURE_FLOOR,

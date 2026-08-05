@@ -78,6 +78,9 @@ const REGISTRY = [
     help: { name: '⚔️ The Trials', value: 'Rally your tribe into your voice channel and take on a Trial together. Everyone who chips in counts, and the tribe that pulls together best wins the reveal.' } },
   { key: 'provingGrounds', audience: 'member', built: false, commands: ['prove'], // proving grounds: solo async daily gauntlet, per-member seeds, weekly Prover track. Ephemeral.
     help: { name: '🏅 Proving Grounds', value: 'A solo daily gauntlet you run on your own time. Climb the daily leaderboard and the weekly Prover track, and your score still earns for your tribe.' } },
+  // Member-founded tribe: a regular member (not staff) may found ONE tribe, backed by 9 member/trial-mod cosigns,
+  // one at a time server-wide (owner 2026-08-05). Gated on the `/tribe found` subcommand handler. Built DARK.
+  { key: 'memberFoundedTribe', audience: 'member', built: false }, // no help entry → stays out of the bot guide; no own command (subcommand of /tribe)
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist

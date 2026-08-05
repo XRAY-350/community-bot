@@ -1255,6 +1255,17 @@ async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, s
 async function sweepExpiredWarVotes(guild) {
   for (const war of tribes.expiredWarVotes(Date.now())) await resolveWarVoteRecord(guild, war).catch(e => console.error('[tribe war] resolve:', e.message));
 }
+// A member-founding petition lapses if it doesn't reach its cosigns in the window — frees the one-at-a-time slot.
+async function sweepMemberFounding(guild) {
+  const req = tribes.getMemberFounding();
+  if (!req || Date.now() - req.createdAt < tribes.MEMBER_FOUND_EXPIRY_MS) return;
+  tribes.clearMemberFounding();
+  if (req.channelId && req.messageId) {
+    const ch = await guild.channels.fetch(req.channelId).catch(() => null);
+    const msg = ch && await ch.messages.fetch(req.messageId).catch(() => null);
+    if (msg) await msg.edit({ content: `## 🏴 Tribe founding lapsed\n> <@${req.founderId}>’s petition to found **${req.identity.name}** didn’t reach ${tribes.MEMBER_FOUND_COSIGNS} cosigns in time. The slot is open again.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+  }
+}
 // Coin flip that decides a DECLINED (or timed-out) war — 50/50 war vs peace. Shared by the defender's
 // Decline button and the 24h stuck-war sweep, so a leader who just ignores the prompt can't veto forever.
 async function resolveWarByChance(guild, war, declineNote) {
@@ -2247,6 +2258,28 @@ function tribeIdentityModal() {
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('points_name').setLabel('Activity points name, e.g. Tides (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(20)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('leader_title').setLabel('Head title, e.g. Warden (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)));
 }
+// Member-founded tribe: ONE modal (the mod path is a multi-step wizard, but a member just needs the essentials).
+function tribeMemberFoundModal() {
+  return new ModalBuilder().setCustomId('tribemfound_modal').setTitle('Found a member-led tribe').addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('name').setLabel('Full tribe name').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('short_name').setLabel('Short name for cards (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Tribe emoji (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('color').setLabel('Colour hex, e.g. #2A426A').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(7)));
+}
+// Renders the live member-founding petition (content + Cosign / Raise button), shared by the modal + cosign handlers.
+function renderMemberFounding(req) {
+  const need = Math.max(0, tribes.MEMBER_FOUND_COSIGNS - req.cosigns.length);
+  const id = req.identity, ready = need === 0;
+  const signed = req.cosigns.length ? req.cosigns.map(u => `<@${u}>`).join(', ') : '_none yet_';
+  const header = `## 🏴 A new tribe wants to rise\n> <@${req.founderId}> wants to found **${id.emoji ? id.emoji + ' ' : ''}${id.name}**.\n> It forms once **${tribes.MEMBER_FOUND_COSIGNS} members cosign** it. Cosigners must be regular members — trial mods count, but mods/admins/owners can’t.`;
+  const tally = ready
+    ? `\n-# ✅ **${tribes.MEMBER_FOUND_COSIGNS}/${tribes.MEMBER_FOUND_COSIGNS} reached!** <@${req.founderId}> can raise the tribe now.\n-# Cosigned by: ${signed}`
+    : `\n-# Cosigned by: ${signed} — **${req.cosigns.length}/${tribes.MEMBER_FOUND_COSIGNS}** (${need} more)`;
+  const btn = ready
+    ? new ButtonBuilder().setCustomId(`tribemfound_create:${req.founderId}`).setLabel('🏴 Raise the tribe').setStyle(ButtonStyle.Success)
+    : new ButtonBuilder().setCustomId('tribemfound_cosign').setLabel('✅ Cosign').setStyle(ButtonStyle.Success);
+  return { content: header + tally, components: [new ActionRowBuilder().addComponents(btn)], allowedMentions: ready ? { users: [req.founderId] } : { parse: [] } };
+}
 function tribeColorsModal(w) {
   const colorInput = new TextInputBuilder().setCustomId('color').setLabel('Primary colour hex, e.g. #2A426A').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(7);
   if (w?.color != null) colorInput.setValue('#' + w.color.toString(16).padStart(6, '0'));
@@ -3236,6 +3269,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('tribe').setDescription('Your tribe: info, roster, standings, and (leaders) set the motto')
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('found').setDescription('Rally members to found a brand-new tribe (needs 9 cosigns)'))
         .addSubcommand(s => s.setName('motto').setDescription('Set your tribe’s motto (leaders only)')
           .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
         .addSubcommand(s => s.setName('banner').setDescription('Set your tribe’s banner image (leaders; members make the art)')
@@ -3530,7 +3564,9 @@ client.once('ready', async () => {
   if (dguild) await sweepExpiredMusters(dguild).catch(e => console.error(`[tribe muster] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
   if (dguild) await sweepExpiredWarVotes(dguild).catch(e => console.error(`[tribe war] boot sweep: ${e.message}`));
+  if (dguild) await sweepMemberFounding(dguild).catch(e => console.error(`[member-found] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredWarVotes(g)).catch(() => {}), 5 * 60 * 1000);
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMemberFounding(g)).catch(() => {}), 5 * 60 * 1000);
   // Auto-resolve wars stuck ≥24h awaiting the defender's Accept/Decline (boot + hourly).
   if (dguild) await sweepStuckWars(dguild).catch(e => console.error(`[tribe war] stuck sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStuckWars(g)).catch(() => {}), 3600000);
@@ -5038,6 +5074,62 @@ client.on('interactionCreate', async (interaction) => {
     wizardTouch(interaction.user.id, { channelNames: Object.keys(channelNames).length ? channelNames : null, channelTopics: Object.keys(channelTopics).length ? channelTopics : null });
     const msg = wizardStatusMessage(interaction.user.id);
     return interaction.message ? interaction.update(msg) : interaction.reply({ ...msg, flags: MessageFlags.Ephemeral });
+  }
+  // ---- Member-founded tribe: the founder's identity modal → posts the cosign petition ----
+  if (interaction.isModalSubmit?.() && interaction.customId === 'tribemfound_modal') {
+    if (!features.enabled('memberFoundedTribe')) return interaction.reply({ content: 'Founding a tribe as a member isn’t available yet.', flags: MessageFlags.Ephemeral });
+    if (opspanel.memberTier(interaction.member) || isTrialMod(interaction)) return interaction.reply({ content: 'Only a regular member can found a member-led tribe.', flags: MessageFlags.Ephemeral });
+    if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a tribe.', flags: MessageFlags.Ephemeral });
+    const name = interaction.fields.getTextInputValue('name').trim().slice(0, 80);
+    if (!name) return interaction.reply({ content: 'Give the tribe a name.', flags: MessageFlags.Ephemeral });
+    const color = parseTribeHex(interaction.fields.getTextInputValue('color'));
+    if (color === null) return interaction.reply(badHexReply('primary'));
+    const identity = { name, shortName: interaction.fields.getTextInputValue('short_name').trim().slice(0, 40) || name, emoji: interaction.fields.getTextInputValue('emoji').trim().slice(0, 10) || null, color };
+    const req = tribes.startMemberFounding(interaction.user.id, identity);
+    if (!req) return interaction.reply({ content: 'A member-founded tribe (or an open petition) already exists — only one at a time.', flags: MessageFlags.Ephemeral });
+    const announce = tribes.getAnnounceInfo();
+    const ch = (announce?.channelId && await interaction.guild.channels.fetch(announce.channelId).catch(() => null)) || interaction.channel;
+    const posted = ch && await ch.send(renderMemberFounding(req)).catch(() => null);
+    if (!posted) { tribes.clearMemberFounding(); return interaction.reply({ content: 'Couldn’t post the petition anywhere. Ask staff to check the tribe-announcements channel.', flags: MessageFlags.Ephemeral }); }
+    tribes.setMemberFoundingMessage(ch.id, posted.id);
+    return interaction.reply({ content: `🏴 Your founding petition is live in <#${ch.id}>. Rally **${tribes.MEMBER_FOUND_COSIGNS}** members (trial mods count) to cosign it.`, flags: MessageFlags.Ephemeral });
+  }
+  // ---- Member-founded tribe: a member/trial-mod cosigns ----
+  if (interaction.isButton?.() && interaction.customId === 'tribemfound_cosign') {
+    const req = tribes.getMemberFounding();
+    if (!req) return interaction.reply({ content: 'This founding petition is no longer active.', flags: MessageFlags.Ephemeral });
+    if (interaction.user.id === req.founderId) return interaction.reply({ content: 'You can’t cosign your own founding petition.', flags: MessageFlags.Ephemeral });
+    if (config.verifiedRoleId && !interaction.member.roles.cache.has(config.verifiedRoleId)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
+    if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
+    const updated = tribes.cosignMemberFounding(interaction.user.id);
+    if (!updated) return interaction.reply({ content: 'You already cosigned this.', flags: MessageFlags.Ephemeral });
+    return interaction.update(renderMemberFounding(updated));
+  }
+  // ---- Member-founded tribe: the founder raises it once 9 cosigns are reached ----
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribemfound_create:')) {
+    const founderId = interaction.customId.split(':')[1];
+    if (interaction.user.id !== founderId) return interaction.reply({ content: 'Only the founder can raise the tribe.', flags: MessageFlags.Ephemeral });
+    const req = tribes.getMemberFounding();
+    if (!req || req.founderId !== founderId) return interaction.reply({ content: 'This founding petition is no longer active.', flags: MessageFlags.Ephemeral });
+    if (req.cosigns.length < tribes.MEMBER_FOUND_COSIGNS) return interaction.reply({ content: `Not enough cosigns yet (**${req.cosigns.length}/${tribes.MEMBER_FOUND_COSIGNS}**).`, flags: MessageFlags.Ephemeral });
+    if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re in a tribe now — can’t found another.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const id = req.identity;
+      const b = await buildTribe(interaction.guild, { name: id.name, shortName: id.shortName, emoji: id.emoji, color: id.color, style: 'smallcaps', leaderMember: interaction.member }, config);
+      tribes.update(b.tribe.key, { foundedByMod: false, foundedByMember: true });   // member-led → exempt from the mod-leader requirement (like admin-founded)
+      for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
+      tribes.setMemberFoundedTribe(b.tribe.key);   // records the one-at-a-time slot AND clears the pending petition
+      if (req.channelId && req.messageId) {
+        const pch = await interaction.guild.channels.fetch(req.channelId).catch(() => null);
+        const pmsg = pch && await pch.messages.fetch(req.messageId).catch(() => null);
+        if (pmsg) await pmsg.edit({ content: `## ${b.tribe.emoji || '🏴'} ${b.tribe.name} has risen!\n> Founded by <@${founderId}>, cosigned by ${req.cosigns.map(u => `<@${u}>`).join(', ')}.\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}> — \`/request-role\` the role to join.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+      }
+      return interaction.editReply(`🏴 **${b.tribe.name}** is founded — you’re its leader. Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`);
+    } catch (e) {
+      console.error('[tribe member-found]', e.message);
+      return interaction.editReply(`❌ Couldn’t raise the tribe: ${e.message}`);
+    }
   }
   if (interaction.isButton?.() && interaction.customId === 'tribewiz_identity_btn') {
     const w = wizardGet(interaction.user.id);
@@ -6832,6 +6924,18 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'tribe') {
     const sub = interaction.options.getSubcommand();
+    // ---- Member-founded tribe: a regular member rallies 9 cosigns to found one (dark until enabled). Handled
+    // BEFORE the tribe-resolution below, because a founder isn't in a tribe yet. ----
+    if (sub === 'found') {
+      if (!features.enabled('memberFoundedTribe')) return interaction.reply({ content: 'Founding a tribe as a member isn’t available yet.', flags: MessageFlags.Ephemeral });
+      if (config.verifiedRoleId && !interaction.member.roles.cache.has(config.verifiedRoleId)) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
+      if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'This is a **member-led** tribe path — mods/admins/owners found tribes through `/tribe-admin`.', flags: MessageFlags.Ephemeral });
+      if (isTrialMod(interaction)) return interaction.reply({ content: 'Trial mods can **cosign** a member-founded tribe, but the founder has to be a regular member.', flags: MessageFlags.Ephemeral });
+      if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a tribe — leave it first before founding a new one.', flags: MessageFlags.Ephemeral });
+      if (tribes.getMemberFoundedTribeKey()) return interaction.reply({ content: 'There’s already a member-founded tribe (only one is allowed at a time). It has to disband before another can be founded.', flags: MessageFlags.Ephemeral });
+      if (tribes.getMemberFounding()) return interaction.reply({ content: 'A member-founded tribe petition is already open. Only one can run at a time — wait for it to finish or lapse.', flags: MessageFlags.Ephemeral });
+      return safeShowModal(interaction, tribeMemberFoundModal());
+    }
     const argTribe = interaction.options.getString('tribe');
     // Warden tools always act on the tribe you LEAD/belong to; info/roster accept an explicit tribe arg.
     const wardenSub = ['invite', 'banish', 'announce', 'note', 'rank'].includes(sub);
