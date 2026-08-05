@@ -258,6 +258,10 @@ function resetWeeklyGlory(guild) {
 function weekStartMs(nowMs) { const d = new Date(nowMs); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - d.getUTCDay(), 0, 0, 0, 0); }
 function dueForWeeklyCrown(nowMs) { const s = load(); return !s.lastGloryResetWeek || s.lastGloryResetWeek < weekStartMs(nowMs); }
 function markWeeklyCrownDone(nowMs) { const s = load(); s.lastGloryResetWeek = weekStartMs(nowMs); save(s); }
+// The weekly Chronicle chapter (Phase 7) runs once per week, on the same boundary but AFTER the crown so it
+// captures it. Separate marker so it's independent of the crown's.
+function dueForChronicle(nowMs) { const s = load(); return !s.lastChronicleWeek || s.lastChronicleWeek < weekStartMs(nowMs); }
+function markChronicleDone(nowMs) { const s = load(); s.lastChronicleWeek = weekStartMs(nowMs); save(s); }
 
 // ---- Seasons (owner build-out: the long-term competitive container ON TOP of the weekly crown). A season
 // spans several weeks; every weekly Crown also banks a "season crown" (see resetWeeklyGlory). At season end
@@ -592,7 +596,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
   startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
-  dueForWeeklyCrown, markWeeklyCrownDone,
+  dueForWeeklyCrown, markWeeklyCrownDone, dueForChronicle, markChronicleDone,
   SEASON_LEN_MS, ensureSeason, getSeason, addSeasonCrown, seasonStandings, dueForSeasonEnd, seasonHistory, currentChampionKey, endSeasonAndRotate,
   recordArenaPlay, getArenaStreak,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,

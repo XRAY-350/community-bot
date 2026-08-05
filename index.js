@@ -447,6 +447,7 @@ async function buildTribe(guild, opts, config) {
   // Keep #roles' tribe picker in sync — its options are baked in at message-send time, so a newly founded
   // tribe never shows up as a pledge choice on its own without re-rendering that message.
   if (config.rolesChannelId) await roleselect.refreshTribeBlock(guild, config.rolesChannelId).catch(() => {});
+  lore.record({ type: 'founding', title: `${tribe.shortName || tribe.name} was founded`, tribes: [tribe.key] });
   return { tribe, role, leaderRole, cat, throne, hall, vc };
 }
 // The pinned Throne Hub every tribe's throne gets — a button panel, not just text (owner, 2026-08-03: "add
@@ -605,6 +606,42 @@ async function getSpectacleChannel(guild) {
 async function broadcastSpectacle(guild, content, roleIds = []) {
   const ch = await getSpectacleChannel(guild);
   if (ch) await ch.send({ content, allowedMentions: { roles: roleIds } }).catch(() => {});
+}
+async function getChronicleChannel(guild) {
+  if (config.tribeChronicleChannelId) { const c = await guild.channels.fetch(config.tribeChronicleChannelId).catch(() => null); if (c) return c; }
+  return getSpectacleChannel(guild);
+}
+// The Chronicle (Phase 7, Permanence): once a week the bot composes a narrative chapter of the week just
+// gone, read straight from the Lore Log. Template-composed (no Haiku dependency), history-book voice. Runs on
+// the same weekly boundary as the crown but AFTER it, so the just-crowned tribe is in the chapter. A quiet week
+// (nothing recorded) writes nothing.
+async function processChronicleIfDue(guild) {
+  if (!guild || !tribes.dueForChronicle(Date.now())) return;
+  tribes.markChronicleDone(Date.now());
+  const now = Date.now(), weekAgo = now - 7 * 86400000;
+  const events = lore.between(weekAgo, now).filter(e => e.type !== 'chronicle');
+  const crowns = events.filter(e => e.type === 'crown');
+  const wars = events.filter(e => e.type === 'war');
+  const arenas = events.filter(e => e.type === 'arena');
+  const musters = events.filter(e => e.type === 'muster');
+  const ages = events.filter(e => e.type === 'age_champion' || e.type === 'age_begin' || e.type === 'age_end');
+  const foundings = events.filter(e => e.type === 'founding');
+  if (!crowns.length && !wars.length && !arenas.length && !musters.length && !ages.length && !foundings.length) return;   // a quiet week: nothing to tell
+  const arenaWins = {}; for (const a of arenas) (a.tribes || []).forEach(k => { arenaWins[k] = (arenaWins[k] || 0) + 1; });
+  const topArena = Object.entries(arenaWins).sort((x, y) => y[1] - x[1])[0];
+  const season = tribes.getSeason();
+  const parts = ['# 📜 The Chronicle', `-# A record of the week just past${season && season.name ? `, in ${season.name}` : ''}.`];
+  if (ages.length) parts.push(ages.map(e => `🏆 ${e.title}.`).join('\n'));
+  if (foundings.length) parts.push(`🏴 **New banners raised.** ${foundings.map(f => f.title).join('; ')}.`);
+  if (crowns.length) parts.push(`👑 **The Crown.** ${crowns.map(c => c.title).join('; ')}.`);
+  if (wars.length) parts.push(`⚔️ **Wars.** ${wars.map(w => w.title).join('; ')}.`);
+  if (arenas.length) parts.push(`🎪 **The Arena.** ${arenas.length} contest${arenas.length === 1 ? ' was' : 's were'} fought${topArena ? `, and ${tribeName(topArena[0])} claimed the most (${topArena[1]})` : ''}.`);
+  if (musters.length) parts.push(`🪖 **The Muster.** ${musters.length} call${musters.length === 1 ? '' : 's'} to arms went out across the tribes.`);
+  parts.push('-# So it is written.');
+  const ch = await getChronicleChannel(guild);
+  if (ch) await ch.send({ content: parts.join('\n\n').slice(0, 4000), allowedMentions: { parse: [] } }).catch(() => {});
+  lore.record({ type: 'chronicle', title: 'A chapter of the Chronicle was written' });
+  console.log('[tribe chronicle] wrote a weekly chapter.');
 }
 // Phase 6 catch-up: tribes in the bottom half of the live standings earn a bonus multiplier on event payouts
 // so last place can climb back instead of quitting. Neutral (1x) when there are too few tribes to matter.
@@ -2864,6 +2901,10 @@ client.once('ready', async () => {
   // Season end: boot catch-up + hourly check (idempotent — ensureSeason opens S1, dueForSeasonEnd gates it).
   if (dguild) await processSeasonEndIfDue(dguild).catch(e => console.error(`[tribe season] boot check: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => processSeasonEndIfDue(g)).catch(() => {}), 3600000);
+  // The Chronicle: weekly chapter from the Lore Log. Boot catch-up + hourly; registered AFTER the crown so on
+  // any given tick the crown records first and the chapter captures it (both weekly, same boundary, gated inside).
+  if (dguild) await processChronicleIfDue(dguild).catch(e => console.error(`[tribe chronicle] boot check: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => processChronicleIfDue(g)).catch(() => {}), 3600000);
   // Recruitment payouts: boot catch-up + hourly (gated inside; the stick period is days, so hourly is ample).
   if (dguild) await sweepRecruitment(dguild).catch(e => console.error(`[recruitment] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepRecruitment(g)).catch(() => {}), 3600000);
@@ -6253,6 +6294,7 @@ client.on('interactionCreate', async (interaction) => {
       const t = tribes.register({ key, name: interaction.options.getString('name'), shortName: interaction.options.getString('name'),
         emoji: interaction.options.getString('emoji') || '🏴', color: role.color || 0x2A426A,
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
+      lore.record({ type: 'founding', title: `${t.shortName || t.name} was founded`, tribes: [t.key] });
       return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in #tribes-hub Standings and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'arena') {

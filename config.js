@@ -158,6 +158,8 @@ const config = {
   // Public "spectacle" channel for big tribe moments (war results, crownings, season champions) so lurkers
   // and newcomers see the drama. Empty = fall back to the tribe-announcements channel.
   tribeSpectacleChannelId: opt('TRIBE_SPECTACLE_CHANNEL_ID', ''),
+  // The Chronicle channel: where the weekly history chapter is written. Empty = fall back to the spectacle chan.
+  tribeChronicleChannelId: opt('TRIBE_CHRONICLE_CHANNEL_ID', ''),
 
   // Daily digest — a 24h recap of every job (posted to the mod-conflict channel) as an embed.
   digestEnabled: bool('DIGEST_ENABLED', true),
