@@ -148,8 +148,12 @@ const config = {
   arenaAutoStart: bool('ARENA_AUTO_START', true),
   // Active window is in this timezone (majority of the server is Central Europe, so default there, not US).
   arenaAutoTimezone: opt('ARENA_AUTO_TIMEZONE', 'Europe/Berlin'),
-  arenaAutoStartHour: num('ARENA_AUTO_START_HOUR', 10),  // earliest local hour an auto-arena may fire
-  arenaAutoEndHour: num('ARENA_AUTO_END_HOUR', 24),      // latest (exclusive) local hour
+  arenaAutoStartHour: num('ARENA_AUTO_START_HOUR', 10),  // PEAK window: earliest local hour (full events, all types)
+  arenaAutoEndHour: num('ARENA_AUTO_END_HOUR', 24),      // PEAK window: latest (exclusive) local hour
+  // DOWNTIME window (6-8h block, calm low-ping events that pay bonus Treasury but no Glory). Outside both
+  // windows is dead (no events). Default downtime 00:00-08:00 local; the ~08:00-10:00 gap is the dead lull.
+  arenaDowntimeStartHour: num('ARENA_DOWNTIME_START_HOUR', 0),
+  arenaDowntimeEndHour: num('ARENA_DOWNTIME_END_HOUR', 8),
 
   // Public "spectacle" channel for big tribe moments (war results, crownings, season champions) so lurkers
   // and newcomers see the drama. Empty = fall back to the tribe-announcements channel.

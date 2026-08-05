@@ -76,6 +76,22 @@ quiz = one entry in `TRIVIA_CATEGORY` + label/default/menu; another generated ga
 
 ---
 
+## 6. Arena scheduling: peak / downtime / dead — DONE
+Replaces the old hard active-window (which left ~10h dead) with three modes in the configured timezone
+(`arenaAutoTimezone`, default Europe/Berlin, since the server is majority Central Europe):
+- **Peak** (`arenaAutoStartHour`..`arenaAutoEndHour`, default 10:00-24:00): full slate (all 16 types), pings every
+  tribe, random 1h..2h spacing.
+- **Downtime** (`arenaDowntimeStartHour`..`arenaDowntimeEndHour`, default 00:00-08:00, a 6-8h block): only calm
+  low-interaction games (`DOWNTIME_TYPES` = blitz + word/riddle puzzles), **QUIET** (no role pings, no throne
+  heads-ups, so it never wakes sleeping members), sparser random 2h..3.5h spacing. Economy:
+  **2x Treasury (`DOWNTIME_TREASURY_MULT`) but ZERO Glory** — rewards night owls / off-timezone members with
+  spendable wealth while protecting the weekly crown as a peak-hours contest.
+- **Dead** (everything else, default 08:00-10:00): no events, the pre-dawn lull.
+
+Spacing is random-scheduled, not a fixed cooldown: `arena.recordEnd(now, downtime)` sets `nextAutoAt` to a
+random mode-aware gap; a hard 1h floor (`COOLDOWN_MS`) still gates manual + auto. `DAILY_CAP` raised to 16
+(peak + downtime both run). ~12 events/day. All knobs in config + arena.js.
+
 ## Status
 - [x] 1. Stronghold defense
 - [x] 2. Seasons

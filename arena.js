@@ -17,12 +17,14 @@ const RACE_TARGET = 10;     // clicks to win a race
 const TRIVIA_QUESTIONS = 10; // questions per trivia sprint (owner: the online bank is huge, so ask more)
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
 const COOLDOWN_MS = 60 * 60 * 1000;        // HARD FLOOR: at least 1h between events (owner) — for manual + auto
-const DAILY_CAP = 10;                       // max challenges per UTC day (headroom so the random spacing isn't truncated)
-// Auto events don't fire on a fixed cadence: each next auto event is scheduled at a RANDOM time in a 1h..2h
-// window after the last one ends (owner: "at least an hour between, but random within the ~1.5h window"), so
-// two can land ~1h apart or ~2h apart unpredictably (averaging ~1.5h).
-const AUTO_GAP_MIN_MIN = 60;                // never sooner than 1h after the last event
-const AUTO_GAP_SPREAD_MIN = 60;            // ...plus a random 0..60 min, so the gap is 1h..2h
+const DAILY_CAP = 16;                       // max/UTC day: peak (~14h) + downtime (~8h) both run, so this is raised
+// Auto events don't fire on a fixed cadence: each next auto event is scheduled at a RANDOM time after the last
+// one ends (owner: "at least an hour between, but random"). PEAK gap 1h..2h; DOWNTIME gap is longer (2h..3.5h)
+// so the quiet hours stay sparse. Which range is used depends on the mode passed to recordEnd.
+const AUTO_GAP_MIN_MIN = 60;                // peak: never sooner than 1h after the last event
+const AUTO_GAP_SPREAD_MIN = 60;            // ...plus a random 0..60 min, so the peak gap is 1h..2h
+const AUTO_GAP_NIGHT_MIN = 120;            // downtime: never sooner than 2h
+const AUTO_GAP_NIGHT_SPREAD = 90;          // ...plus a random 0..90 min, so the downtime gap is 2h..3.5h
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.
@@ -50,11 +52,12 @@ function winner() { const a = get(); if (!a) return null; let best = null, bs = 
 // Cooldown + daily cap (owner). recordEnd() stamps the end of a challenge and bumps today's count (reset on
 // a new UTC day). startBlocked() returns a reason string if a new one can't start yet, or null if it can.
 function utcDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
-function recordEnd(nowMs) {
+function recordEnd(nowMs, downtime) {
   const s = load(); const now = nowMs || Date.now(); const day = utcDay(now);
   if (s.day !== day) { s.day = day; s.count = 0; }
   s.count = (s.count || 0) + 1; s.lastEndedAt = now;
-  s.nextAutoAt = now + (AUTO_GAP_MIN_MIN + randInt(AUTO_GAP_SPREAD_MIN + 1)) * 60000;   // random 1h..2h until the next auto event
+  const [gmin, gspread] = downtime ? [AUTO_GAP_NIGHT_MIN, AUTO_GAP_NIGHT_SPREAD] : [AUTO_GAP_MIN_MIN, AUTO_GAP_SPREAD_MIN];
+  s.nextAutoAt = now + (gmin + randInt(gspread + 1)) * 60000;   // random gap (1h..2h peak, 2h..3.5h downtime)
   save(s);
 }
 // Is an AUTO event due? True once we've passed the randomly-scheduled next-auto time (or if none is set yet).
