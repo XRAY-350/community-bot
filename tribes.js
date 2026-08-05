@@ -232,6 +232,7 @@ function resetWeeklyGlory(guild) {
   if (winner && winner.glory > 0) {
     s.tribes[winner.key].treasury = (s.tribes[winner.key].treasury || 0) + 500;
     s.tribes[winner.key].crownsWon = (s.tribes[winner.key].crownsWon || 0) + 1;
+    s.tribes[winner.key].seasonCrowns = (s.tribes[winner.key].seasonCrowns || 0) + 1;   // counts toward the Season Champion
   }
   save(s);
   return (winner && winner.glory > 0) ? { key: winner.key, glory: winner.glory } : null;
@@ -242,6 +243,44 @@ function resetWeeklyGlory(guild) {
 function weekStartMs(nowMs) { const d = new Date(nowMs); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - d.getUTCDay(), 0, 0, 0, 0); }
 function dueForWeeklyCrown(nowMs) { const s = load(); return !s.lastGloryResetWeek || s.lastGloryResetWeek < weekStartMs(nowMs); }
 function markWeeklyCrownDone(nowMs) { const s = load(); s.lastGloryResetWeek = weekStartMs(nowMs); save(s); }
+
+// ---- Seasons (owner build-out: the long-term competitive container ON TOP of the weekly crown). A season
+// spans several weeks; every weekly Crown also banks a "season crown" (see resetWeeklyGlory). At season end
+// the tribe with the most season crowns is the Season Champion (permanent hall-of-fame + a rotating role),
+// then season crowns soft-reset and a fresh season opens. Treasury, Tides, shop unlocks, and lifetime
+// crownsWon all PERSIST — only the season race resets, so the competition re-opens without erasing progress.
+const SEASON_LEN_MS = 6 * 7 * 24 * 60 * 60 * 1000;   // 6 weeks (tunable)
+function ensureSeason(nowMs) {
+  const s = load(); const now = nowMs || Date.now();
+  if (!s.season) { s.season = { number: 1, startedAt: now, endsAt: now + SEASON_LEN_MS }; save(s); }
+  return s.season;
+}
+function getSeason() { return load().season || null; }
+function addSeasonCrown(key) { const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0; t.seasonCrowns = (t.seasonCrowns || 0) + 1; save(s); return t.seasonCrowns; }
+function seasonStandings(guild) {
+  return all().map(t => ({ ...t, seasonCrowns: t.seasonCrowns || 0, memberCount: guild.roles.cache.get(t.roleId)?.members.size ?? 0 }))
+    .sort((a, b) => b.seasonCrowns - a.seasonCrowns || (b.treasury || 0) - (a.treasury || 0) || b.memberCount - a.memberCount);
+}
+function dueForSeasonEnd(nowMs) { const s = load(); return !!s.season && (nowMs || Date.now()) >= s.season.endsAt; }
+function seasonHistory() { return load().seasonHistory || []; }
+function currentChampionKey() { const h = load().seasonHistory || []; return h.length ? h[h.length - 1].championKey : null; }
+// End the current season: crown the champion (most season crowns; tie-break treasury, members), record it in
+// the hall of fame, zero every tribe's season crowns, and open the next season. Returns
+// { previousNumber, champion: {key,name,crowns}|null, season }.
+function endSeasonAndRotate(guild, nowMs) {
+  const s = load(); const now = nowMs || Date.now();
+  const cur = s.season || { number: 1, startedAt: now - SEASON_LEN_MS, endsAt: now };
+  const board = Object.values(s.tribes || {}).map(t => ({ key: t.key, name: t.shortName || t.name, crowns: t.seasonCrowns || 0, treasury: t.treasury || 0, memberCount: guild.roles.cache.get(t.roleId)?.members.size ?? 0 }))
+    .sort((a, b) => b.crowns - a.crowns || b.treasury - a.treasury || b.memberCount - a.memberCount);
+  const top = board[0];
+  const champion = (top && top.crowns > 0) ? { key: top.key, name: top.name, crowns: top.crowns } : null;
+  if (!s.seasonHistory) s.seasonHistory = [];
+  s.seasonHistory.push({ number: cur.number, championKey: champion ? champion.key : null, championName: champion ? champion.name : null, crowns: champion ? champion.crowns : 0, endedAt: now });
+  for (const t of Object.values(s.tribes || {})) t.seasonCrowns = 0;
+  s.season = { number: cur.number + 1, startedAt: now, endsAt: now + SEASON_LEN_MS };
+  save(s);
+  return { previousNumber: cur.number, champion, season: s.season };
+}
 
 // ---- The land shop: milestone-gated unlocks (see TRIBE_PHASE5_SPEC.md section 3) + the uncapped Stronghold
 // Tier sink (section 3a). The unlock CATALOG (gates, costs, what each one does) lives in index.js since
@@ -494,6 +533,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
+  SEASON_LEN_MS, ensureSeason, getSeason, addSeasonCrown, seasonStandings, dueForSeasonEnd, seasonHistory, currentChampionKey, endSeasonAndRotate,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
   startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,

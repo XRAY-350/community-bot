@@ -491,6 +491,8 @@ function tribeHubEmbed() {
     + `Being active in your tribe's hall moves you up its rank ladder automatically (each tribe names its own four rungs), ranks only ever go up, never down. Staff who join as regular members automatically hold **General**, above the whole ladder.\n\n`
     + `## Treasury, Glory, and the Weekly Crown\n`
     + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`, war raids, ally gifts).\n\n`
+    + `## Seasons\n`
+    + `Weekly crowns stack up over a **6-week season**. When it ends, the tribe with the most crowns that season is named **🏆 Season Champion**, enters the permanent hall of fame, and wears the reigning-champion role until the next season is decided. Then season crowns reset and a fresh race begins, your Treasury, ranks, and unlocks all carry over, so the competition re-opens without erasing anything. Check the current season and standings with the **Standings** button below.\n\n`
     + `## The Shop\n`
     + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, faster Tides earning, and a **custom tribe icon**. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for **war defense** (each tier adds defensive power and blunts an enemy raid).\n\n`
     + `## Musters\n`
@@ -591,6 +593,37 @@ async function processWeeklyCrownIfDue(guild) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
+}
+// The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
+async function ensureSeasonChampionRole(guild) {
+  const s = tribes.load();
+  if (s.seasonChampRoleId) { const r = guild.roles.cache.get(s.seasonChampRoleId) || await guild.roles.fetch(s.seasonChampRoleId).catch(() => null); if (r) return r; }
+  const role = await guild.roles.create({ name: '🏆 Season Champion', colors: { primaryColor: 0xE67E22 }, hoist: true, mentionable: false, reason: 'Tribe Season Champion' }).catch(() => null);
+  if (role) { s.seasonChampRoleId = role.id; tribes.save(s); }
+  return role;
+}
+// Boot catch-up + hourly check (like the weekly crown). ensureSeason lazily opens Season 1; when the season
+// window passes, endSeasonAndRotate crowns the champion (most weekly crowns this season), records the hall of
+// fame, soft-resets season crowns, and opens the next season. Champion gets the rotating role; announced
+// publicly in tribe-announcements + the champion's throne (Phase 4 will widen the broadcast).
+async function processSeasonEndIfDue(guild) {
+  if (!guild) return;
+  tribes.ensureSeason(Date.now());
+  if (!tribes.dueForSeasonEnd(Date.now())) return;
+  await ensureMembers(guild);
+  const { previousNumber, champion, season } = tribes.endSeasonAndRotate(guild, Date.now());
+  const champTribe = champion ? tribes.get(champion.key) : null;
+  const champRole = await ensureSeasonChampionRole(guild);
+  if (champRole) for (const m of [...champRole.members.values()]) await m.roles.remove(champRole.id, 'Season ended — champion rotates').catch(() => {});
+  if (champRole && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of [...tr.members.values()]) await m.roles.add(champRole.id, `Season ${previousNumber} champion: ${champTribe.key}`).catch(() => {}); }
+  const endsAt = Math.floor(season.endsAt / 1000);
+  const msg = champion
+    ? `# 🏆 Season ${previousNumber} Champion: ${champTribe?.emoji || '🏴'} ${champion.name}!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} this season and now wear <@&${champRole?.id}> until Season ${season.number} is decided.\n**Season ${season.number}** begins now and runs to <t:${endsAt}:D>. Season crowns reset — the race is wide open. (Treasury, ranks, and unlocks all carry over.)`
+    : `# 🏁 Season ${previousNumber} ended — no champion.\nNo tribe claimed a weekly crown this season. **Season ${season.number}** begins now, running to <t:${endsAt}:D>. Go make history.`;
+  const announce = await ensureTribeAnnounce(guild, config).catch(() => null);
+  if (announce) await announce.send({ content: msg, allowedMentions: { parse: [] } }).catch(() => {});
+  if (champTribe && champTribe.throneId) { const throne = await guild.channels.fetch(champTribe.throneId).catch(() => null); if (throne) await throneSend(throne, { content: msg, allowedMentions: { parse: [] } }).catch(() => {}); }
+  console.log(`[tribe season] Season ${previousNumber} ended (champion=${champion ? champion.key : 'none'}); Season ${season.number} started.`);
 }
 // Catches "General" (staff auto-rank) drift that join-time syncing alone would miss: a member promoted to
 // mod/admin AFTER already being in a tribe, or demoted/banished afterward. Iterates every tribe's current
@@ -2568,6 +2601,9 @@ client.once('ready', async () => {
   // Weekly tribe crown: boot catch-up + hourly check (idempotent — see tribes.dueForWeeklyCrown).
   if (dguild) await processWeeklyCrownIfDue(dguild).catch(e => console.error(`[tribe crown] boot check: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => processWeeklyCrownIfDue(g)).catch(() => {}), 3600000);
+  // Season end: boot catch-up + hourly check (idempotent — ensureSeason opens S1, dueForSeasonEnd gates it).
+  if (dguild) await processSeasonEndIfDue(dguild).catch(e => console.error(`[tribe season] boot check: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => processSeasonEndIfDue(g)).catch(() => {}), 3600000);
   // Muster auto-close: boot catch-up + every 5min (a muster's 2h window makes a tighter cadence worth it).
   if (dguild) await sweepExpiredMusters(dguild).catch(e => console.error(`[tribe muster] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredMusters(g)).catch(() => {}), 5 * 60 * 1000);
@@ -4223,9 +4259,13 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton?.() && interaction.customId === 'tribehub_standings') {
     const board = tribes.standings(interaction.guild);
     if (!board.length) return interaction.reply({ content: 'No tribes are set up yet.', flags: MessageFlags.Ephemeral });
-    const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury`).join('\n');
-    const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown, and resets each week. Treasury is the tribe’s permanent bank.' });
-    return interaction.reply({ content: `## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed], flags: MessageFlags.Ephemeral });
+    const season = tribes.ensureSeason(Date.now());
+    const sBoard = tribes.seasonStandings(interaction.guild);
+    const champLeader = sBoard[0] && sBoard[0].seasonCrowns > 0 ? sBoard[0] : null;
+    const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury · 👑×${t.seasonCrowns || 0} season`).join('\n');
+    const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown (resets weekly). Season crowns (👑×) decide the Season Champion.' });
+    const seasonLine = `## 🏆 Season ${season.number}\n-# Ends <t:${Math.floor(season.endsAt / 1000)}:R> · ${champLeader ? `leading: ${champLeader.emoji || '🏴'} ${champLeader.shortName || champLeader.name} (👑×${champLeader.seasonCrowns})` : 'no season crowns claimed yet'}`;
+    return interaction.reply({ content: `${seasonLine}\n## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed], flags: MessageFlags.Ephemeral });
   }
   // Cross-tribe views — one embed per tribe, so there's no "which tribe" argument to fill in. Your OWN
   // tribe's throne panel has the single-tribe Roster/Leaderboard buttons for the full top-15 depth.
