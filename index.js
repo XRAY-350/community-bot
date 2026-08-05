@@ -325,6 +325,7 @@ async function buildTribe(guild, opts, config) {
   const emoji = opts.emoji || '🏴';
   const small = opts.style !== 'plain';
   const chName = base => `${emoji}┆${small ? toSmallCaps(base) : base}`;
+  const rankLabel = base => (small ? toSmallCaps(base) : base);   // rank/staff-rank role names in the server's small-caps font
 
   // Slot a new tribe directly under the most-recently-founded one, so as more tribes get created they stay
   // visually grouped instead of landing wherever Discord defaults a fresh role/category (the bottom of the
@@ -366,8 +367,8 @@ async function buildTribe(guild, opts, config) {
   if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
   // "General" — any staff (mod/admin) who joins as a regular member sits above the whole rank ladder
   // automatically (owner, 2026-08-03). Sits just below the leader role in the hierarchy.
-  const staffRankRole = await guild.roles.create({ name: `${emoji} ${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
-    .catch(() => guild.roles.create({ name: `${emoji} ${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
+  const staffRankRole = await guild.roles.create({ name: `${emoji} ${rankLabel(`${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`)}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
+    .catch(() => guild.roles.create({ name: `${emoji} ${rankLabel(`${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`)}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
   if (staffRankRole && slotLeaderPos != null) await staffRankRole.setPosition(slotLeaderPos).catch(() => {});
   const corner = config.cornerRoleId;
   const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
@@ -408,8 +409,8 @@ async function buildTribe(guild, opts, config) {
   const rankRoles = [];
   for (const r of tribes.RANK_LADDER) {
     // Rank roles carry the tribe's colour + emoji (owner, 2026-08-04: "all ranks themed to match" the tribe).
-    const rr = await guild.roles.create({ name: `${emoji} ${r.name}`, colors: rankColors, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` })
-      .catch(() => guild.roles.create({ name: `${emoji} ${r.name}`, color: opts.color, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` }).catch(() => null));
+    const rr = await guild.roles.create({ name: `${emoji} ${rankLabel(r.name)}`, colors: rankColors, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` })
+      .catch(() => guild.roles.create({ name: `${emoji} ${rankLabel(r.name)}`, color: opts.color, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` }).catch(() => null));
     if (rr) await rr.setPosition(1).catch(() => {});
     rankRoles.push({ ...r, roleId: rr ? rr.id : null });
   }
@@ -6273,7 +6274,7 @@ client.on('interactionCreate', async (interaction) => {
       for (const r of fresh.ranks) {   // rename the actual Discord rank roles to match
         if (!r.roleId) continue;
         const role = interaction.guild.roles.cache.get(r.roleId);
-        const want = `${fresh.emoji || '🏴'} ${r.name}`;
+        const want = `${fresh.emoji || '🏴'} ${toSmallCaps(r.name)}`;   // render in the server's small-caps font
         if (role && role.name !== want) await role.setName(want, 'tribe rank rename').catch(() => {});
       }
       return interaction.editReply(`✅ Renamed **${fresh.shortName || fresh.name}** ranks: ${fresh.ranks.map(r => r.name).join(' → ')}.`);
