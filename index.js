@@ -5101,7 +5101,13 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.user.id === req.founderId) return interaction.reply({ content: 'You can’t cosign your own founding petition.', flags: MessageFlags.Ephemeral });
     if (config.verifiedRoleId && !interaction.member.roles.cache.has(config.verifiedRoleId)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
     if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
-    if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'Cosigning **joins** this tribe, and you’re already in one. You’d have to be released first — the same as always, your tribe’s leader has to **banish** you (or you file a leave request). Once you’re tribe-free, come back and cosign.', flags: MessageFlags.Ephemeral });
+    if (tribes.myTribe(interaction.member)) {
+      // Cosigning JOINS this tribe, so you must leave your current one first. Rather than just tell them,
+      // kick off the SAME leave flow the hub/command use (files a leave request to their throne for the leader).
+      const r = await submitLeaveRequest(interaction.guild, interaction.member);
+      const lead = r.ok ? 'Cosigning **joins** this tribe, but you’re still in one — so I’ve started your release: ' : 'Cosigning **joins** this tribe, but you’re still in one. ';
+      return interaction.reply({ content: `${lead}${r.content}${r.ok ? '\nOnce your leader approves it, come back and cosign.' : ''}`, flags: MessageFlags.Ephemeral });
+    }
     const updated = tribes.cosignMemberFounding(interaction.user.id);
     if (!updated) return interaction.reply({ content: 'You already cosigned this.', flags: MessageFlags.Ephemeral });
     return interaction.update(renderMemberFounding(updated));
