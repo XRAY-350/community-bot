@@ -43,6 +43,7 @@ const achievements = require('./achievements');
 const recruitment = require('./recruitment');
 const lore = require('./lore');
 const quests = require('./quests');
+const sealed = require('./sealed');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
@@ -1709,6 +1710,163 @@ async function reconcileArena(guild) {
   _arenaTimers.end = setTimeout(() => endArena(guild).catch(e => console.error('[arena] end:', e.message)), remaining);
   if (arena.BUTTON_TYPES.includes(a.type)) _arenaTimers.round = setTimeout(() => askNextTrivia(guild).catch(() => {}), 25000);   // don't stall the current question
 }
+
+// ==== SEALED ARENA (spec: SEALED_ARENA_SPEC.md) =========================================================
+// Every tribe runs the SAME live challenge at the same time, blind, in its own throne. LOCKSTEP: one shared
+// round timer advances all thrones together; within a round each throne scores its own first correct answer
+// against the CLOCK (race-the-clock, so a small sharp tribe can beat a big one). Reveal via the spectacle queue.
+const SEALED_QUESTIONS = 6;             // questions per sealed arena
+const SEALED_ROUND_MS = 20000;          // time per question (shared across all thrones)
+const SEALED_FAST_MS = 2000;            // answer within this (relative to the throne's prompt) = full speed points
+const SEALED_CORRECT_PTS = 100;         // flat points for a correct answer
+const SEALED_SPEED_MAX = 100;           // max speed bonus, decaying linearly FAST_MS..ROUND_MS
+const SEALED_DAILY_CAP = 3;
+const SEALED_MIN_GAP_MS = 3 * 3600000;  // at least 3h between sealed arenas
+const _sealedTimers = { round: null };
+function clearSealedTimers() { if (_sealedTimers.round) { clearTimeout(_sealedTimers.round); _sealedTimers.round = null; } }
+// The 13 timing-precise types (button + typed); reaction + blitz excluded (no precise tap-time / not a race).
+function sealedGamePool() { return [...arena.BUTTON_TYPES, ...arena.TYPED_TYPES]; }
+// Build ONE question set shared by every throne (identical questions), de-duped for freshness.
+async function buildSealedQuestions(type) {
+  if (arena.BUTTON_TYPES.includes(type)) {
+    let qs;
+    if (type === 'truefalse') { const f = await arena.fetchBoolean(SEALED_QUESTIONS + 4); qs = arena.freshenQuestions('tf', (f && f.length) ? f : arena.localBoolean(SEALED_QUESTIONS), SEALED_QUESTIONS); }
+    else if (type === 'pattern') { qs = arena.genPattern(SEALED_QUESTIONS); }
+    else { const cat = arena.TRIVIA_CATEGORY[type]; const f = await arena.fetchTrivia(SEALED_QUESTIONS + 4, cat); qs = arena.freshenQuestions(type, (f && f.length) ? f : arena.localTrivia(SEALED_QUESTIONS, []), SEALED_QUESTIONS); }
+    return { kind: 'button', items: (qs || []).slice(0, SEALED_QUESTIONS) };
+  }
+  const used = [], items = [];
+  for (let i = 0; i < SEALED_QUESTIONS; i++) { const nx = arena.nextTyped(type, used); used.push(nx.key); items.push({ display: nx.display, answer: String(nx.answer) }); }
+  return { kind: 'typed', items };
+}
+function sealedRenderButton(type, item, qNum, tribeKey) {
+  const label = ARENA_LABEL[type] || 'Challenge';
+  const row = new ActionRowBuilder().addComponents(item.options.map((o, i) =>
+    new ButtonBuilder().setCustomId(`sealedans:${tribeKey}:${qNum}:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
+  return { content: `# 🚪 Sealed Arena, ${label}\nRound **${qNum + 1}/${SEALED_QUESTIONS}**. First to answer scores for the tribe; faster = more points.\n\n**${item.q}**`, components: [row], allowedMentions: { parse: [] } };
+}
+function sealedRenderTyped(type, item, qNum) {
+  const label = ARENA_LABEL[type] || 'Challenge';
+  let prompt = item.display;
+  if (type === 'scramble') prompt = arena.scrambleWord(item.display).toUpperCase();
+  const how = type === 'scramble' ? 'Unscramble and type it' : type === 'reverse' ? 'Type it the right way' : type === 'emoji' ? 'Type what it spells' : type === 'math' ? 'Type the answer' : 'Type your answer';
+  return { content: `# 🚪 Sealed Arena, ${label}\nRound **${qNum + 1}/${SEALED_QUESTIONS}**. ${how}. First correct scores; faster = more points.\n## \`${prompt}\``, allowedMentions: { parse: [] } };
+}
+// Coordinated start: the same challenge drops in every throne at once. Returns {ok, gameType} or {ok:false,error}.
+async function startSealedArena(guild, { type, startedById } = {}) {
+  if (!features.enabled('sealedArena')) return { ok: false, error: 'Sealed Arena is not enabled.' };
+  if (sealed.isActive()) return { ok: false, error: 'A Sealed Arena is already running.' };
+  if (arena.isActive()) return { ok: false, error: 'Wait for the current Arena to finish first.' };
+  const pool = sealedGamePool();
+  const gameType = type && pool.includes(type) ? type : pool[Math.floor(Math.random() * pool.length)];
+  const withThrone = tribes.all().filter(t => t.throneId);
+  if (withThrone.length < 2) return { ok: false, error: 'Need at least two tribes with thrones.' };
+  const set = await buildSealedQuestions(gameType);
+  if (!set.items.length) return { ok: false, error: 'Could not build the question set.' };
+  const thrones = {};
+  for (const t of withThrone) {
+    const ch = await guild.channels.fetch(t.throneId).catch(() => null); if (!ch) continue;
+    if (set.kind === 'typed') await ch.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'sealed arena: typed answers' }).catch(() => {});
+    thrones[t.key] = { channelId: t.throneId, promptMessageId: null, promptTs: 0, qNum: 0, done: false, score: 0, correct: 0, contributors: {}, answered: false };
+  }
+  if (Object.keys(thrones).length < 2) return { ok: false, error: 'Could not reach enough thrones.' };
+  sealed.set({ mode: 'sealed', gameType, kind: set.kind, items: set.items, startedAt: Date.now(), phase: 'live', thrones, startedById: startedById || null });
+  await Promise.all(Object.keys(thrones).map(async (k) => {
+    const th = thrones[k]; const ch = await guild.channels.fetch(th.channelId).catch(() => null); const t = tribes.get(k);
+    if (ch) await ch.send({ content: `# 🚪 Sealed Arena begins!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, ${SEALED_QUESTIONS} rounds, blind against every other tribe. Answer fast. Results are revealed to everyone at the end.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
+  }));
+  await warSleep(4000);
+  sealed.bumpDaily(Date.now());
+  await sealedRound(guild);
+  return { ok: true, gameType };
+}
+// Send the current question to every throne at once, capture each throne's own prompt timestamp, arm the shared
+// round timer.
+async function sealedRound(guild) {
+  const a = sealed.get(); if (!a) return;
+  clearSealedTimers();
+  const first = sealed.thronesArr()[0]; if (!first) return finishSealedArena(guild);
+  const qNum = first.qNum;
+  if (qNum >= a.items.length) return finishSealedArena(guild);
+  const item = a.items[qNum];
+  await Promise.all(sealed.thronesArr().map(async (th) => {
+    const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) return;
+    const payload = a.kind === 'button' ? sealedRenderButton(a.gameType, item, qNum, th.tribeKey) : sealedRenderTyped(a.gameType, item, qNum);
+    const msg = await ch.send(payload).catch(() => null);
+    sealed.updateThrone(th.tribeKey, { promptMessageId: msg ? msg.id : null, promptTs: msg ? msg.createdTimestamp : Date.now(), answered: false, perQ: [] });
+  }));
+  _sealedTimers.round = setTimeout(() => sealedAdvance(guild).catch(e => console.error('[sealed] advance:', e.message)), SEALED_ROUND_MS);
+}
+async function sealedAdvance(guild) {
+  const a = sealed.get(); if (!a) return;
+  if (a.kind === 'button') for (const th of sealed.thronesArr()) {
+    if (!th.promptMessageId) continue;
+    const ch = await guild.channels.fetch(th.channelId).catch(() => null);
+    const pm = ch && await ch.messages.fetch(th.promptMessageId).catch(() => null);
+    if (pm) await pm.edit({ components: [] }).catch(() => {});
+  }
+  for (const th of sealed.thronesArr()) sealed.updateThrone(th.tribeKey, { qNum: th.qNum + 1, answered: false });
+  const first = sealed.thronesArr()[0];
+  if (first && first.qNum >= a.items.length) return finishSealedArena(guild);
+  return sealedRound(guild);
+}
+// Score one answer for a throne. Only the FIRST correct answer per throne per round counts. Race-the-clock.
+function sealedTryScore(tribeKey, uid, answerTs, correct) {
+  const th = sealed.throne(tribeKey); if (!th || th.answered || !correct) return false;
+  sealed.updateThrone(tribeKey, { answered: true });
+  const rel = Math.max(0, answerTs - (th.promptTs || answerTs));
+  let speed = SEALED_SPEED_MAX;
+  if (rel > SEALED_FAST_MS) speed = Math.max(0, Math.round(SEALED_SPEED_MAX * (1 - (rel - SEALED_FAST_MS) / (SEALED_ROUND_MS - SEALED_FAST_MS))));
+  sealed.scoreThrone(tribeKey, uid, SEALED_CORRECT_PTS + speed);
+  return true;
+}
+async function finishSealedArena(guild) {
+  clearSealedTimers();
+  const a = sealed.get(); if (!a) return;
+  if (a.kind === 'typed') for (const th of sealed.thronesArr()) { const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'sealed arena over' }).catch(() => {}); }
+  const board = sealed.thronesArr().map(th => ({ key: th.tribeKey, score: th.score || 0, correct: th.correct || 0 })).sort((x, y) => y.score - x.score || y.correct - x.correct);
+  const winner = board[0] && board[0].score > 0 ? board[0] : null;
+  const label = ARENA_LABEL[a.gameType] || 'Sealed Arena';
+  if (winner) {
+    const mult = underdogMultiplier(guild, winner.key);
+    tribes.addTreasury(winner.key, Math.round(arena.WIN_TREASURY * 2 * mult));
+    tribes.addGlory(winner.key, Math.round(arena.WIN_GLORY * 2 * mult));
+    { const wt = tribes.get(winner.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || winner.key} won a Sealed ${label}`, tribes: [winner.key], score: winner.score }); }
+    checkTribeQuests(guild, winner.key).catch(() => {});
+    await refreshThronePanel(guild, tribes.get(winner.key)).catch(() => {});
+  }
+  sealed.clear();
+  enqueueSpectacle(SPECTACLE_PRIORITY.sealedResult, 'sealedResult', () => revealSealedArena(guild, board, winner, label));
+}
+async function revealSealedArena(guild, board, winner, label) {
+  const ch = await getSpectacleChannel(guild); if (!ch) return;
+  await ch.send({ content: `# 🚪 The Sealed Arena is decided.\n${copy.herald.open()} Behind closed doors, every tribe ran the same **${label}**. The doors open now.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await warSleep(2500);
+  const medals = ['🥇', '🥈', '🥉'];
+  for (let i = board.length - 1; i >= 0; i--) {
+    await ch.send({ content: `${medals[i] || `**${i + 1}.**`} ${tribeName(board[i].key)}: **${board[i].score}** pts (${board[i].correct}/${SEALED_QUESTIONS} correct)`, allowedMentions: { parse: [] } }).catch(() => {});
+    await warSleep(1800);
+  }
+  if (winner) { const t = tribes.get(winner.key); await ch.send({ content: `# 🏆 ${tribeName(winner.key)} take the Sealed Arena!\nSharpest behind the closed doors. ${t?.roleId ? `<@&${t.roleId}>` : ''}`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {}); }
+  else await ch.send({ content: `# 🏁 The Sealed Arena ends with no victor. No tribe scored.`, allowedMentions: { parse: [] } }).catch(() => {});
+}
+// Boot: a Sealed Arena in flight when we restarted is short, so resolve it immediately (resolve-on-restart).
+async function reconcileSealed(guild) {
+  if (!sealed.isActive()) return;
+  console.log('[sealed] resolving interrupted Sealed Arena on boot');
+  return finishSealedArena(guild).catch(e => console.error('[sealed] boot resolve:', e.message));
+}
+// Auto-scheduler: hourly, fire during peak hours if enabled, under the daily cap, nothing else live, min-gap met.
+function sealedPeakHour() { const h = new Date().getUTCHours(); return h >= 15 && h <= 23; }   // ~peak (Europe evening), tune later
+async function sealedAutoTick(guild) {
+  if (!features.enabled('sealedArena') || sealed.isActive() || arena.isActive()) return;
+  if (sealed.dailyCount(Date.now()) >= SEALED_DAILY_CAP) return;
+  if (Date.now() - sealed.lastRunAt() < SEALED_MIN_GAP_MS) return;
+  if (!sealedPeakHour()) return;
+  const r = await startSealedArena(guild, {}).catch(e => { console.error('[sealed] auto start:', e.message); return null; });
+  if (r && r.ok) console.log(`[sealed] auto-started (${r.gameType})`);
+}
+
 // ---- The land shop: /tribe expand (see TRIBE_PHASE5_SPEC.md sections 3, 3a, 5) ----
 // Each unlock's gate is EITHER path (members OR crowns won) — a small elite tribe can climb by dominating,
 // a big one by recruiting. Costs/gates match the locked spec table exactly.
@@ -2869,6 +3027,11 @@ client.once('ready', async () => {
               { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' },
               { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' }))
           .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
+        .addSubcommand(s => s.setName('sealed-arena').setDescription('Launch a Sealed Arena: every tribe races the same challenge blind in its own throne')
+          .addStringOption(o => o.setName('type').setDescription('Which challenge (blank = random)').setRequired(false)
+            .addChoices({ name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' },
+              { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🔢 Number Pattern', value: 'pattern' },
+              { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' })))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
@@ -3126,6 +3289,10 @@ client.once('ready', async () => {
   // Auto-start random arenas through the active day (owner). Checked every 15 min; the random next-auto time
   // (1h..2h after each event), the 1h floor + daily cap (via arena.startBlocked) keep it from over-firing.
   setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartArena(g)).catch(() => {}), 15 * 60000);
+  // Sealed Arena (dark until enabled): resolve any in-flight one on boot (short, resolve-on-restart), then an
+  // hourly auto-tick (peak hours, daily cap + min-gap gate inside).
+  if (dguild) await reconcileSealed(dguild).catch(e => console.error(`[sealed] boot reconcile: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sealedAutoTick(g)).catch(() => {}), 3600000);
   try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
@@ -4023,6 +4190,21 @@ client.on('messageCreate', async (msg) => {
         }
       }
     } catch (e) { console.error('[arena] messageCreate:', e.message); }
+    // Sealed Arena TYPED answers: route by throne channel; the first correct answer per throne per round scores
+    // (lockstep, so the throne then waits for the shared round timer to advance everyone).
+    try {
+      const sa = sealed.get();
+      if (sa && sa.kind === 'typed') {
+        const th = sealed.throneByChannel(msg.channelId);
+        if (th && !th.answered) {
+          const item = sa.items[th.qNum];
+          const mine = tribes.memberTribe(msg.member);
+          if (item && mine && mine.key === th.tribeKey && msg.content.trim().toLowerCase() === String(item.answer).trim().toLowerCase()) {
+            if (sealedTryScore(th.tribeKey, msg.author.id, msg.createdTimestamp, true)) await msg.react('✅').catch(() => {});
+          }
+        }
+      }
+    } catch (e) { console.error('[sealed] messageCreate:', e.message); }
     // Monthly contest channels: record entries (auto-🩷), enforce one-per-person, delete chatter/dupes.
     // If it removed the message there's nothing left to scan, so stop here.
     if (contest.isContestChannel(msg.channelId)) { const r = await contest.onMessage(msg); if (r.deleted) return; }
@@ -5406,6 +5588,21 @@ client.on('interactionCreate', async (interaction) => {
   // Arena: trivia answer button. The current-question message id guards against stale clicks on an
   // already-advanced question — and since interaction handlers run to completion single-threaded, the first
   // correct click scores + advances (changing messageId) before any concurrent click's handler runs.
+  if (interaction.isButton?.() && interaction.customId.startsWith('sealedans:')) {
+    const [, tribeKey, qNumStr, optStr] = interaction.customId.split(':');
+    const a = sealed.get();
+    if (!a || a.kind !== 'button') return interaction.reply({ content: 'That round is over.', flags: MessageFlags.Ephemeral });
+    const th = sealed.throne(tribeKey);
+    if (!th || th.qNum !== Number(qNumStr)) return interaction.reply({ content: 'That round is over.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine || mine.key !== tribeKey) return interaction.reply({ content: 'You can only answer for your own tribe, in your own throne.', flags: MessageFlags.Ephemeral });
+    if ((th.perQ || []).includes(interaction.user.id)) return interaction.reply({ content: 'You already answered this one.', flags: MessageFlags.Ephemeral });
+    sealed.updateThrone(tribeKey, { perQ: [...(th.perQ || []), interaction.user.id] });
+    const correct = Number(optStr) === a.items[th.qNum].answer;
+    if (!correct) return interaction.reply({ content: '❌ Not quite.', flags: MessageFlags.Ephemeral });
+    const counted = sealedTryScore(tribeKey, interaction.user.id, interaction.createdTimestamp, true);
+    return interaction.reply({ content: counted ? '✅ Correct, and first! Points banked for your tribe.' : '✅ Correct, but your tribe already scored this round.', flags: MessageFlags.Ephemeral });
+  }
   if (interaction.isButton?.() && interaction.customId.startsWith('arena_ans:')) {
     const a = arena.get();
     if (!a || !arena.BUTTON_TYPES.includes(a.type)) return interaction.reply({ content: 'No trivia is running.', flags: MessageFlags.Ephemeral });
@@ -6553,6 +6750,13 @@ client.on('interactionCreate', async (interaction) => {
         roleId: role.id, leaderRoleId: leaderRole ? leaderRole.id : null, hallId: hall ? hall.id : null });
       lore.record({ type: 'founding', title: `${t.shortName || t.name} was founded`, tribes: [t.key] });
       return interaction.reply({ content: `## ${t.emoji} ${t.name}: registered\n-# adopted by <@${interaction.user.id}>\n> Role <@&${role.id}>${leaderRole ? ` · Leader <@&${leaderRole.id}>` : ''}${hall ? ` · Hall <#${hall.id}>` : ''}\n-# Now shows in #tribes-hub Standings and \`/tribe info ${key}\`.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'sealed-arena') {
+      if (!features.enabled('sealedArena')) return interaction.reply({ content: 'The Sealed Arena isn’t enabled yet.', flags: MessageFlags.Ephemeral });
+      if (!canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can launch a Sealed Arena.', flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const r = await startSealedArena(interaction.guild, { type: interaction.options.getString('type') || undefined, startedById: interaction.user.id });
+      return interaction.editReply(r.ok ? `🚪 Sealed Arena launched (${ARENA_LABEL[r.gameType] || r.gameType}). Every tribe is racing it now in their throne; results reveal at the end.` : `Couldn’t launch it: ${r.error}`);
     }
     if (sub === 'arena') {
       // Any tribe LEADER or an admin may start one (owner, 2026-08-04).
