@@ -66,10 +66,13 @@ Make the drama visible (draws lurkers/newcomers) and keep last place from quitti
   tribes.js internals and are a candidate for the same treatment later. A "beat the reigning champion" bounty is
   deferred.
 
-## 5. Arena expansion — ONGOING
-Keep variety high. 11 types live (race, trivia, scramble, blitz, math, typing, riddle, emoji, truefalse,
-reaction, pattern), auto-started through the day (`maybeAutoStartArena`) with a 5-min lobby, daily cap 5,
-3h cooldown. More to add: themed trivia categories (opentdb `category`), plus additional generated games.
+## 5. Arena expansion — ONGOING (16 types live)
+Keep variety high. **16 types** now: race, trivia, scramble, blitz, math, typing, riddle, emoji, truefalse,
+reaction, pattern, plus the latest batch — Geography / Science / History / Animal quizzes (themed trivia via
+the opentdb `category` param, `arena.TRIVIA_CATEGORY`, so they reuse the button flow and are infinite) and
+Reverse Word (typed: unreverse the backwards word). All auto-started through the day
+(`maybeAutoStartArena` / `ARENA_ALL_TYPES`) with a 5-min lobby, daily cap 5, 3h cooldown. Adding another themed
+quiz = one entry in `TRIVIA_CATEGORY` + label/default/menu; another generated game = a `nextTyped`/`gen*` case.
 
 ---
 
@@ -78,4 +81,4 @@ reaction, pattern), auto-started through the day (`maybeAutoStartArena`) with a 
 - [x] 2. Seasons
 - [x] 3. Daily hook
 - [x] 4. Public spectacle + catch-up
-- [ ] 5. More arena games
+- [x] 5. More arena games (16 types live; ongoing track)

@@ -107,8 +107,10 @@ function loadBank() {
 // fresh prompts until the end timer fires, so no round count is needed. nextTyped(type, used) returns
 // { answer, display, key }: `answer` is what a player types to score, `display` is what's shown, `key` is
 // what to add to the per-game `used` list so a prompt doesn't repeat. index.js renders `display` per type.
-const TYPED_TYPES = ['scramble', 'math', 'typing', 'riddle', 'emoji'];
-const BUTTON_TYPES = ['trivia', 'truefalse', 'pattern'];   // answered by clicking an option button
+const TYPED_TYPES = ['scramble', 'math', 'typing', 'riddle', 'emoji', 'reverse'];
+// Themed quizzes reuse the trivia button flow, just with a fixed Open Trivia DB category (virtually infinite).
+const TRIVIA_CATEGORY = { geoquiz: 22, sciquiz: 17, histquiz: 23, animalquiz: 27 };
+const BUTTON_TYPES = ['trivia', 'truefalse', 'pattern', ...Object.keys(TRIVIA_CATEGORY)];   // answered by clicking an option button
 const TF_QUESTIONS = 12;    // statements per True-or-False sprint
 const PATTERN_QUESTIONS = 8; // sequences per Number Pattern sprint
 
@@ -198,6 +200,7 @@ function nextTyped(type, used) {
   if (type === 'typing') return nextTyping(used);
   if (type === 'riddle') return nextRiddle(used);
   if (type === 'emoji') return nextEmoji(used);
+  if (type === 'reverse') { const w = nextWord(used); return { display: w.split('').reverse().join('').toUpperCase(), answer: w, key: w }; }
   const w = nextWord(used);   // scramble
   return { display: w, answer: w, key: w };
 }
@@ -276,9 +279,10 @@ function localTrivia(n, asked) {
 // Fetch a batch of trivia from the Open Trivia DB (owner: "an online list that's virtually infinite").
 // url3986 encoding decodes cleanly with decodeURIComponent. Returns [{q, options, answer}] or null on any
 // failure (caller falls back to the local bank). Options are shuffled so the answer isn't always first.
-async function fetchTrivia(n) {
+async function fetchTrivia(n, category) {
   try {
-    const res = await fetch(`https://opentdb.com/api.php?amount=${n}&type=multiple&encode=url3986`, { signal: AbortSignal.timeout(6000) });
+    const cat = category ? `&category=${category}` : '';
+    const res = await fetch(`https://opentdb.com/api.php?amount=${n}&type=multiple&encode=url3986${cat}`, { signal: AbortSignal.timeout(6000) });
     const d = await res.json();
     if (d.response_code !== 0 || !Array.isArray(d.results) || !d.results.length) return null;
     return d.results.map(r => {
@@ -291,7 +295,7 @@ async function fetchTrivia(n) {
 
 module.exports = {
   STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
-  TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS, PATTERN_QUESTIONS,
+  TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS, PATTERN_QUESTIONS, TRIVIA_CATEGORY,
   get, isActive, set, clear, update, addScore, addMemberScore, topMemberScorer, markOnce, resetBucket, winner,
   recordEnd, startBlocked,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,

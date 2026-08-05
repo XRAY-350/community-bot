@@ -990,7 +990,8 @@ async function sweepExpiredAllianceVotes(guild) {
 // One active challenge at a time. Admin launches one into a public channel; the bot runs + scores it and the
 // winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
-const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4, pattern: 6 };   // default minutes per type
+const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, riddle: 6, emoji: 5, truefalse: 6, reaction: 4, pattern: 6,
+  geoquiz: 6, sciquiz: 6, histquiz: 6, animalquiz: 6, reverse: 5 };   // default minutes per type
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
 const _arenaTimers = { start: null, end: null, round: null };
 function clearArenaTimers() { for (const k of ['start', 'end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
@@ -1011,7 +1012,8 @@ function scoreArena(tribeKey, userId, points = 1) {
   }
   return total;
 }
-const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern'];
+const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern',
+  'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];
 const ARENA_AUTO_CHANCE = 0.5;   // per eligible tick, so timing isn't clockwork on the cooldown boundary
 // Auto-start (owner: "have the bot start them randomly at a daily cap instead of starting manually"). Called
 // on a ~30-min tick: within active ET hours, if nothing's running and we're off cooldown + under the daily
@@ -1096,9 +1098,9 @@ async function beginArena(guild) {
     // types pre-fetch the whole batch at launch (owner: "virtually infinite") with a local fallback; generated
     // types (pattern) build the batch locally — either way it's a questions array of {q, options, answer}.
     let questions = [], source = 'local';
-    if (type === 'trivia') { const f = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS); questions = (f && f.length) ? f : arena.localTrivia(arena.TRIVIA_QUESTIONS, []); source = f ? 'online' : 'local'; }
-    else if (type === 'truefalse') { const f = await arena.fetchBoolean(arena.TF_QUESTIONS); questions = (f && f.length) ? f : arena.localBoolean(arena.TF_QUESTIONS); source = f ? 'online' : 'local'; }
+    if (type === 'truefalse') { const f = await arena.fetchBoolean(arena.TF_QUESTIONS); questions = (f && f.length) ? f : arena.localBoolean(arena.TF_QUESTIONS); source = f ? 'online' : 'local'; }
     else if (type === 'pattern') { questions = arena.genPattern(arena.PATTERN_QUESTIONS); source = 'generated'; }
+    else { const cat = arena.TRIVIA_CATEGORY[type]; const f = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS, cat); questions = (f && f.length) ? f : arena.localTrivia(arena.TRIVIA_QUESTIONS, []); source = f ? 'online' : 'local'; }   // trivia + themed quizzes
     arena.set({ ...base, questions, qNum: 0, source });
     await askNextTrivia(guild);
   } else if (type === 'reaction') {
@@ -1123,7 +1125,8 @@ async function beginArena(guild) {
   return arena.get();
 }
 const ARENA_LABEL = { race: 'Reaction Race', trivia: 'Trivia Sprint', scramble: 'Word Scramble', blitz: 'Activity Blitz',
-  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush', pattern: 'Number Pattern' };
+  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush', pattern: 'Number Pattern',
+  geoquiz: 'Geography Quiz', sciquiz: 'Science Quiz', histquiz: 'History Quiz', animalquiz: 'Animal Quiz', reverse: 'Reverse Word' };
 function arenaScoreboard(a) {
   const rows = Object.entries(a.scores || {}).sort((x, y) => y[1] - x[1]);
   return rows.length ? rows.map(([k, v]) => `> ${tribeName(k)} — **${v}**`).join('\n') : '> _No points yet._';
@@ -1137,6 +1140,7 @@ function typedContent(type, a) {
   if (type === 'typing') return `# ⌨️ Fast Fingers — round ${r}\nFirst to **type this exactly** (spelling counts) scores for their tribe:\n## \`${a.display}\`\n\n${sb}`;
   if (type === 'riddle') return `# 🧩 Riddle Rush — round ${r}\nFirst correct **typed** answer scores for their tribe:\n> ${a.display}\n\n${sb}`;
   if (type === 'emoji') return `# 🧠 Emoji Decode — round ${r}\nWhat do these emojis spell? **Type** your answer:\n## ${a.display}\n\n${sb}`;
+  if (type === 'reverse') return `# 🔁 Reverse Word — round ${r}\nThis word is backwards. **Type it the right way** to score:\n## \`${a.display}\`\n\n${sb}`;
   return `# 🔤 Word Scramble — round ${r}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(a.display).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${sb}`;
 }
 // Reaction Rush: post the next round — a message asking players to click the target emoji, with the bot
@@ -1199,7 +1203,7 @@ async function askNextTrivia(guild) {
   const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
     new ButtonBuilder().setCustomId(`arena_ans:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
   const ch = await arenaChannel(guild); if (!ch) return;
-  const qLabel = a.type === 'truefalse' ? 'True or False' : a.type === 'pattern' ? 'Number Pattern' : 'Trivia';
+  const qLabel = ARENA_LABEL[a.type] || 'Trivia';
   const msg = await ch.send({ content: `# ❓ ${qLabel} — Q${a.qNum + 1}/${questions.length}\n**${q.q}**\nFirst correct answer scores for your tribe.\n\n${arenaScoreboard(a)}`, components: [row] });
   arena.update({ answer: q.answer, qNum: a.qNum + 1, messageId: msg.id, answeredThisQ: [] });
   if (_arenaTimers.round) clearTimeout(_arenaTimers.round);
@@ -2445,7 +2449,8 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('arena').setDescription('Launch an interactive cross-tribe challenge in this channel (winner banks Glory + Treasury)')
           .addStringOption(o => o.setName('type').setDescription('Which challenge').setRequired(true)
             .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' },
-              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' }))
+              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '🧩 Riddle Rush', value: 'riddle' }, { name: '🧠 Emoji Decode', value: 'emoji' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' },
+              { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' }))
           .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
@@ -4371,7 +4376,12 @@ client.on('interactionCreate', async (interaction) => {
       { label: 'Emoji Decode', value: 'emoji', emoji: '🧠', description: 'Guess what the emojis spell' },
       { label: 'True or False', value: 'truefalse', emoji: '✅', description: '12 statements, first correct scores' },
       { label: 'Reaction Rush', value: 'reaction', emoji: '🎯', description: 'First to react with the target emoji' },
-      { label: 'Number Pattern', value: 'pattern', emoji: '🔢', description: 'Complete the sequence, 4 choices' });
+      { label: 'Number Pattern', value: 'pattern', emoji: '🔢', description: 'Complete the sequence, 4 choices' },
+      { label: 'Geography Quiz', value: 'geoquiz', emoji: '🌍', description: 'Trivia: world geography' },
+      { label: 'Science Quiz', value: 'sciquiz', emoji: '🔬', description: 'Trivia: science and nature' },
+      { label: 'History Quiz', value: 'histquiz', emoji: '📜', description: 'Trivia: history' },
+      { label: 'Animal Quiz', value: 'animalquiz', emoji: '🦁', description: 'Trivia: animals' },
+      { label: 'Reverse Word', value: 'reverse', emoji: '🔁', description: 'Type the backwards word the right way' });
     return interaction.reply({ content: '🎪 Which challenge? It runs here in the hub, and the winning tribe banks Glory + Treasury.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tribehub_arena_pick') {
