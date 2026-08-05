@@ -193,4 +193,26 @@ const promote = {
   alreadyDecided: 'Already decided.',
 };
 
-module.exports = { common, guards, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest, roleselect, promote };
+// ── herald (Phase 7: the grand tribe layer's one narrator + shared palette/iconography) ───────────────
+// Coronations, the Chronicle, Age ends, wars, quests, relics and prestige all read as a single storyteller
+// and share ONE colour/icon per concept. Template-only, no LLM. New grand copy pulls its colour/icon/voice
+// from here rather than inlining a hex or emoji, so the whole layer stays visually + tonally consistent.
+const SMALL_CAPS = { a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ', j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ', s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ' };
+const herald = {
+  sc: s => String(s).split('').map(ch => SMALL_CAPS[ch.toLowerCase()] || ch).join(''),
+  COLORS: {
+    age: 0xF1C40F, crown: 0xF1C40F,   // gold — Ages, Hall of Fame, Champions, the Crown
+    war: 0xC0392B,                     // blood red
+    relic: 0x9B59B6,                   // relic purple
+    quest: 0x27AE60,                   // quest green
+    prestige: 0xE67E22,                // honour amber
+    chronicle: 0x8E7B5A,               // parchment brown
+    herald: 0x2A426A,                  // default tribe blue
+  },
+  ICONS: { age: '🏆', crown: '👑', war: '⚔️', relic: '🏺', quest: '🎯', prestige: '⭐', chronicle: '📜', muster: '🪖', founding: '🏴', herald: '📯' },
+  OPENERS: ['Hear ye, hear ye.', 'Let it be known.', 'Attend, all tribes.', 'Sound the horns.', 'Gather and hear.', 'By proclamation.'],
+  open() { return this.OPENERS[Math.floor(Math.random() * this.OPENERS.length)]; },
+  SIGNOFF: 'So it is written.',
+};
+
+module.exports = { common, guards, tiers, corner, watchlist, smartwatch, appeals, reports, modmail, confessions, rolereq, suggestions, whistleblow, modapps, contest, roleselect, promote, herald };

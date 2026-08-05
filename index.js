@@ -637,14 +637,15 @@ async function processChronicleIfDue(guild) {
   const arenaWins = {}; for (const a of arenas) (a.tribes || []).forEach(k => { arenaWins[k] = (arenaWins[k] || 0) + 1; });
   const topArena = Object.entries(arenaWins).sort((x, y) => y[1] - x[1])[0];
   const season = tribes.getSeason();
-  const parts = ['# 📜 The Chronicle', `-# A record of the week just past${season && season.name ? `, in ${season.name}` : ''}.`];
-  if (ages.length) parts.push(ages.map(e => `🏆 ${e.title}.`).join('\n'));
-  if (foundings.length) parts.push(`🏴 **New banners raised.** ${foundings.map(f => f.title).join('; ')}.`);
-  if (crowns.length) parts.push(`👑 **The Crown.** ${crowns.map(c => c.title).join('; ')}.`);
-  if (wars.length) parts.push(`⚔️ **Wars.** ${wars.map(w => w.title).join('; ')}.`);
+  const I = copy.herald.ICONS;
+  const parts = [`# ${I.chronicle} The Chronicle`, `-# ${copy.herald.open()} A record of the week just past${season && season.name ? `, in ${season.name}` : ''}.`];
+  if (ages.length) parts.push(ages.map(e => `${I.age} ${e.title}.`).join('\n'));
+  if (foundings.length) parts.push(`${I.founding} **New banners raised.** ${foundings.map(f => f.title).join('; ')}.`);
+  if (crowns.length) parts.push(`${I.crown} **The Crown.** ${crowns.map(c => c.title).join('; ')}.`);
+  if (wars.length) parts.push(`${I.war} **Wars.** ${wars.map(w => w.title).join('; ')}.`);
   if (arenas.length) parts.push(`🎪 **The Arena.** ${arenas.length} contest${arenas.length === 1 ? ' was' : 's were'} fought${topArena ? `, and ${tribeName(topArena[0])} claimed the most (${topArena[1]})` : ''}.`);
-  if (musters.length) parts.push(`🪖 **The Muster.** ${musters.length} call${musters.length === 1 ? '' : 's'} to arms went out across the tribes.`);
-  parts.push('-# So it is written.');
+  if (musters.length) parts.push(`${I.muster} **The Muster.** ${musters.length} call${musters.length === 1 ? '' : 's'} to arms went out across the tribes.`);
+  parts.push(`-# ${copy.herald.SIGNOFF}`);
   const ch = await getChronicleChannel(guild);
   if (ch) await ch.send({ content: parts.join('\n\n').slice(0, 4000), allowedMentions: { parse: [] } }).catch(() => {});
   lore.record({ type: 'chronicle', title: 'A chapter of the Chronicle was written' });
@@ -783,7 +784,7 @@ async function broadcastCoronation(guild, tribe, result, crownRole, preBoard, se
   const ch = await getSpectacleChannel(guild);
   if (!ch) return;
   const emoji = tribe.emoji || '🏴', name = tribe.shortName || tribe.name;
-  await ch.send({ content: `# 📯 The week is ended.\nHear ye, hear ye. The Glory of the past seven days is tallied, and a Crown must pass.`, allowedMentions: { parse: [] } }).catch(() => {});
+  await ch.send({ content: `# ${copy.herald.ICONS.herald} The week is ended.\n${copy.herald.open()} The Glory of the past seven days is tallied, and a Crown must pass.`, allowedMentions: { parse: [] } }).catch(() => {});
   await warSleep(3000);
   await ch.send({ content: `# 👑 The Crown passes to ${emoji} **${name}**!\nThey stood highest with **${result.glory} Glory**. Every soul of ${name} now wears <@&${crownRole?.id}> until the next crowning.`, allowedMentions: { roles: crownRole ? [crownRole.id] : [], users: [] } }).catch(() => {});
   await warSleep(3000);
@@ -4757,7 +4758,7 @@ client.on('interactionCreate', async (interaction) => {
       const title = achievements.titleOf(uid);
       const parts = [earned.length ? '**Earned**\n' + earned.map(a => `${a.emoji} **${a.name}**: ${a.desc}${a.title ? ` (title: *${a.title}*)` : ''}`).join('\n') : '_Nothing yet. Play the arena, win wars, take crowns._'];
       if (locked.length) parts.push('\n**Locked**\n' + locked.map(a => `🔒 ${a.emoji} ${a.name}: ${a.desc}`).join('\n'));
-      const embed = new EmbedBuilder().setColor(0xE67E22).setTitle('🏅 Your Trophies').setDescription(parts.join('\n').slice(0, 4000)).setFooter({ text: title ? `Equipped title: ${title}` : 'No title equipped' });
+      const embed = new EmbedBuilder().setColor(copy.herald.COLORS.prestige).setTitle('🏅 Your Trophies').setDescription(parts.join('\n').slice(0, 4000)).setFooter({ text: title ? `Equipped title: ${title}` : 'No title equipped' });
       const equipable = achievements.titles(uid);
       const components = equipable.length ? [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('tribethrone_equiptitle').setPlaceholder('Equip a title…').addOptions([{ label: 'No title', value: 'none' }, ...equipable.slice(0, 24).map(a => ({ label: a.title, value: a.id }))]))] : [];
       return interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
@@ -4768,7 +4769,7 @@ client.on('interactionCreate', async (interaction) => {
       const body = hist.length
         ? hist.map(h => `**${h.name || `Age ${h.number}`}** — 🏆 ${h.championName} (${h.crowns} crown${h.crowns === 1 ? '' : 's'})`).join('\n')
         : `_No age has crowned a Champion yet. **${season.name}** is being written now._`;
-      const embed = new EmbedBuilder().setColor(0xF1C40F).setTitle('🏛️ Hall of Fame').setDescription(body).setFooter({ text: season ? `Current age: ${season.name} (Age ${season.number})` : '' });
+      const embed = new EmbedBuilder().setColor(copy.herald.COLORS.age).setTitle('🏛️ Hall of Fame').setDescription(body).setFooter({ text: season ? `Current age: ${season.name} (Age ${season.number})` : '' });
       return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
     if (act === 'quests') {
