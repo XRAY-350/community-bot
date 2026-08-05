@@ -111,6 +111,18 @@ async function addStrike(guild, member, state, { weight, ruleIndex, reason, time
   if (timeoutMs) await member.timeout(timeoutMs, reason || 'Strike + timeout').catch(e => console.error('[strikes] timeout:', e.message));
   await recomputeTier(guild, member, state, byTag);
   const total = totalUnits(state, member.id);
+  // Optional public punishment feed (Melanin's #punishments-log; unset on FUBU → skipped). One place, so every
+  // caller (slash / modal / dashboard quick-strike) feeds it. Rule number only — free-text reasons stay private.
+  if (config.punishmentLogChannelId) {
+    try {
+      const ch = await guild.channels.fetch(config.punishmentLogChannelId).catch(() => null);
+      if (ch) {
+        const rule = ruleIndex ? ` (Rule ${ruleIndex})` : '';
+        const crossed = crossedBan ? '\n🔨 **This strike crossed the ban threshold.**' : '';
+        await ch.send({ content: `## ⚠️ Strike issued\n<@${member.id}> received a **${formatUnits(effectiveWeight)}-unit** strike${rule} — now **${formatUnits(total)}/${BAN_THRESHOLD} units** (${tierName(total)}).${crossed}`, allowedMentions: { parse: [] } });
+      }
+    } catch (e) { console.error('[punishment-log strike]', e.message); }
+  }
   return { id: entry.id, weight: effectiveWeight, totalUnits: total, tier: tierName(total), crossedBan };
 }
 

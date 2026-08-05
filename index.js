@@ -2397,6 +2397,24 @@ async function logCorner(guild, entry) {
     if (typeof entry !== 'string') await ownerlog.log(guild, { emoji: entry.emoji, title: entry.title, detail: entry.desc, color: entry.color });
   } catch (e) { console.error(`[corner-log] ${e.message}`); }
 }
+// Optional public punishment feed for the heavier consequences (Melanin's #punishments-log — strikes come
+// from strikes.js, bans from here). Unset on FUBU → no-op. Mirrors logCorner's content-only style so @mentions
+// resolve for everyone. Strikes/bans deliberately live here, not corner-log (which stays corners-only).
+async function logPunishment(guild, { emoji, title, desc }) {
+  if (!config.punishmentLogChannelId) return;
+  try {
+    const ch = await guild.channels.fetch(config.punishmentLogChannelId).catch(() => null);
+    if (ch) await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: { parse: [] } });
+  } catch (e) { console.error(`[punishment-log] ${e.message}`); }
+}
+// Optional dedicated ban announcement channel (Melanin's #banned). One clean line per ban. Unset on FUBU → no-op.
+async function logBanned(guild, { userId, byId, reason }) {
+  if (!config.bannedChannelId) return;
+  try {
+    const ch = await guild.channels.fetch(config.bannedChannelId).catch(() => null);
+    if (ch) await ch.send({ content: `## 🔨 Banned\n<@${userId}> was banned by <@${byId}>.${reason ? `\n**Reason:** ${reason}` : ''}\n-# <t:${Math.floor(Date.now() / 1000)}:F>`, allowedMentions: { parse: [] } });
+  } catch (e) { console.error(`[banned-log] ${e.message}`); }
+}
 // Small helper: "<t:..:R> (<t:..:f>)" from an epoch-ms release time, for audit embeds.
 function relPhrase(releaseAt) {
   const s = Math.floor(releaseAt / 1000);
@@ -4352,6 +4370,8 @@ async function handleWatchlistButton(interaction) {
     try {
       await interaction.guild.members.ban(userId, { reason: `Watchlist ban by ${interaction.user.tag}` });
       await ownerlog.log(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `<@${userId}> — by <@${interaction.user.id}>.` });
+      await logPunishment(interaction.guild, { emoji: '🔨', title: 'Banned', desc: `<@${userId}> was banned by <@${interaction.user.id}>.` });
+      await logBanned(interaction.guild, { userId, byId: interaction.user.id });
       return interaction.update({ content: `🔨 Banned <@${userId}> by <@${interaction.user.id}>.`, embeds: keep, components: [], allowedMentions: { parse: [] } }).catch(() => {});
     } catch (e) {
       return interaction.update({ content: `❌ Ban failed: ${e.message}`, components: [] }).catch(() => {});
