@@ -41,6 +41,7 @@ const contest = require('./contest');
 const arena = require('./arena');
 const achievements = require('./achievements');
 const recruitment = require('./recruitment');
+const lore = require('./lore');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
 const freshwatch = require('./freshwatch');
@@ -61,6 +62,18 @@ const SERVER_RULES = rules.TITLES;
 // Small-caps unicode (the server's channel/role aesthetic). Used by /tribe-admin create's style option.
 const SMALL_CAPS = { a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ', j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ', s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ' };
 const toSmallCaps = s => String(s).split('').map(ch => SMALL_CAPS[ch.toLowerCase()] || ch).join('');
+// Tribe banner art (Phase 7, owner: members make the art, the bot displays it). Stored on DISK and re-attached
+// via attachment:// at render time, so it survives Discord's CDN URL expiry (a stored URL would break in ~24h).
+const TRIBE_BANNER_DIR = process.env.FUBU_TRIBE_BANNER_DIR || '/home/ubuntu/.fubu_tribe_banners';
+try { fs.mkdirSync(TRIBE_BANNER_DIR, { recursive: true }); } catch { /* exists */ }
+const tribeBannerPath = key => `${TRIBE_BANNER_DIR}/${key}.png`;
+const tribeHasBanner = key => { try { return fs.existsSync(tribeBannerPath(key)); } catch { return false; } };
+// Attach a tribe's banner (if any) to a reply payload: sets the first embed's image to the attached file.
+function withBanner(key, payload) {
+  if (!tribeHasBanner(key) || !payload.embeds || !payload.embeds[0]) return payload;
+  payload.embeds[0].setImage('attachment://banner.png');
+  return { ...payload, files: [...(payload.files || []), { attachment: tribeBannerPath(key), name: 'banner.png' }] };
+}
 // Every role id the bot considers "structural" (staff, colors, regions, pronouns, ages, Arcane levels, the
 // contest winner role, every existing tribe's roles, the crown role) — used to rule these OUT when deciding
 // whether a role is a member's own personal vanity role. Best-effort, not exhaustive by construction; a role
@@ -532,8 +545,8 @@ function tribeHubEmbed() {
     + `Being active in your tribe's hall moves you up its rank ladder automatically (each tribe names its own four rungs), ranks only ever go up, never down. Staff who join as regular members automatically hold **General**, above the whole ladder.\n\n`
     + `## Treasury, Glory, and the Weekly Crown\n`
     + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`, war raids, ally gifts).\n\n`
-    + `## Seasons\n`
-    + `Weekly crowns stack up over a **6-week season**. When it ends, the tribe with the most crowns that season is named **🏆 Season Champion**, enters the permanent hall of fame, and wears the reigning-champion role until the next season is decided. Then season crowns reset and a fresh race begins, your Treasury, ranks, and unlocks all carry over, so the competition re-opens without erasing anything. Check the current season and standings with the **Standings** button below.\n\n`
+    + `## Ages\n`
+    + `Time in the tribes is measured in **Ages**, each a named **6-week** chapter (like "The Age of Embers"). Weekly crowns stack up across an age; when it ends, the tribe with the most is named **🏆 Age Champion**, written into the permanent **Hall of Fame**, and wears the reigning-champion role. Then the age's crowns reset and a new age begins, your Treasury, ranks, and unlocks all carry over, so the story continues without erasing anything. See the current age with the **Standings** button and past champions with **Hall of Fame**.\n\n`
     + `## The Shop\n`
     + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, faster Tides earning, and a **custom tribe icon**. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for **war defense** (each tier adds defensive power and blunts an enemy raid).\n\n`
     + `## Musters\n`
@@ -655,14 +668,16 @@ async function processWeeklyCrownIfDue(guild) {
     const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
     if (throne) await throneSend(throne, { content: `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes the Crown!\n> Highest **${result.glory} Glory** this week. +500 treasury banked, now **${tribes.getTreasury(tribe.key)}**. Crowns won: **${tribe.crownsWon || 1}**.\n-# Every current member of the tribe now carries <@&${crownRole?.id}> until next week's crowning.`, allowedMentions: { parse: [] } }).catch(() => {});
   }
-  // Spectacle: announce the weekly crowning publicly too, and note it counts toward the Season Champion.
-  await broadcastSpectacle(guild, `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes this week's Crown!\n> Most Glory this week (**${result.glory}**). That's season crown **#${tribe.seasonCrowns || 1}** toward the 🏆 Season Champion.`, [tribe.roleId].filter(Boolean));
+  // Spectacle: announce the weekly crowning publicly too, and note it counts toward the Age Champion.
+  const season = tribes.getSeason();
+  await broadcastSpectacle(guild, `## 👑 ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} takes this week's Crown!\n> Most Glory this week (**${result.glory}**). Their **${tribe.seasonCrowns || 1}** crown of ${season?.name || 'the age'}, toward the 🏆 Age Champion.`, [tribe.roleId].filter(Boolean));
+  lore.record({ type: 'crown', title: `${tribe.shortName || tribe.name} took a weekly Crown`, detail: `${result.glory} Glory`, tribes: [tribe.key], age: season?.number });
 }
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
   const s = tribes.load();
   if (s.seasonChampRoleId) { const r = guild.roles.cache.get(s.seasonChampRoleId) || await guild.roles.fetch(s.seasonChampRoleId).catch(() => null); if (r) return r; }
-  const role = await guild.roles.create({ name: '🏆 Season Champion', colors: { primaryColor: 0xE67E22 }, hoist: true, mentionable: false, reason: 'Tribe Season Champion' }).catch(() => null);
+  const role = await guild.roles.create({ name: '🏆 Age Champion', colors: { primaryColor: 0xE67E22 }, hoist: true, mentionable: false, reason: 'Tribe Age Champion' }).catch(() => null);
   if (role) { s.seasonChampRoleId = role.id; tribes.save(s); }
   return role;
 }
@@ -675,19 +690,21 @@ async function processSeasonEndIfDue(guild) {
   tribes.ensureSeason(Date.now());
   if (!tribes.dueForSeasonEnd(Date.now())) return;
   await ensureMembers(guild);
-  const { previousNumber, champion, season } = tribes.endSeasonAndRotate(guild, Date.now());
+  const { previousNumber, previousName, champion, season } = tribes.endSeasonAndRotate(guild, Date.now());
   const champTribe = champion ? tribes.get(champion.key) : null;
   const champRole = await ensureSeasonChampionRole(guild);
-  if (champRole) for (const m of [...champRole.members.values()]) await m.roles.remove(champRole.id, 'Season ended — champion rotates').catch(() => {});
-  if (champRole && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of [...tr.members.values()]) await m.roles.add(champRole.id, `Season ${previousNumber} champion: ${champTribe.key}`).catch(() => {}); }
+  if (champRole) for (const m of [...champRole.members.values()]) await m.roles.remove(champRole.id, 'Age ended, champion rotates').catch(() => {});
+  if (champRole && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of [...tr.members.values()]) await m.roles.add(champRole.id, `${previousName} champion: ${champTribe.key}`).catch(() => {}); }
   if (features.enabled('achievements') && champTribe) { const tr = guild.roles.cache.get(champTribe.roleId); if (tr) for (const m of tr.members.values()) achievements.bumpAndCheck(m.id, 'season'); }
   const endsAt = Math.floor(season.endsAt / 1000);
   const msg = champion
-    ? `# 🏆 Season ${previousNumber} Champion: ${champTribe?.emoji || '🏴'} ${champion.name}!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} this season and now wear <@&${champRole?.id}> until Season ${season.number} is decided.\n**Season ${season.number}** begins now and runs to <t:${endsAt}:D>. Season crowns reset — the race is wide open. (Treasury, ranks, and unlocks all carry over.)`
-    : `# 🏁 Season ${previousNumber} ended — no champion.\nNo tribe claimed a weekly crown this season. **Season ${season.number}** begins now, running to <t:${endsAt}:D>. Go make history.`;
+    ? `# 🏆 ${previousName} ends: ${champTribe?.emoji || '🏴'} **${champion.name}** are its Champion!\nThey took **${champion.crowns}** weekly crown${champion.crowns === 1 ? '' : 's'} across the age and now wear <@&${champRole?.id}>. Their name is written into the Hall of Fame forever.\n**${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. The age's crowns reset, so the race is wide open. Treasury, ranks, and unlocks all carry over.`
+    : `# 🏁 ${previousName} ends with no Champion.\nNo tribe claimed a weekly crown across the age. **${season.name}** (Age ${season.number}) begins now, running to <t:${endsAt}:D>. Go make history.`;
   await broadcastSpectacle(guild, msg, champTribe ? [champTribe.roleId].filter(Boolean) : []);
   if (champTribe && champTribe.throneId) { const throne = await guild.channels.fetch(champTribe.throneId).catch(() => null); if (throne) await throneSend(throne, { content: msg, allowedMentions: { parse: [] } }).catch(() => {}); }
-  console.log(`[tribe season] Season ${previousNumber} ended (champion=${champion ? champion.key : 'none'}); Season ${season.number} started.`);
+  lore.record({ type: champion ? 'age_champion' : 'age_end', title: champion ? `${champion.name} won ${previousName}` : `${previousName} ended with no champion`, detail: champion ? `${champion.crowns} crown${champion.crowns === 1 ? '' : 's'} across the age` : '', tribes: champTribe ? [champTribe.key] : [], age: previousNumber, ageName: previousName });
+  lore.record({ type: 'age_begin', title: `${season.name} begins`, detail: `Age ${season.number} opens`, age: season.number, ageName: season.name });
+  console.log(`[tribe age] ${previousName} (Age ${previousNumber}) ended (champion=${champion ? champion.key : 'none'}); ${season.name} started.`);
 }
 // Catches "General" (staff auto-rank) drift that join-time syncing alone would miss: a member promoted to
 // mod/admin AFTER already being in a tribe, or demoted/banished afterward. Iterates every tribe's current
@@ -825,6 +842,7 @@ async function sweepExpiredMusters(guild) {
     if (!m || m.expiresAt > now) continue;
     const result = tribes.closeMuster(tribe.key);
     if (!result) continue;
+    lore.record({ type: 'muster', title: `${tribe.shortName || tribe.name} mustered ${result.count} strong`, tribes: [tribe.key], count: result.count });
     // Underdog catch-up bonus (Phase 6): bottom-half tribes earn extra on musters too, not just arenas.
     let reward = result.reward, bonusNote = '';
     const mult = underdogMultiplier(guild, tribe.key);
@@ -1383,6 +1401,7 @@ async function endArena(guild) {
     if (dt) notes.push(`downtime treasury ×${DOWNTIME_TREASURY_MULT}, no Glory`);
     const bonusNote = notes.length ? ` (${notes.join('; ')})` : '';
     resultText = `# 🏆 ${label}: ${tribeName(win.key)} wins!\nScored **${win.score}**. Banked **+${treas} Treasury**${glory ? ` and **+${glory} Glory**` : ''}${bonusNote}.\n\n${arenaScoreboard(a)}`;
+    { const wt = tribes.get(win.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || win.key} won a ${label}`, tribes: [win.key], score: win.score }); }
     await refreshThronePanel(guild, tribes.get(win.key)).catch(() => {});
   } else {
     resultText = `# 🏁 ${label} over\nNo tribe scored, no reward this time.`;
@@ -2557,6 +2576,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
         .addSubcommand(s => s.setName('motto').setDescription('Set your tribe’s motto (leaders only)')
           .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
+        .addSubcommand(s => s.setName('banner').setDescription('Set your tribe’s banner image (leaders; members make the art)')
+          .addAttachmentOption(o => o.setName('image').setDescription('A banner image (PNG/JPG). Leave blank to clear it.').setRequired(false)))
         .addSubcommand(s => s.setName('invite').setDescription('Add a member to your tribe (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('nominate').setDescription('Propose a member to join YOUR tribe (any member can; head/staff approve, they accept)')
@@ -4487,8 +4508,8 @@ client.on('interactionCreate', async (interaction) => {
     const sBoard = tribes.seasonStandings(interaction.guild);
     const champLeader = sBoard[0] && sBoard[0].seasonCrowns > 0 ? sBoard[0] : null;
     const body = board.map((t, i) => `${['🥇', '🥈', '🥉'][i] || `**${i + 1}.**`} ${t.emoji || '🏴'} **${t.shortName || t.name}**${t.strongholdTier ? ` 🏰${t.strongholdTier}` : ''} · ${t.memberCount} member${t.memberCount === 1 ? '' : 's'} · \`${t.glory || 0} glory\` this week · \`${t.treasury || 0}\` treasury · 👑×${t.seasonCrowns || 0} season`).join('\n');
-    const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown (resets weekly). Season crowns (👑×) decide the Season Champion.' });
-    const seasonLine = `## 🏆 Season ${season.number}\n-# Ends <t:${Math.floor(season.endsAt / 1000)}:R> · ${champLeader ? `leading: ${champLeader.emoji || '🏴'} ${champLeader.shortName || champLeader.name} (👑×${champLeader.seasonCrowns})` : 'no season crowns claimed yet'}`;
+    const embed = new EmbedBuilder().setColor(0x2A426A).setDescription(body).setFooter({ text: 'Glory decides Sunday’s Crown (resets weekly). Age crowns (👑×) decide the Age Champion.' });
+    const seasonLine = `## 🏆 ${season.name || `Age ${season.number}`}\n-# Age ${season.number} · ends <t:${Math.floor(season.endsAt / 1000)}:R> · ${champLeader ? `leading: ${champLeader.emoji || '🏴'} ${champLeader.shortName || champLeader.name} (👑×${champLeader.seasonCrowns})` : 'no crowns claimed yet'}`;
     return interaction.reply({ content: `${seasonLine}\n## ⚔️ Tribe Standings\n-# ${board.length} tribe${board.length === 1 ? '' : 's'} vying for the crown`, embeds: [embed], flags: MessageFlags.Ephemeral });
   }
   // Cross-tribe views — one embed per tribe, so there's no "which tribe" argument to fill in. Your OWN
@@ -4597,9 +4618,11 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (act === 'halloffame') {
       const hist = tribes.seasonHistory().filter(h => h.championKey);
-      const season = tribes.getSeason();
-      const body = hist.length ? hist.map(h => `**Season ${h.number}:** ${h.championName} (${h.crowns} crown${h.crowns === 1 ? '' : 's'})`).join('\n') : '_No season has crowned a champion yet. Season 1 is underway._';
-      const embed = new EmbedBuilder().setColor(0xF1C40F).setTitle('🏛️ Hall of Fame').setDescription(body).setFooter({ text: season ? `Now: Season ${season.number}` : '' });
+      const season = tribes.ensureSeason(Date.now());
+      const body = hist.length
+        ? hist.map(h => `**${h.name || `Age ${h.number}`}** — 🏆 ${h.championName} (${h.crowns} crown${h.crowns === 1 ? '' : 's'})`).join('\n')
+        : `_No age has crowned a Champion yet. **${season.name}** is being written now._`;
+      const embed = new EmbedBuilder().setColor(0xF1C40F).setTitle('🏛️ Hall of Fame').setDescription(body).setFooter({ text: season ? `Current age: ${season.name} (Age ${season.number})` : '' });
       return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
     if (act === 'tithe') {
@@ -5982,7 +6005,7 @@ client.on('interactionCreate', async (interaction) => {
       );
       const footerBits = [tribe.crownsWon ? `👑 ${tribe.crownsWon} crown${tribe.crownsWon === 1 ? '' : 's'} won lifetime` : null, !tribe.motto ? 'A leader can set the motto with /tribe motto.' : null].filter(Boolean);
       if (footerBits.length) embed.setFooter({ text: footerBits.join(' · ') });
-      return interaction.reply({ content, embeds: [embed], allowedMentions: { parse: [] } });
+      return interaction.reply(withBanner(tribe.key, { content, embeds: [embed], allowedMentions: { parse: [] } }));
     }
     if (sub === 'motto') {
       if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
@@ -5993,6 +6016,25 @@ client.on('interactionCreate', async (interaction) => {
       if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});   // the picker shows each tribe's motto — keep it in sync
       await refreshThronePanel(interaction.guild, tribes.get(tribe.key)).catch(() => {});
       return interaction.editReply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'banner') {
+      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+        return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its banner.`, flags: MessageFlags.Ephemeral });
+      const image = interaction.options.getAttachment('image');
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (!image) {
+        try { if (tribeHasBanner(tribe.key)) fs.unlinkSync(tribeBannerPath(tribe.key)); } catch { /* already gone */ }
+        tribes.update(tribe.key, { hasBanner: false });
+        return interaction.editReply('🖼️ Banner cleared.');
+      }
+      if (!/^image\//.test(image.contentType || '')) return interaction.editReply('That’s not an image. Attach a PNG or JPG.');
+      if ((image.size || 0) > 8 * 1024 * 1024) return interaction.editReply('That image is over 8MB. Please use a smaller one.');
+      try {
+        const res = await fetch(image.url, { signal: AbortSignal.timeout(10000) });
+        fs.writeFileSync(tribeBannerPath(tribe.key), Buffer.from(await res.arrayBuffer()));
+        tribes.update(tribe.key, { hasBanner: true });
+        return interaction.editReply(`🖼️ Banner set for **${tribe.shortName || tribe.name}**. It shows on \`/tribe info\`.`);
+      } catch (e) { console.error('[tribe banner]', e.message); return interaction.editReply('Couldn’t save that image. Try again.'); }
     }
     if (sub === 'nominate') {   // ANY member can propose; goes to the throne for approval, then the nominee accepts
       const target = interaction.options.getMember('user');

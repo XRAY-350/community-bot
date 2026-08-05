@@ -192,6 +192,8 @@ Features whose user-facing strings are (partly) centralised in `copy.js` vs stil
 - **strikeAppeals** (member) — _inline (not yet migrated)_
 - **smartWatch** (core) — copy.js: `smartwatch`
 - **smartWatchLab** (core) — _inline (not yet migrated)_
+- **achievements** (member) — _inline (not yet migrated)_
+- **recruitment** (member) — _inline (not yet migrated)_
 - **cornerReason** (core) — _inline (not yet migrated)_
 - **timeServed** (core) — _inline (not yet migrated)_
 - **langMiniMod** (core) — _inline (not yet migrated)_

@@ -265,9 +265,17 @@ function markWeeklyCrownDone(nowMs) { const s = load(); s.lastGloryResetWeek = w
 // then season crowns soft-reset and a fresh season opens. Treasury, Tides, shop unlocks, and lifetime
 // crownsWon all PERSIST — only the season race resets, so the competition re-opens without erasing progress.
 const SEASON_LEN_MS = 6 * 7 * 24 * 60 * 60 * 1000;   // 6 weeks (tunable)
+// Each Season is a named AGE (Phase 7, owner: "each 6-week season becomes a named Age"). Names are generated
+// from a template bank (no external dependency), so the Hall of Fame reads like a history book.
+const AGE_NOUNS = ['Embers', 'Ash', 'Iron', 'Storms', 'Tides', 'Crowns', 'Ravens', 'Wolves', 'Frost', 'Dawn',
+  'Ruin', 'Thorns', 'Serpents', 'Dragons', 'Blades', 'Echoes', 'Shadows', 'Gold', 'Flame', 'Stone', 'Roots',
+  'Stars', 'the Long Night', 'the Broken Crown', 'the Red Sun', 'Kings', 'Wanderers', 'Oaths', 'Vultures',
+  'Lions', 'the Deep', 'the Ninth Wave', 'Sails', 'the Quiet War', 'Hollow Crowns', 'the Gathering Storm'];
+function makeAgeName() { return `The Age of ${AGE_NOUNS[Math.floor(Math.random() * AGE_NOUNS.length)]}`; }
 function ensureSeason(nowMs) {
   const s = load(); const now = nowMs || Date.now();
-  if (!s.season) { s.season = { number: 1, startedAt: now, endsAt: now + SEASON_LEN_MS }; save(s); }
+  if (!s.season) { s.season = { number: 1, name: makeAgeName(), startedAt: now, endsAt: now + SEASON_LEN_MS }; save(s); }
+  else if (!s.season.name) { s.season.name = makeAgeName(); save(s); }   // backfill the pre-Phase-7 season
   return s.season;
 }
 function getSeason() { return load().season || null; }
@@ -290,11 +298,11 @@ function endSeasonAndRotate(guild, nowMs) {
   const top = board[0];
   const champion = (top && top.crowns > 0) ? { key: top.key, name: top.name, crowns: top.crowns } : null;
   if (!s.seasonHistory) s.seasonHistory = [];
-  s.seasonHistory.push({ number: cur.number, championKey: champion ? champion.key : null, championName: champion ? champion.name : null, crowns: champion ? champion.crowns : 0, endedAt: now });
+  s.seasonHistory.push({ number: cur.number, name: cur.name || null, championKey: champion ? champion.key : null, championName: champion ? champion.name : null, crowns: champion ? champion.crowns : 0, endedAt: now });
   for (const t of Object.values(s.tribes || {})) t.seasonCrowns = 0;
-  s.season = { number: cur.number + 1, startedAt: now, endsAt: now + SEASON_LEN_MS };
+  s.season = { number: cur.number + 1, name: makeAgeName(), startedAt: now, endsAt: now + SEASON_LEN_MS };
   save(s);
-  return { previousNumber: cur.number, champion, season: s.season };
+  return { previousNumber: cur.number, previousName: cur.name || `Age ${cur.number}`, champion, season: s.season };
 }
 
 // ---- The land shop: milestone-gated unlocks (see TRIBE_PHASE5_SPEC.md section 3) + the uncapped Stronghold
