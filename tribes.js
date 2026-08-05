@@ -93,6 +93,21 @@ function addTides(key, userId, n = 1) {
 }
 function getTides(key, userId) { const t = get(key); return ((t && t.tides) || {})[userId] || 0; }
 
+// Daily arena play tracking (Phase 6 daily hook): a member's FIRST scoring play each UTC day earns a bonus and
+// ticks a streak; the streak resets to 1 if a day was missed. Returns { firstToday, streak }.
+function recordArenaPlay(userId, nowMs) {
+  const s = load(); if (!s.arenaDaily) s.arenaDaily = {};
+  const now = nowMs || Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  const rec = s.arenaDaily[userId] || { lastDay: null, streak: 0 };
+  if (rec.lastDay === day) return { firstToday: false, streak: rec.streak };
+  const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
+  rec.streak = (rec.lastDay === yesterday) ? (rec.streak + 1) : 1;
+  rec.lastDay = day; s.arenaDaily[userId] = rec; save(s);
+  return { firstToday: true, streak: rec.streak };
+}
+function getArenaStreak(userId) { const r = (load().arenaDaily || {})[userId]; return r ? r.streak : 0; }
+
 // "Veterans" = anyone who has EVER been in a tribe. Loyalty model: your first tribe is a free self-join,
 // but once you've been in one you can't self-join again — a new tribe must accept you (request/invite).
 // Marked whenever any tribe role is added (guildMemberUpdate) — permanent history, survives release.
@@ -534,6 +549,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone,
   SEASON_LEN_MS, ensureSeason, getSeason, addSeasonCrown, seasonStandings, dueForSeasonEnd, seasonHistory, currentChampionKey, endSeasonAndRotate,
+  recordArenaPlay, getArenaStreak,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
   startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,

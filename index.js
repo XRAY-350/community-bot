@@ -973,6 +973,23 @@ const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, ty
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
 const _arenaTimers = { start: null, end: null, round: null };
 function clearArenaTimers() { for (const k of ['start', 'end', 'round']) if (_arenaTimers[k]) { clearTimeout(_arenaTimers[k]); _arenaTimers[k] = null; } }
+// Personal-reward tuning for the arena (Phase 6 daily hook).
+const TIDES_PER_ARENA_POINT = 3;      // personal Tides for each point you score in an arena
+const ARENA_DAILY_BONUS_TIDES = 10;   // your first arena score of the UTC day
+const ARENA_MVP_BONUS_TIDES = 15;     // the event's top scorer
+// Award an arena point AND the personal progression that makes the arena a daily hook: the tribe score, a
+// per-member score (for MVP), personal Tides, and a once-per-UTC-day bonus that ticks a play streak. Returns
+// the tribe's new total (the reaction race reads it). userId may be null (defensive: unknown scorer).
+function scoreArena(tribeKey, userId, points = 1) {
+  const total = arena.addScore(tribeKey, points);
+  if (userId) {
+    arena.addMemberScore(userId, points);
+    tribes.addTides(tribeKey, userId, TIDES_PER_ARENA_POINT * points);
+    const daily = tribes.recordArenaPlay(userId, Date.now());
+    if (daily.firstToday) tribes.addTides(tribeKey, userId, ARENA_DAILY_BONUS_TIDES);
+  }
+  return total;
+}
 const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'riddle', 'emoji', 'truefalse', 'reaction', 'pattern'];
 const ARENA_AUTO_CHANCE = 0.5;   // per eligible tick, so timing isn't clockwork on the cooldown boundary
 // Auto-start (owner: "have the bot start them randomly at a daily cap instead of starting manually"). Called
@@ -1119,7 +1136,7 @@ async function postReactionRound(guild) {
 async function computeBlitzScores(guild, startMs, endMs) {
   await ensureMembers(guild).catch(() => {});
   const channels = await guild.channels.fetch().catch(() => null);
-  if (!channels) return {};
+  if (!channels) return { scores: {}, memberCounts: {} };
   const hits = [];
   for (const ch of channels.values()) {
     if (!ch || ![0, 5].includes(ch.type)) continue;   // text + announcement channels
@@ -1140,14 +1157,16 @@ async function computeBlitzScores(guild, startMs, endMs) {
     }
   }
   hits.sort((a, b) => a.ts - b.ts);
-  const last = new Map(), scores = {};
+  const last = new Map(), scores = {}, memberCounts = {};
   for (const h of hits) {
     const k = `${h.key}:${h.uid}`;
     if (last.get(k) > h.ts - 8000) continue;
     last.set(k, h.ts);
     scores[h.key] = (scores[h.key] || 0) + 1;
+    if (!memberCounts[h.uid]) memberCounts[h.uid] = { key: h.key, n: 0 };
+    memberCounts[h.uid].n += 1;
   }
-  return scores;
+  return { scores, memberCounts };
 }
 async function askNextTrivia(guild) {
   const a = arena.get(); if (!a || !arena.BUTTON_TYPES.includes(a.type)) return;
@@ -1168,8 +1187,19 @@ async function askNextTrivia(guild) {
 async function endArena(guild) {
   clearArenaTimers();
   let a = arena.get(); if (!a) return;
-  // Blitz is tallied now, from message history over the whole window (owner: count at the end).
-  if (a.type === 'blitz') { const scores = await computeBlitzScores(guild, a.startedAt, a.endsAt).catch(() => ({})); arena.update({ scores }); a = arena.get(); }
+  // Blitz is tallied now, from message history over the whole window (owner: count at the end). Per-member
+  // counts also drive personal Tides + the MVP, same as the interactive types earn via scoreArena.
+  if (a.type === 'blitz') {
+    const { scores, memberCounts } = await computeBlitzScores(guild, a.startedAt, a.endsAt).catch(() => ({ scores: {}, memberCounts: {} }));
+    const ms = {};
+    for (const [uid, info] of Object.entries(memberCounts)) {
+      ms[uid] = info.n;
+      tribes.addTides(info.key, uid, TIDES_PER_ARENA_POINT * info.n);
+      const daily = tribes.recordArenaPlay(uid, Date.now());
+      if (daily.firstToday) tribes.addTides(info.key, uid, ARENA_DAILY_BONUS_TIDES);
+    }
+    arena.update({ scores, memberScores: ms }); a = arena.get();
+  }
   const win = arena.winner();
   const ch = await arenaChannel(guild);
   const label = ARENA_LABEL[a.type] || 'challenge';
@@ -1192,10 +1222,22 @@ async function endArena(guild) {
   } else {
     resultText = `# 🏁 ${label} over\nNo tribe scored — no reward this time.`;
   }
-  // Result in the tribe-announcements channel (where it ran), pinging every tribe.
+  // MVP: the event's top individual scorer gets a bonus + a shout (personal recognition drives retention).
+  let mvpLine = '', mvpId = null;
+  const mvp = arena.topMemberScorer();
+  if (mvp && mvp.score > 0) {
+    mvpId = mvp.userId;
+    const mvpMember = await guild.members.fetch(mvp.userId).catch(() => null);
+    const mvpTribe = mvpMember && tribes.memberTribe(mvpMember);
+    if (mvpTribe) tribes.addTides(mvpTribe.key, mvp.userId, ARENA_MVP_BONUS_TIDES);
+    const streak = tribes.getArenaStreak(mvp.userId);
+    mvpLine = `\n-# 🥇 MVP: <@${mvp.userId}> with **${mvp.score}** point${mvp.score === 1 ? '' : 's'} (+${ARENA_MVP_BONUS_TIDES} Tides)${streak > 1 ? `, on a ${streak}-day streak 🔥` : ''}. Every scorer banked Tides toward their rank.`;
+  }
+  // Result in the tribe-announcements channel (where it ran), pinging every tribe (and the MVP).
   if (ch) {
     const roleIds = tribes.all().map(t => t.roleId).filter(Boolean);
-    await ch.send({ content: `${resultText}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: { roles: roleIds } }).catch(() => {});
+    const mentions = { roles: roleIds }; if (mvpId) mentions.users = [mvpId];
+    await ch.send({ content: `${resultText}${mvpLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: mentions }).catch(() => {});
   }
   arena.recordEnd();   // stamp end for the cooldown + daily cap
   arena.clear();
@@ -2669,7 +2711,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
         const cur = arena.get();   // re-read to reduce a double-score race between near-simultaneous reactions
         if (mine && cur && cur.type === 'reaction' && cur.reactionOpen && cur.messageId === ax.messageId) {
           arena.update({ reactionOpen: false });   // first-to-react closes this round
-          arena.addScore(mine.key, 1);
+          scoreArena(mine.key, member.id);
           await postReactionRound(rguild).catch(() => {});
         }
       }
@@ -3512,7 +3554,7 @@ client.on('messageCreate', async (msg) => {
           msg.content.trim().toLowerCase() === String(ax.answer).trim().toLowerCase()) {
         const mine = tribes.memberTribe(msg.member);
         if (mine) {
-          arena.addScore(mine.key, 1);
+          scoreArena(mine.key, msg.author.id);
           const nx = arena.nextTyped(ax.type, ax.used || []);   // fresh prompt; no in-game repeats (owner)
           arena.update({ answer: nx.answer, display: nx.display, round: (ax.round || 1) + 1, used: [...(ax.used || []), nx.key] });
           await msg.react('✅').catch(() => {});
@@ -4834,7 +4876,7 @@ client.on('interactionCreate', async (interaction) => {
     const mine = tribes.memberTribe(interaction.member);
     if (!mine) return interaction.reply({ content: 'You’re not in a tribe — join one in #roles to play.', flags: MessageFlags.Ephemeral });
     if (!arena.markOnce('participants', interaction.user.id)) return interaction.reply({ content: 'You already claimed. One per member!', flags: MessageFlags.Ephemeral });
-    const total = arena.addScore(mine.key, 1);
+    const total = scoreArena(mine.key, interaction.user.id);
     const fresh = arena.get();
     await interaction.update({ content: `# 🏁 Reaction Race!\nFirst tribe to **${arena.RACE_TARGET}** claims wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. One claim per member. Ends <t:${Math.floor(a.endsAt / 1000)}:R> if nobody hits the target.\n\n${arenaScoreboard(fresh)}`, components: interaction.message.components }).catch(() => {});
     if (total >= arena.RACE_TARGET) await endArena(interaction.guild).catch(() => {});
@@ -4852,7 +4894,7 @@ client.on('interactionCreate', async (interaction) => {
     if ((a.answeredThisQ || []).includes(interaction.user.id)) return interaction.reply({ content: 'You already answered this one.', flags: MessageFlags.Ephemeral });
     arena.update({ answeredThisQ: [...(a.answeredThisQ || []), interaction.user.id] });
     if (Number(interaction.customId.split(':')[1]) !== a.answer) return interaction.reply({ content: '❌ Not quite.', flags: MessageFlags.Ephemeral });
-    arena.addScore(mine.key, 1);
+    scoreArena(mine.key, interaction.user.id);
     await interaction.update({ components: [] }).catch(() => {});   // ack + lock this question
     await interaction.followUp({ content: `✅ Correct! Point for ${tribeName(mine.key)}.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => {});
     return askNextTrivia(interaction.guild).catch(() => {});
