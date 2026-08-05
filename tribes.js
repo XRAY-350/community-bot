@@ -93,6 +93,23 @@ function addTides(key, userId, n = 1) {
 }
 function getTides(key, userId) { const t = get(key); return ((t && t.tides) || {})[userId] || 0; }
 
+// ---- Prestige (Phase 7 depth): a capped-out member resets their Tides climb for a permanent honour + a lasting
+// mark in the tribe's history. No fourth currency: prestige is a Tides SINK; the reward is a title (achievements)
+// + a name in t.prestigeLog. Tenure is NOT reset (only Tides), so the second climb only needs the Tides again.
+function getPrestige(key, userId) { const t = get(key); return ((t && t.prestige) || {})[userId] || 0; }
+function resetMemberTides(key, userId) { const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return; if (!t.tides) t.tides = {}; t.tides[userId] = 0; save(s); }
+function addPrestige(key, userId, nowMs) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0;
+  if (!t.prestige) t.prestige = {};
+  const lvl = (t.prestige[userId] || 0) + 1;
+  t.prestige[userId] = lvl;
+  if (!t.prestigeLog) t.prestigeLog = [];
+  t.prestigeLog.push({ userId, level: lvl, at: nowMs || Date.now() });
+  if (t.prestigeLog.length > 200) t.prestigeLog.splice(0, t.prestigeLog.length - 200);
+  save(s); return lvl;
+}
+function prestigeLog(key) { const t = get(key); return (t && t.prestigeLog) || []; }
+
 // Daily arena play tracking (Phase 6 daily hook): a member's FIRST scoring play each UTC day earns a bonus and
 // ticks a streak; the streak resets to 1 if a day was missed. Returns { firstToday, streak }.
 function recordArenaPlay(userId, nowMs) {
@@ -628,6 +645,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMemb
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
+  getPrestige, resetMemberTides, addPrestige, prestigeLog,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
   startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo,

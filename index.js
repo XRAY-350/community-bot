@@ -4779,6 +4779,46 @@ client.on('interactionCreate', async (interaction) => {
       if (!features.enabled('relics')) return interaction.reply({ content: 'Relics aren’t enabled.', flags: MessageFlags.Ephemeral });
       return interaction.reply({ content: renderRelicsBoard(tribe.key), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
+    if (act === 'prestige') {
+      if (!features.enabled('prestige')) return interaction.reply({ content: 'Prestige isn’t enabled.', flags: MessageFlags.Ephemeral });
+      const uid = interaction.user.id;
+      if (!interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re not in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral });
+      const ranks = tribe.ranks || [];
+      const topIdx = ranks.length - 1;
+      const isStaffOrLeader = tribes.isLeader(interaction.member, tribe) || ['admin', 'mod'].includes(opspanel.memberTier(interaction.member));
+      const atTop = ranks.length > 0 && !isStaffOrLeader && tribes.earnedRankIndex(tribe, uid) >= topIdx;
+      const lvl = tribes.getPrestige(tribe.key, uid);
+      const tides = tribes.getTides(tribe.key, uid);
+      const topName = ranks[topIdx]?.name || 'the top rank';
+      const need = ranks[topIdx]?.tides || 0;
+      const head = `# ⭐ ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name} · Prestige\n-# Reach **${topName}**, then Prestige: your Tides reset to zero, but you keep a permanent honour title and a mark in your tribe’s history. Climb back to Prestige again.`;
+      const status = `\n\nYour prestige: **${lvl}** ${'⭐'.repeat(Math.min(lvl, 10))}\nYour Tides: **${tides}**`;
+      if (isStaffOrLeader) return interaction.reply({ content: `${head}${status}\n\n-# Prestige is for the rank ladder. As ${tribes.isLeader(interaction.member, tribe) ? 'a leader' : 'staff'} you sit above it.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (!atTop) return interaction.reply({ content: `${head}${status}\n\n-# Not yet eligible. Reach **${topName}** (needs ${need} Tides plus tenure) to Prestige.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribethrone_prestige_confirm:${tribe.key}`).setEmoji('⭐').setLabel('Prestige now — resets my Tides').setStyle(ButtonStyle.Danger));
+      return interaction.reply({ content: `${head}${status}\n\n**You’re eligible.** Prestiging resets your **${tides}** Tides to 0 and raises you to Prestige **${lvl + 1}**.`, components: [row], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (act === 'prestige_confirm') {
+      if (!features.enabled('prestige')) return interaction.reply({ content: 'Prestige isn’t enabled.', flags: MessageFlags.Ephemeral });
+      const uid = interaction.user.id;
+      const ranks = tribe.ranks || [];
+      const topIdx = ranks.length - 1;
+      const isStaffOrLeader = tribes.isLeader(interaction.member, tribe) || ['admin', 'mod'].includes(opspanel.memberTier(interaction.member));
+      if (!interaction.member.roles.cache.has(tribe.roleId) || isStaffOrLeader || !(ranks.length > 0 && tribes.earnedRankIndex(tribe, uid) >= topIdx))
+        return interaction.reply({ content: 'You’re no longer eligible to Prestige.', flags: MessageFlags.Ephemeral });
+      const before = tribes.getTides(tribe.key, uid);
+      tribes.resetMemberTides(tribe.key, uid);
+      const lvl = tribes.addPrestige(tribe.key, uid, Date.now());
+      await applyTribeRank(interaction.guild, tribe, interaction.member, 0, 'prestige reset', false).catch(() => {});
+      let titleLine = '';
+      if (features.enabled('achievements')) {
+        const got = achievements.bumpAndCheck(uid, 'prestige');
+        if (got.length) { const a = got[got.length - 1]; titleLine = `\n🏅 Unlocked **${a.name}** — new title: *${a.title}*.`; }
+      }
+      lore.record({ type: 'prestige', title: `${interaction.member.displayName} reached Prestige ${lvl} in ${tribe.shortName || tribe.name}`, tribes: [tribe.key], level: lvl });
+      await broadcastSpectacle(interaction.guild, `# ⭐ Prestige\n<@${uid}> of ${tribeName(tribe.key)} ascended to **Prestige ${lvl}**, resetting their climb for honour.`, [tribe.roleId].filter(Boolean));
+      return interaction.update({ content: `# ⭐ You are now Prestige ${lvl}!\nYour **${before}** Tides reset to 0. Climb again when you’re ready.${titleLine}\n-# Equip your title from 🏅 Trophies.`, components: [], allowedMentions: { parse: [] } });
+    }
     if (act === 'tithe') {
       // Tithe = convert your OWN activity points into this tribe's treasury (same as /tribe offer). Members only.
       if (!interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re not in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral });

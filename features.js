@@ -69,7 +69,7 @@ const REGISTRY = [
     help: { name: '🎯 Weekly quests', value: 'Every week the tribes share three objectives (win Arena contests, answer musters, win a war, take the Crown). Finish one and your tribe banks Treasury and Glory. See them on your throne’s 🎯 Quests view.' } },
   { key: 'relics',      audience: 'member', built: true,    // Age-end trophies: permanent name/lore + a tiny, capped, cross-Age-decaying perk; raidable in wars (Phase 7 depth). On the throne. LIVE.
     help: { name: '🏺 Relics', value: 'A tribe that wins an Age is minted a Relic: a permanent trophy on your throne, plus a small edge that stacks with more Relics but fades over the Ages so nobody runs away with it forever. Relics can be lost in war.' } },
-  { key: 'prestige',    audience: 'member', built: false,   // capped-out members Prestige for a permanent title (Phase 7 depth), ties into achievements. Flipped ON when its handler lands. Throne button.
+  { key: 'prestige',    audience: 'member', built: true,    // capped-out members Prestige for a permanent title (Phase 7 depth), ties into achievements. Throne button. LIVE.
     help: { name: '⭐ Prestige', value: 'Maxed out your tribe rank? Prestige to reset your climb for a permanent honour title and a lasting mark in your tribe’s history. Find it on your throne once you reach the top rung.' } },
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner

@@ -25,6 +25,10 @@ const CATALOG = [
   // Crown + Season (cumulative)
   { id: 'crown1',   counter: 'crown',  threshold: 1,  emoji: '👑', name: 'Crowned',        desc: 'Hold a weekly Crown with your tribe.', title: 'the Crowned' },
   { id: 'season1',  counter: 'season', threshold: 1,  emoji: '🏆', name: 'Champion',       desc: 'Win a Season with your tribe.',      title: 'the Champion' },
+  // Prestige (cumulative) — earned by Prestiging at the top rung; each grants a permanent honour title.
+  { id: 'prestige1',counter: 'prestige', threshold: 1, emoji: '⭐', name: 'Ascended',       desc: 'Prestige once from the top rank.',   title: 'the Ascended' },
+  { id: 'prestige3',counter: 'prestige', threshold: 3, emoji: '🌟', name: 'Exalted',        desc: 'Prestige three times.',              title: 'the Exalted' },
+  { id: 'prestige5',counter: 'prestige', threshold: 5, emoji: '✨', name: 'Eternal',        desc: 'Prestige five times.',               title: 'the Eternal' },
 ];
 const _byId = {}; for (const a of CATALOG) _byId[a.id] = a;
 function byId(id) { return _byId[id] || null; }

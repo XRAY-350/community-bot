@@ -48,5 +48,5 @@ Three pillars from a design pass, adjusted by the owner:
   disk-stored member-made banner shown on /tribe info.
 - [x] 2. Named wars + Coronation — wars auto-named (The War of the...), shown in the spectacle + recorded to lore with the aftermath; weekly crown is now a staged coronation (herald, transfer, fallen rivals, proclamation)
 - [x] 3. Chronicle — weekly auto-composed chapter read from the Lore Log (foundings, ages, crown, wars, arena tally, musters), template voice, posted to the Chronicle channel (falls back to spectacle); runs after the crown so it captures it; a quiet week writes nothing
-- [ ] 4. Quests + Relics + Prestige
+- [x] 4. Quests + Relics + Prestige — weekly lore-derived quests paying Treasury/Glory; Age-Champion Relics (permanent trophy + tiny capped cross-Age-decaying war edge, raidable in wars); Prestige (top-rung members reset Tides for a permanent achievement title + tribe-history mark). No fourth currency; all three flag-gated + LIVE
 - [ ] 5. Herald voice + polish
