@@ -944,6 +944,7 @@ async function enforceRankOrder(guild, tribe) {
 // a mod or admin"). Strip the leader role from any holder who's lost their staff tier — applies to EVERY
 // tribe. The guild/bot owner reads as 'owner' tier, so they're never stripped. Returns who was stripped.
 async function stripNonStaffLeaders(guild, tribe) {
+  if (tribes.isMemberFounded(tribe)) return [];   // member-founded tribes are LED by regular-member co-leaders, by design
   const role = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
   if (!role) return [];
   const stripped = [];
@@ -980,7 +981,7 @@ async function sweepLeaderRequirement(guild) {
     if (demoted.length) await alertModTribe(guild, `👑 Removed the leader role from ${demoted.map(m => `<@${m.id}>`).join(', ')} in ${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}** — a tribe leader must be a mod or admin.`, tribe.leaderRoleId);
     const leaderRole = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
     const holderCount = leaderRole ? leaderRole.members.size : 0;
-    if (!tribes.isModFounded(tribe) && typeof tribe.lastLeaderCount === 'number' && holderCount < tribe.lastLeaderCount) {
+    if (!tribes.isModFounded(tribe) && !tribes.isMemberFounded(tribe) && typeof tribe.lastLeaderCount === 'number' && holderCount < tribe.lastLeaderCount) {
       tribes.grantFreeRetheme(tribe.key);
       await alertModTribe(guild, `🎨 ${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}** lost a leader — it's been granted a **free retheme** (usable on \`/tribe retheme\` even without the Shop unlock).`, tribe.leaderRoleId);
     }
@@ -2271,7 +2272,7 @@ function renderMemberFounding(req) {
   const need = Math.max(0, tribes.MEMBER_FOUND_COSIGNS - req.cosigns.length);
   const id = req.identity, ready = need === 0;
   const signed = req.cosigns.length ? req.cosigns.map(u => `<@${u}>`).join(', ') : '_none yet_';
-  const header = `## 🏴 A new tribe wants to rise\n> <@${req.founderId}> wants to found **${id.emoji ? id.emoji + ' ' : ''}${id.name}**.\n> It forms once **${tribes.MEMBER_FOUND_COSIGNS} members cosign** it. **Cosigning joins the tribe as a founding member**, so you can’t already be in one (get released the usual way first). Trial mods count; mods/admins/owners can’t.`;
+  const header = `## 🏴 A new tribe wants to rise\n> <@${req.founderId}> wants to found **${id.emoji ? id.emoji + ' ' : ''}${id.name}**.\n> It forms once **${tribes.MEMBER_FOUND_COSIGNS} members cosign** it. **Cosigning makes you a co-leader** of the new tribe (you all lead it together), so you can’t already be in one — get released the usual way first. Trial mods count; mods/admins/owners can’t.`;
   const tally = ready
     ? `\n-# ✅ **${tribes.MEMBER_FOUND_COSIGNS}/${tribes.MEMBER_FOUND_COSIGNS} reached!** <@${req.founderId}> can raise the tribe now.\n-# Cosigned by: ${signed}`
     : `\n-# Cosigned by: ${signed} — **${req.cosigns.length}/${tribes.MEMBER_FOUND_COSIGNS}** (${need} more)`;
@@ -5105,7 +5106,7 @@ client.on('interactionCreate', async (interaction) => {
       // Cosigning JOINS this tribe, so you must leave your current one first. Rather than just tell them,
       // kick off the SAME leave flow the hub/command use (files a leave request to their throne for the leader).
       const r = await submitLeaveRequest(interaction.guild, interaction.member);
-      const lead = r.ok ? 'Cosigning **joins** this tribe, but you’re still in one — so I’ve started your release: ' : 'Cosigning **joins** this tribe, but you’re still in one. ';
+      const lead = r.ok ? 'Cosigning makes you a **co-leader** of this tribe, but you’re still in one — so I’ve started your release: ' : 'Cosigning makes you a **co-leader** of this tribe, but you’re still in one. ';
       return interaction.reply({ content: `${lead}${r.content}${r.ok ? '\nOnce your leader approves it, come back and cosign.' : ''}`, flags: MessageFlags.Ephemeral });
     }
     const updated = tribes.cosignMemberFounding(interaction.user.id);
@@ -5126,25 +5127,24 @@ client.on('interactionCreate', async (interaction) => {
       const b = await buildTribe(interaction.guild, { name: id.name, shortName: id.shortName, emoji: id.emoji, color: id.color, style: 'smallcaps', leaderMember: interaction.member }, config);
       tribes.update(b.tribe.key, { foundedByMod: false, foundedByMember: true });   // member-led → exempt from the mod-leader requirement (like admin-founded)
       for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
-      // Cosign = join: enroll every cosigner as a founding member. Skip any who've slipped into another tribe
-      // since they signed (they had to be tribe-free to cosign, but the window is open).
+      // Cosign = join AS A CO-LEADER (owner ruling): the founder + up-to-9 cosigners co-lead the tribe together,
+      // so each gets the leader role and thus every existing leader tool (invite/banish/announce/note/rank/motto/
+      // retheme/shop/war/alliances + throne hub) with no separate command. Member-founded tribes are exempt from
+      // the "leaders must be staff" sweep. Skip any cosigner who slipped into another tribe since signing.
       const enrolled = [], skipped = [];
       for (const cid of req.cosigns) {
         const cm = await interaction.guild.members.fetch(cid).catch(() => null);
-        if (!cm || tribes.myTribe(cm)) { skipped.push(cid); continue; }
-        tribes.setMembership(b.tribe.key, cid, true);   // authorize first so the membership guard honors it
-        const ok = await cm.roles.add(b.role.id, 'Founding member — cosigned the tribe').then(() => true).catch(() => false);
-        if (!ok) { tribes.setMembership(b.tribe.key, cid, false); skipped.push(cid); continue; }
-        await syncStaffRank(interaction.guild, cm, b.tribe).catch(() => {});
-        enrolled.push(cid);
+        if (!cm) { skipped.push(cid); continue; }
+        const cr = await addCoLeader(interaction.guild, b.tribe, b.leaderRole, cm);
+        if (cr?.ok) enrolled.push(cid); else skipped.push(cid);
       }
       tribes.setMemberFoundedTribe(b.tribe.key);   // records the one-at-a-time slot AND clears the pending petition
       if (req.channelId && req.messageId) {
         const pch = await interaction.guild.channels.fetch(req.channelId).catch(() => null);
         const pmsg = pch && await pch.messages.fetch(req.messageId).catch(() => null);
-        if (pmsg) await pmsg.edit({ content: `## ${b.tribe.emoji || '🏴'} ${b.tribe.name} has risen!\n> Founded by <@${founderId}>${enrolled.length ? `, with founding members ${enrolled.map(u => `<@${u}>`).join(', ')}` : ''}.\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
+        if (pmsg) await pmsg.edit({ content: `## ${b.tribe.emoji || '🏴'} ${b.tribe.name} has risen!\n> Co-led by <@${founderId}>${enrolled.length ? `, ${enrolled.map(u => `<@${u}>`).join(', ')}` : ''}.\n> Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
       }
-      return interaction.editReply(`🏴 **${b.tribe.name}** is founded — you’re its leader, with **${enrolled.length}** founding member${enrolled.length === 1 ? '' : 's'} enrolled.${skipped.length ? ` (${skipped.length} cosigner${skipped.length === 1 ? '' : 's'} couldn’t be added — they’d joined another tribe.)` : ''} Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`);
+      return interaction.editReply(`🏴 **${b.tribe.name}** is founded — you and **${enrolled.length}** cosigner${enrolled.length === 1 ? '' : 's'} co-lead it (you all share the leader role + every leader tool).${skipped.length ? ` (${skipped.length} cosigner${skipped.length === 1 ? '' : 's'} couldn’t be added — they’d joined another tribe.)` : ''} Land: <#${b.throne.id}> · <#${b.hall.id}> · <#${b.vc.id}>.`);
     } catch (e) {
       console.error('[tribe member-found]', e.message);
       return interaction.editReply(`❌ Couldn’t raise the tribe: ${e.message}`);

@@ -651,6 +651,9 @@ const MIN_MOD_LEADERS = 3;
 // 2026-08-04) and the tribe goes disband-pending at the end if still short.
 const LEADER_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 function isModFounded(tribe) { return !!(tribe && tribe.foundedByMod); }
+// Member-founded tribe: led by regular-member co-leaders (the founder + cosigners), so it's EXEMPT from the
+// "a tribe leader must be a mod/admin" sweep AND the mod-leader-count requirement.
+function isMemberFounded(tribe) { return !!(tribe && tribe.foundedByMember); }
 function getLeaderEnforce(key) { const t = get(key); return (t && t.leaderEnforce) || null; }
 function setLeaderEnforce(key, obj) { return update(key, { leaderEnforce: obj }); }
 function clearLeaderEnforce(key) { return update(key, { leaderEnforce: null }); }
@@ -667,7 +670,7 @@ function hasFreeRetheme(tribe) { return !!(tribe && (tribe.freeRethemes || 0) > 
 function consumeFreeRetheme(key) { const t = get(key); if (!t || !(t.freeRethemes > 0)) return false; update(key, { freeRethemes: t.freeRethemes - 1 }); return true; }
 
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
-  MIN_MOD_LEADERS, LEADER_GRACE_MS, isModFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
+  MIN_MOD_LEADERS, LEADER_GRACE_MS, isModFounded, isMemberFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
   grantFreeRetheme, hasFreeRetheme, consumeFreeRetheme,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
