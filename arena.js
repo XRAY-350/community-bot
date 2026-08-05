@@ -81,6 +81,55 @@ function pick(arr) { return arr[randInt(arr.length)]; }
 function shuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = randInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function scrambleWord(w) { const s = shuffle(w.split('')).join(''); return s === w ? scrambleWord(w) : s; }   // never hand back the word unscrambled
 
+// --- cross-game recency (owner: "questions shouldn't repeat as often as possible") -------------------
+// The per-game `used` arrays only stop repeats WITHIN a single game; the small fixed banks (riddles, emoji,
+// reaction targets) would otherwise cycle back every game or two. This persistent store remembers the last
+// chunk of each bank's items so a fresh game keeps drawing from the not-recently-seen remainder and only
+// recycles an item once most of the bank has been through. FIFO, capped per type. Fail-open: any read/write
+// error just means "nothing remembered", never a crash.
+const RECENT_FILE = process.env.FUBU_ARENA_RECENT_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_arena_recent.json`;
+let _recent = null;
+function loadRecent() { if (_recent) return _recent; try { const j = JSON.parse(fs.readFileSync(RECENT_FILE, 'utf8')); _recent = (j && typeof j === 'object') ? j : {}; } catch { _recent = {}; } return _recent; }
+function saveRecent() { try { fs.writeFileSync(RECENT_FILE, JSON.stringify(loadRecent())); } catch (e) { console.error('[arena] saveRecent:', e.message); } }
+function recentSet(type) { return new Set(loadRecent()[type] || []); }
+function noteRecent(type, key, cap) {
+  const r = loadRecent();
+  const list = (r[type] || []).filter(k => k !== key);
+  list.push(key);
+  const max = Math.max(1, cap || 40);
+  if (list.length > max) list.splice(0, list.length - max);
+  r[type] = list; saveRecent();
+}
+// Pick from `items` avoiding BOTH the per-game `used` keys and the persistent recent set for `type`. keyOf maps
+// an item (+index) to a stable key. Records the pick as recent (cap ≈ capFrac of the bank). Degrades to the
+// per-game-only pool, then the whole bank, so it always returns something.
+function pickFresh(type, items, used, keyOf, capFrac = 0.7) {
+  const usedSet = new Set(used || []);
+  const recent = recentSet(type);
+  let pool = items.filter((it, i) => { const k = keyOf(it, i); return !usedSet.has(k) && !recent.has(k); });
+  if (!pool.length) pool = items.filter((it, i) => !usedSet.has(keyOf(it, i)));
+  if (!pool.length) pool = items.slice();
+  const chosen = pick(pool);
+  const idx = items.indexOf(chosen);
+  noteRecent(type, keyOf(chosen, idx), Math.floor(items.length * capFrac));
+  return { chosen, idx };
+}
+// Cross-game dedupe for the pre-assembled trivia/TF question sets: prefer questions not asked in recent games
+// (matched by normalized text), top up with recently-asked ones only if there aren't enough fresh, then note
+// the chosen set. Online fetches a few extra so the trim actually removes repeats; the local fallback rotates.
+function qKey(q) { return String((q && q.q) || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 90); }
+function freshenQuestions(type, questions, want) {
+  if (!Array.isArray(questions) || !questions.length) return questions || [];
+  const n = want || questions.length;
+  const recent = recentSet(type);
+  const fresh = questions.filter(q => !recent.has(qKey(q)));
+  const stale = questions.filter(q => recent.has(qKey(q)));
+  const chosen = (fresh.length >= n ? fresh : fresh.concat(stale)).slice(0, n);
+  const cap = Math.max(60, n * 6);   // remember several games' worth of questions per type
+  for (const q of chosen) noteRecent(type, qKey(q), cap);
+  return chosen;
+}
+
 // SCRAMBLE words — a large CURATED bank of common, solvable words. (Online random-word APIs return obscure
 // words like "piolets"/"pallidly" that nobody can unscramble, so a big common list beats infinite-but-unfair.)
 const WORDS_DEFAULT = ['tribe', 'warden', 'treasury', 'glory', 'muster', 'alliance', 'crown', 'vigil', 'banner', 'throne',
@@ -186,11 +235,23 @@ const RIDDLES = [
   { q: 'What comes down but never goes up?', a: 'rain' },
   { q: 'What has a heart that does not beat?', a: 'artichoke' },
   { q: 'What runs all around a yard yet never moves?', a: 'fence' },
+  { q: 'What has a face and two hands but no arms or legs?', a: 'clock' },
+  { q: 'What can you break, even if you never pick it up or touch it?', a: 'promise' },
+  { q: 'What goes through towns and hills but never moves?', a: 'road' },
+  { q: 'The more of this there is, the less you see. What is it?', a: 'darkness' },
+  { q: 'What has a bottom at the top?', a: 'leg' },
+  { q: 'What five-letter word becomes shorter when you add two letters to it?', a: 'short' },
+  { q: 'What has many keys but opens no doors?', a: 'piano' },
+  { q: 'What kind of band never plays music?', a: 'rubber band' },
+  { q: 'What has a ring but no finger?', a: 'telephone' },
+  { q: 'What gets bigger the more you take away from it?', a: 'hole' },
+  { q: 'What invention lets you look right through a wall?', a: 'window' },
+  { q: 'What word is spelled wrong in every dictionary?', a: 'wrong' },
+  { q: 'What flies without wings?', a: 'time' },
+  { q: 'It belongs to you, but other people use it more than you do. What is it?', a: 'name' },
 ];
 function nextRiddle(used) {
-  const pool = RIDDLES.filter((_, i) => !(used || []).includes(i));
-  const chosen = pick(pool.length ? pool : RIDDLES);
-  const idx = RIDDLES.indexOf(chosen);
+  const { chosen, idx } = pickFresh('riddle', RIDDLES, used, (_, i) => i);
   return { display: chosen.q, answer: chosen.a, key: idx };
 }
 // Emoji Decode — the emojis spell a word/thing; answer matched case-insensitively.
@@ -205,9 +266,7 @@ const EMOJI_REBUS = [
   { e: '🌋', a: 'volcano' }, { e: '🎃', a: 'pumpkin' }, { e: '🍍', a: 'pineapple' },
 ];
 function nextEmoji(used) {
-  const pool = EMOJI_REBUS.filter((_, i) => !(used || []).includes(i));
-  const chosen = pick(pool.length ? pool : EMOJI_REBUS);
-  const idx = EMOJI_REBUS.indexOf(chosen);
+  const { chosen, idx } = pickFresh('emoji', EMOJI_REBUS, used, (_, i) => i);
   return { display: chosen.e, answer: chosen.a, key: idx };
 }
 // Unified typed-prompt picker used by scramble/math/typing/riddle/emoji.
@@ -281,11 +340,12 @@ function genPattern(n) {
 }
 
 // Reaction Rush — each round targets one easy-to-click emoji; first tribe member to react scores.
-const REACTION_EMOJIS = ['🔥', '⚡', '🎯', '🏆', '💎', '🌟', '🚀', '🎉', '👑', '🐉', '🛡️', '⚔️', '🌈', '💯', '🍀'];
-function nextReaction(used) { const pool = REACTION_EMOJIS.filter(e => !(used || []).includes(e)); return pick(pool.length ? pool : REACTION_EMOJIS); }
+const REACTION_EMOJIS = ['🔥', '⚡', '🎯', '🏆', '💎', '🌟', '🚀', '🎉', '👑', '🐉', '🛡️', '⚔️', '🌈', '💯', '🍀',
+  '🎈', '🎁', '🎵', '🍎', '🌙', '☀️', '❤️', '🐾', '🌸', '🍕', '🎸', '🦋', '🍦', '🎲', '🪁', '🌊', '🦄', '🍉', '🎺', '🧊'];
+function nextReaction(used) { return pickFresh('reaction', REACTION_EMOJIS, used, e => e).chosen; }
 
-// Pick a scramble word not already used THIS game (owner: no in-game repeats).
-function nextWord(used) { const pool = loadBank().words.filter(w => !(used || []).includes(w)); return pick(pool.length ? pool : loadBank().words); }
+// Pick a scramble word not used this game NOR in recent games (owner: no in-game repeats + rare cross-game ones).
+function nextWord(used) { return pickFresh('word', loadBank().words, used, w => w).chosen; }
 // Local trivia fallback picker (excludes already-asked-this-game).
 function localTrivia(n, asked) {
   const pool = loadBank().trivia.filter((_, i) => !(asked || []).includes(i));
@@ -316,4 +376,5 @@ module.exports = {
   recordEnd, startBlocked, autoStartDue, getNextAutoAt,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
   nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,
+  freshenQuestions,
 };

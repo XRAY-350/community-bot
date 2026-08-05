@@ -542,31 +542,33 @@ function tribeHubContent(guild, config) {
   return `# 🏴 Tribes\nPledge your first tribe in <#${config.rolesChannelId}>. Everything else — standings, your own tribe, joining/leaving, war — is below.`;
 }
 function tribeHubEmbed() {
-  const desc = `**The server's tribe system:** member factions, each with its own private territory, roles, ranks, and economy. Pledge your allegiance, rise through the ranks, represent your people.\n\n`
+  const desc = `**The server's tribe system:** member factions, each with its own territory, roles, ranks and economy, and a living history the server watches. Pledge in, rise up, represent.\n\n`
     + `## What a tribe is\n`
-    + `Every tribe has its own hoisted role and colour, a private land (throne, hall, voice), an internal rank ladder, and a leader who runs it (each tribe names its own title, Warden, Warlord, whatever fits).\n\n`
+    + `Every tribe has a hoisted role and colour, a private land (throne, hall, voice), a member-made **banner** on its profile, a rank ladder, and a leader who runs it (each names its own title, Warden, Warlord, whatever fits).\n\n`
     + `## How tribes are founded\n`
-    + `An admin can found a tribe. A mod can found one too, but only backed by **two other mods**, all three lead it together, and a mod-founded tribe must keep **three leaders** to stay standing. Got an idea? Bring it to an admin, or rally two mods.\n\n`
+    + `An admin can found a tribe. A mod can too, but only backed by **two other mods**, all three lead it together, and a mod-founded tribe must keep **three leaders** to stay standing. Got an idea? Bring it to an admin, or rally two mods.\n\n`
     + `## How to join\n`
-    + `Pick a tribe from the Tribes section in #roles. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a tribe's leader must release you (staff can Leave below instantly), and any new tribe has to accept you, by nomination, invite, or your own Join Request below.\n\n`
-    + `## Rising through the ranks\n`
-    + `Being active in your tribe's hall moves you up its rank ladder automatically (each tribe names its own four rungs), ranks only ever go up, never down. Staff who join as regular members automatically hold **General**, above the whole ladder.\n\n`
-    + `## Treasury, Glory, and the Weekly Crown\n`
-    + `Activity earns your tribe **Glory** (this week's live standing). Every Sunday at 00:00 UTC, whoever has the most Glory takes the **👑 Weekly Crown**. Glory resets weekly, **Treasury** doesn't, it's the tribe's permanent bank (crown wins, members giving up their own points with \`/tribe offer\`, war raids, ally gifts).\n\n`
-    + `## Ages\n`
-    + `Time in the tribes is measured in **Ages**, each a named **6-week** chapter (like "The Age of Embers"). Weekly crowns stack up across an age; when it ends, the tribe with the most is named **🏆 Age Champion**, written into the permanent **Hall of Fame**, and wears the reigning-champion role. Then the age's crowns reset and a new age begins, your Treasury, ranks, and unlocks all carry over, so the story continues without erasing anything. See the current age with the **Standings** button and past champions with **Hall of Fame**.\n\n`
+    + `Pick a tribe from the Tribes section in #roles. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a leader must release you (staff can Leave below), and a new tribe must accept you (nomination, invite, or your Join Request below).\n\n`
+    + `## Ranks & Prestige\n`
+    + `Being active in the hall moves you up the rank ladder automatically (four named rungs); ranks only go up. Staff members hold **General**, above the ladder. Reach the **top rung** and you can **⭐ Prestige**: reset your climb for a permanent honour title and a mark in tribe history.\n\n`
+    + `## Treasury, Glory & the Weekly Crown\n`
+    + `Activity earns **Glory** (this week's live standing). Every Sunday 00:00 UTC the most Glory takes the **👑 Weekly Crown** in a staged **coronation**. Glory resets weekly; **Treasury** is the permanent bank (crowns, \`/tribe offer\`, raids, ally gifts, quests).\n\n`
+    + `## Ages, Relics & the Hall of Fame\n`
+    + `Time is measured in **Ages**, named **6-week** chapters (like "The Age of Embers"). Crowns stack across an age; when it ends the top tribe is named **🏆 Age Champion**, entered into the **Hall of Fame**, and awarded a **🏺 Relic** (a lasting trophy with a tiny war edge that stacks but fades over the ages, seizable in war). Then crowns reset and a new age opens; Treasury, ranks and relics carry over.\n\n`
+    + `## Weekly Quests & the Chronicle\n`
+    + `Every week the tribes share three **🎯 Quests** (win arenas, answer musters, win a war, take the Crown); finishing one banks Treasury + Glory. And the bot writes a weekly **📜 Chronicle**, a chapter of all that happened.\n\n`
     + `## The Shop\n`
-    + `Each unlock has a members-OR-crowns-won gate (either path counts) plus a treasury cost: 2nd text channel, re-theme, external sounds, 2nd voice channel, voice quality boost, faster Tides earning, and a **custom tribe icon**. A maxed-out tribe can keep sinking treasury into repeatable Stronghold Tiers for **war defense** (each tier adds defensive power and blunts an enemy raid).\n\n`
+    + `Each unlock has a members-or-crowns gate plus a treasury cost: 2nd text/voice channels, re-theme, external sounds, voice-quality boost, faster Tides, and a **custom tribe icon**. A maxed tribe keeps sinking treasury into repeatable **🏰 Stronghold Tiers** for war defense.\n\n`
     + `## Musters\n`
-    + `A leader can call a **muster**, a roll-call in the hall (about once a day). Answer it and the tribe banks treasury + glory for every member who shows up.\n\n`
+    + `A leader can call a **muster**, a hall roll-call (about once a day). Answer it and the tribe banks treasury + glory for everyone who shows up.\n\n`
     + `## War & Alliances\n`
-    + `A leader can **Declare War**: your OWN members vote first (24h, needs real turnout and a majority). If it passes, the target tribe's leader can **Accept** and fight, or **Decline** — which triggers a coin flip that decides whether the war happens anyway (ignore the prompt for 24h and the coin flip auto-resolves). A war resolves by a strength simulation weighted by your tribe's Tides (not a guaranteed win, not rank-based), with a 72h cooldown after. The loser gets raided for ~25% treasury and can lose a few regular members for 36h (never the leader, never wiped out) — but a defender's **🏰 Stronghold Tiers** raise its defensive odds and, if it still loses, shrink both the raid and the captures. **Alliances** (capped at 1 per tribe) need your members' vote too, then the other tribe's leader accepts — allies defend each other in wars and can gift treasury to each other.\n\n`
+    + `A leader can **Declare War**: your members vote first (24h majority); if it passes the target's leader Accepts or Declines (a coin flip then decides). Each war is **named** and plays out as a live, narrated battle, resolved by a Tides-weighted strength sim (not rank-based, no guaranteed win), 72h cooldown. The loser is raided for ~25% treasury and can lose a few members for 36h (never the leader), though **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) need a member vote too; allies defend each other and can gift treasury.\n\n`
     + `## Challenges — the Arena\n`
-    + `The bot runs live cross-tribe games on its own through the day, each announced in the tribe-announcements channel with a **5-minute heads-up** so you can gather. **11 game types** rotate: Reaction Race, Trivia Sprint, Word Scramble, Activity Blitz, Math Sprint, Fast Fingers, Riddle Rush, Emoji Decode, True or False, Reaction Rush, and Number Pattern. When one starts, play in tribe-announcements; the winning tribe banks **Glory + Treasury**. (Staff can also launch one on demand with \`/tribe-admin arena\`.)\n\n`
+    + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in tribe-announcements. **16 game types** rotate, from Reaction Race, Trivia and Word Scramble to Riddle Rush, Emoji Decode, Number Pattern and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
     + `## Every tribe's Throne\n`
-    + `Each tribe's throne channel has its own pinned control panel. Members get Roster / Leaderboard / Shop / Tithe / Leave. Leaders (or staff) get the full toolkit: Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Muster, Declare War, and Alliances, click a button instead of typing.\n\n`
+    + `Each throne has a pinned panel. Members get Roster / Leaderboard / Shop / Tithe / Leave, plus 🏅 Trophies, 🏛️ Hall of Fame, 🎯 Quests, 🏺 Relics and ⭐ Prestige. Leaders (or staff) also get Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Banner, Muster, War and Alliances.\n\n`
     + `-# Use the buttons below instead of typing commands out.`;
-  return new EmbedBuilder().setColor(0x2A426A).setDescription(desc.slice(0, 4096));
+  return new EmbedBuilder().setColor(copy.herald.COLORS.herald).setDescription(desc.slice(0, 4096));
 }
 function tribeHubButtons() {
   return [
@@ -1389,10 +1391,13 @@ async function beginArena(guild) {
     // Button types (trivia/truefalse/pattern) share the questions[] + askNextTrivia + arena_ans flow. Online
     // types pre-fetch the whole batch at launch (owner: "virtually infinite") with a local fallback; generated
     // types (pattern) build the batch locally — either way it's a questions array of {q, options, answer}.
+    // We fetch a few EXTRA questions and then freshenQuestions() trims to the target count, dropping ones asked
+    // in recent games (cross-game de-dup, owner ask) — the extra headroom is what lets the trim actually remove
+    // repeats rather than just reorder. Pattern is generated (effectively infinite), so it needs no de-dup.
     let questions = [], source = 'local';
-    if (type === 'truefalse') { const f = await arena.fetchBoolean(arena.TF_QUESTIONS); questions = (f && f.length) ? f : arena.localBoolean(arena.TF_QUESTIONS); source = f ? 'online' : 'local'; }
+    if (type === 'truefalse') { const f = await arena.fetchBoolean(arena.TF_QUESTIONS + 6); const qs = (f && f.length) ? f : arena.localBoolean(arena.TF_QUESTIONS); questions = arena.freshenQuestions('tf', qs, arena.TF_QUESTIONS); source = f ? 'online' : 'local'; }
     else if (type === 'pattern') { questions = arena.genPattern(arena.PATTERN_QUESTIONS); source = 'generated'; }
-    else { const cat = arena.TRIVIA_CATEGORY[type]; const f = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS, cat); questions = (f && f.length) ? f : arena.localTrivia(arena.TRIVIA_QUESTIONS, []); source = f ? 'online' : 'local'; }   // trivia + themed quizzes
+    else { const cat = arena.TRIVIA_CATEGORY[type]; const f = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS + 6, cat); const qs = (f && f.length) ? f : arena.localTrivia(arena.TRIVIA_QUESTIONS, []); questions = arena.freshenQuestions(type, qs, arena.TRIVIA_QUESTIONS); source = f ? 'online' : 'local'; }   // trivia + themed quizzes
     arena.set({ ...base, questions, qNum: 0, source });
     await askNextTrivia(guild);
   } else if (type === 'reaction') {
