@@ -4539,6 +4539,18 @@ client.on('messageCreate', async (msg) => {
     // Auto-delete the "X pinned a message" system notification so pins don't clutter channels (owner 2026-08-05).
     // Checked BEFORE the bot-author early-return below, since a bot-pinned notice is authored by the bot.
     if (msg.guild && msg.type === MessageType.ChannelPinnedMessage) { await msg.delete().catch(() => {}); return; }
+    // Blanket 24h self-expiry for EVERYTHING posted in a tribe throne (owner: "add the timer to all messages
+    // in the throne") — not just the bot's transient throneSend() posts, but human leader announcements and any
+    // other post too, to keep the throne clear. Excludes the persistent pinned control panel (its own marker).
+    // Runs BEFORE the bot early-return so bot posts are covered; throneExpire.add is an upsert and armThroneExpire
+    // is idempotent, so this never double-schedules a message throneSend() already armed.
+    if (msg.guild && (msg.type === MessageType.Default || msg.type === MessageType.Reply)) {
+      const throneTribe = tribes.all().find(t => t.throneId && t.throneId === msg.channelId);
+      if (throneTribe && !msg.pinned && !(msg.content && msg.content.includes(': what you can do'))) {
+        throneExpire.add(msg.channelId, msg.id, Date.now() + throneExpire.TTL_MS);
+        armThroneExpire(msg.channelId, msg.id, throneExpire.TTL_MS);
+      }
+    }
     if (msg.author?.bot || !msg.guild) return;
     // Arena TYPED types (scramble/math/typing/riddle/emoji) watch messages live for the typed answer. Blitz is
     // NOT counted here (owner: "count at the end") — tallied from message history in endArena. Button types
