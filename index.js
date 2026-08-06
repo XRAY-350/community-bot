@@ -5,7 +5,7 @@
 // guildMemberUpdate so we can see the Verified role being assigned). The GuildMembers intent
 // must also be enabled in the Discord Developer Portal for this application.
 
-const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType, MessageType } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const config = require('./config');
 const State = require('./state');
@@ -4495,6 +4495,9 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
 
 client.on('messageCreate', async (msg) => {
   try {
+    // Auto-delete the "X pinned a message" system notification so pins don't clutter channels (owner 2026-08-05).
+    // Checked BEFORE the bot-author early-return below, since a bot-pinned notice is authored by the bot.
+    if (msg.guild && msg.type === MessageType.ChannelPinnedMessage) { await msg.delete().catch(() => {}); return; }
     if (msg.author?.bot || !msg.guild) return;
     // Arena TYPED types (scramble/math/typing/riddle/emoji) watch messages live for the typed answer. Blitz is
     // NOT counted here (owner: "count at the end") — tallied from message history in endArena. Button types
