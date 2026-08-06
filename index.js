@@ -572,7 +572,7 @@ async function postThroneGuide(guild, tribe) {
   const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
   if (!throne) return null;
   const msg = await throne.send(tribeThronePanel(tribe)).catch(() => null);
-  if (msg) await msg.pin().catch(() => {});
+  if (msg) { await msg.pin().catch(() => {}); tribes.update(tribe.key, { panelMessageId: msg.id }); }
   return msg;
 }
 // Re-render the already-posted/pinned Throne Hub — call after anything that changes what it shows (motto,
@@ -584,6 +584,7 @@ async function refreshThronePanel(guild, tribe) {
   const pins = await throne.messages.fetchPins().catch(() => null);
   const msg = pins && pins.items.map(p => p.message).find(m => m.content.includes(': what you can do'));
   if (!msg) return false;
+  if (tribe.panelMessageId !== msg.id) tribes.update(tribe.key, { panelMessageId: msg.id });   // backfill for tribes created before we persisted it
   await msg.edit(tribeThronePanel(tribe)).catch(() => {});
   return true;
 }
@@ -4546,9 +4547,17 @@ client.on('messageCreate', async (msg) => {
     // is idempotent, so this never double-schedules a message throneSend() already armed.
     if (msg.guild && (msg.type === MessageType.Default || msg.type === MessageType.Reply)) {
       const throneTribe = tribes.all().find(t => t.throneId && t.throneId === msg.channelId);
-      if (throneTribe && !msg.pinned && !(msg.content && msg.content.includes(': what you can do'))) {
-        throneExpire.add(msg.channelId, msg.id, Date.now() + throneExpire.TTL_MS);
-        armThroneExpire(msg.channelId, msg.id, throneExpire.TTL_MS);
+      if (throneTribe && !msg.pinned) {
+        // Skip the persistent control panel. Prefer its stored message ID (robust); fall back to the content
+        // marker only when the ID isn't recorded yet — legacy tribes (backfilled on next refresh) and the brief
+        // race where this handler fires before postThroneGuide has persisted the freshly-sent panel's ID.
+        const isPanel = throneTribe.panelMessageId
+          ? msg.id === throneTribe.panelMessageId
+          : !!(msg.content && msg.content.includes(': what you can do'));
+        if (!isPanel) {
+          throneExpire.add(msg.channelId, msg.id, Date.now() + throneExpire.TTL_MS);
+          armThroneExpire(msg.channelId, msg.id, throneExpire.TTL_MS);
+        }
       }
     }
     if (msg.author?.bot || !msg.guild) return;
