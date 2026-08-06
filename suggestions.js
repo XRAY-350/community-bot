@@ -7,12 +7,13 @@
 // Self-contained: owns two JSON files (config = forum/tag ids; state = per-post records + cooldowns),
 // mirroring how watchlist.js manages its own store. Nothing here needs a redeploy to reconfigure.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
 const copy = require('./copy');
 
-const CONFIG_FILE = process.env.FUBU_SUGGESTIONS_FILE || '/home/ubuntu/.fubu_suggestions.json';
-const STATE_FILE = process.env.FUBU_SUGGESTIONS_STATE_FILE || '/home/ubuntu/.fubu_suggestions_state.json';
+const CONFIG_FILE = process.env.FUBU_SUGGESTIONS_FILE || statePath('suggestions.json');
+const STATE_FILE = process.env.FUBU_SUGGESTIONS_STATE_FILE || statePath('suggestions_state.json');
 const COOLDOWN_MS = 10 * 60 * 1000;   // 10 min between suggestions per member
 const MAX_OPEN = 3;                    // open suggestions a member may hold at once
 const MIN_LEN = 5, MAX_LEN = 500;

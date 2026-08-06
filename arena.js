@@ -9,7 +9,8 @@
 // are tightly bound to discord.js. On restart, index.js reconciles the active challenge (resolve if its
 // window passed, else re-arm the timer).
 const fs = require('fs');
-const STATE_FILE = process.env.FUBU_ARENA_FILE || '/home/ubuntu/.fubu_arena.json';
+const { statePath } = require('./statepath');
+const STATE_FILE = process.env.FUBU_ARENA_FILE || statePath('arena.json');
 
 const WIN_TREASURY = 150;   // the winning tribe banks this
 const WIN_GLORY = 100;
@@ -87,7 +88,7 @@ function scrambleWord(w) { const s = shuffle(w.split('')).join(''); return s ===
 // chunk of each bank's items so a fresh game keeps drawing from the not-recently-seen remainder and only
 // recycles an item once most of the bank has been through. FIFO, capped per type. Fail-open: any read/write
 // error just means "nothing remembered", never a crash.
-const RECENT_FILE = process.env.FUBU_ARENA_RECENT_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_arena_recent.json`;
+const RECENT_FILE = process.env.FUBU_ARENA_RECENT_FILE || statePath('arena_recent.json');
 let _recent = null;
 function loadRecent() { if (_recent) return _recent; try { const j = JSON.parse(fs.readFileSync(RECENT_FILE, 'utf8')); _recent = (j && typeof j === 'object') ? j : {}; } catch { _recent = {}; } return _recent; }
 function saveRecent() { try { fs.writeFileSync(RECENT_FILE, JSON.stringify(loadRecent())); } catch (e) { console.error('[arena] saveRecent:', e.message); } }
@@ -159,12 +160,12 @@ const TRIVIA_DEFAULT = [
 ];
 // Optional editable bank file (owner: make them editable) — { words: [...], trivia: [{q,options,answer}] }.
 // Its entries ADD to the defaults, so mods can grow the pools without a code change.
-const BANK_FILE = process.env.FUBU_ARENA_BANK_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_arena_bank.json`;
+const BANK_FILE = process.env.FUBU_ARENA_BANK_FILE || statePath('arena_bank.json');
 // Remote word bank (owner: source quizzes from a bank, don't hardcode). Pulls a large COMMON-word list
 // (google-10000-english, filtered to solvable 4-8 letter words) so Scramble/Reverse are effectively infinite and
 // never wrap. Cached to disk; the curated WORDS_DEFAULT stays as flavour + offline fallback. Generic random-word
 // APIs were rejected on purpose: they return unsolvable obscure words (piolets/furazolidones), a common list does not.
-const WORDS_CACHE = process.env.FUBU_ARENA_WORDS_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_arena_words.json`;
+const WORDS_CACHE = process.env.FUBU_ARENA_WORDS_FILE || statePath('arena_words.json');
 const WORDS_URL = 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears-medium.txt';
 let _remoteWords = null;
 function loadCachedWords() { if (_remoteWords) return _remoteWords.length; try { const j = JSON.parse(fs.readFileSync(WORDS_CACHE, 'utf8')); if (Array.isArray(j.words) && j.words.length > 500) _remoteWords = j.words; } catch { /* no cache yet */ } return _remoteWords ? _remoteWords.length : 0; }

@@ -6,11 +6,12 @@
 // looser as growth slows. As a byproduct it also detects influxes and warns admins. Purely human-facing — the
 // note never enters the AI prompt and never triggers an automatic action; it's a label on an already-surfaced flag.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder } = require('discord.js');
 const config = require('./config');
 const { ensureMembers } = require('./memberCache');
 
-const STATE_FILE = process.env.FUBU_FRESHWATCH_STATE || '/home/ubuntu/.fubu_freshwatch.json';
+const STATE_FILE = process.env.FUBU_FRESHWATCH_STATE || statePath('freshwatch.json');
 const DAY = 86400000, HOUR = 3600000;
 
 // cache: recomputed periodically from the full membership. recentJoins: rolling window for real-time influx.

@@ -19,6 +19,7 @@
 //   • Community-specific facts live in an owner-editable profile file, NOT hardcoded (demographics drift).
 //   • Hard safety floor: child-safety / threats / doxxing are never auto-suppressed regardless of verdict.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const config = require('./config');
 const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
@@ -28,8 +29,8 @@ try { Anthropic = require('@anthropic-ai/sdk'); } catch { /* SDK not installed y
 
 const MODEL = process.env.SMARTWATCH_MODEL || 'claude-haiku-4-5';
 const API_KEY = (process.env.ANTHROPIC_API_KEY || process.env.SMARTWATCH_API_KEY || '').trim();
-const PROFILE_FILE = process.env.FUBU_COMMUNITY_PROFILE_FILE || '/home/ubuntu/.fubu_community_profile.txt';
-const SHADOW_LOG = process.env.SMARTWATCH_SHADOW_LOG || '/home/ubuntu/.fubu_smartwatch_shadow.jsonl';
+const PROFILE_FILE = process.env.FUBU_COMMUNITY_PROFILE_FILE || statePath('community_profile.txt');
+const SHADOW_LOG = process.env.SMARTWATCH_SHADOW_LOG || statePath('smartwatch_shadow.jsonl');
 const CTX_MESSAGES = Number(process.env.SMARTWATCH_CONTEXT_MSGS || 10) || 10;
 // Categories the judge is NEVER allowed to auto-suppress, even at high confidence — belt-and-suspenders
 // beyond the system-prompt instruction.
@@ -173,7 +174,7 @@ function logShadow(entry) {
 // appended here. We DON'T fine-tune; instead the most recent labels are injected into the judge prompt as
 // few-shot exemplars, so the model learns THIS community's actual bar. Each grade also tells us whether the
 // AI's own would-surface call matched the admin — that's the accuracy tally the lab reports.
-const EXAMPLES_FILE = process.env.SMARTWATCH_EXAMPLES_FILE || '/home/ubuntu/.fubu_smartwatch_examples.jsonl';
+const EXAMPLES_FILE = process.env.SMARTWATCH_EXAMPLES_FILE || statePath('smartwatch_examples.jsonl');
 const EXEMPLARS_IN_PROMPT = Number(process.env.SMARTWATCH_EXEMPLARS || 14) || 14;
 // verdict → (does the community surface it?) + task it belongs to + a short label the prompt shows.
 // task 'rule' = strict/loose harassment calls; task 'welfare' = distress calls (a different axis, so its
@@ -198,7 +199,7 @@ function addExample(e) {
 }
 
 // ---- card registry: lets a card be graded by a short ID via /grade (works when there are no buttons) ----
-const CARDS_FILE = process.env.SMARTWATCH_CARDS_FILE || '/home/ubuntu/.fubu_smartwatch_cards.json';
+const CARDS_FILE = process.env.SMARTWATCH_CARDS_FILE || statePath('smartwatch_cards.json');
 const CARD_CAP = 400;
 const crypto = require('crypto');
 function genGradeId() { return crypto.randomBytes(3).toString('hex').toUpperCase(); }   // 6 hex chars, e.g. 3F9A1C

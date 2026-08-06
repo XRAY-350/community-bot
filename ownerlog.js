@@ -8,10 +8,11 @@
 // Both are POLL/EVENT-DRIVEN pushes into the SAME channel so an owner has one running timeline instead
 // of two places to check.
 const { EmbedBuilder, ChannelType, PermissionsBitField, AuditLogEvent } = require('discord.js');
+const { statePath } = require('./statepath');
 const opspanel = require('./opspanel');
 
-const CONFIG_FILE = process.env.FUBU_OWNERLOG_FILE || '/home/ubuntu/.fubu_ownerlog.json';
-const STATE_FILE = process.env.FUBU_OWNERLOG_STATE_FILE || '/home/ubuntu/.fubu_ownerlog_state.json';
+const CONFIG_FILE = process.env.FUBU_OWNERLOG_FILE || statePath('ownerlog.json');
+const STATE_FILE = process.env.FUBU_OWNERLOG_STATE_FILE || statePath('ownerlog_state.json');
 const P = PermissionsBitField.Flags;
 const fs = require('fs');
 function _load(f, d) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } }

@@ -5,6 +5,7 @@
 //     staff vote advisory, OWNER confirms → adds the Admin role.
 // The candidate can't see the channel the vote runs in, so it stays private from them either way.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
@@ -15,7 +16,7 @@ const KINDS = {
   mod:   { requireKey: 'modRoleId', addKey: 'adminRoleId', channelKey: 'adminDiscussionChannelId', pingKey: 'adminRoleId', fromLabel: 'Mod', toLabel: 'Admin', note: '' },
 };
 
-const STATE_FILE = process.env.FUBU_PROMOTIONS_FILE || '/home/ubuntu/.fubu_promotions.json';
+const STATE_FILE = process.env.FUBU_PROMOTIONS_FILE || statePath('promotions.json');
 function _load() { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { posts: {} }; } }
 function _save(s) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(s)); } catch (e) { console.error('[promote] save:', e.message); } }
 

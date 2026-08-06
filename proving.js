@@ -3,7 +3,8 @@
 // and a weekly Prover total that culminates + resets at the weekly boundary (aligned to the Sunday Crown reset).
 // v1 game: the Knowledge Gauntlet (streak survival). Score-Attack + Puzzles rotate in as they are built.
 const fs = require('fs');
-const FILE = process.env.FUBU_PROVING_FILE || '/home/ubuntu/.fubu_proving.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_PROVING_FILE || statePath('proving.json');
 
 // One game family per day, rotating, so everyone faces the same family that day (comparable leaderboard).
 const GAME_ROTATION = ['gauntlet', 'scoreattack', 'puzzle'];

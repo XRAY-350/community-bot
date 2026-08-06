@@ -12,12 +12,13 @@
 // Unsealing reveals the author to the entrusted holder (ephemerally) and is recorded on the report.
 // For `anonymous`, nothing identifying is ever written to disk (verified). Cooldown is in-memory only.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
 const copy = require('./copy');
 
-const CONFIG_FILE = process.env.FUBU_WHISTLEBLOW_FILE || '/home/ubuntu/.fubu_whistleblow.json';
-const STATE_FILE = process.env.FUBU_WHISTLEBLOW_STATE_FILE || '/home/ubuntu/.fubu_whistleblow_state.json';
+const CONFIG_FILE = process.env.FUBU_WHISTLEBLOW_FILE || statePath('whistleblow.json');
+const STATE_FILE = process.env.FUBU_WHISTLEBLOW_STATE_FILE || statePath('whistleblow_state.json');
 const COOLDOWN_MS = 60 * 60 * 1000, DAILY_MAX = 4;
 const MIN_LEN = 10, MAX_LEN = 1500;
 

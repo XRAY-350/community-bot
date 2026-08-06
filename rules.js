@@ -3,7 +3,8 @@
 // hardcoded SERVER_RULES array), the mod-announce sign-off posts, and the public rules post.
 // weight is null until that rule's mod weight-poll concludes — nothing here is guessed.
 const fs = require('fs');
-const WEIGHTS_FILE = process.env.FUBU_RULE_WEIGHTS_FILE || '/home/ubuntu/.fubu_rule_weights.json';
+const { statePath } = require('./statepath');
+const WEIGHTS_FILE = process.env.FUBU_RULE_WEIGHTS_FILE || statePath('rule_weights.json');
 
 const PREAMBLE = {
   title: 'How Enforcement Works',

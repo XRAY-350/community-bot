@@ -2,7 +2,8 @@
 // foundings, weekly crowns, Age champions, wars, arena wins, musters, relics. The Hall of Fame and the
 // weekly Chronicle read from it. Deliberately tiny + dependency-free; capped so it can't grow without bound.
 const fs = require('fs');
-const FILE = process.env.FUBU_LORE_FILE || '/home/ubuntu/.fubu_lore.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_LORE_FILE || statePath('lore.json');
 const MAX = 3000;   // keep the most recent N events (a chapter is written weekly, so this is many months)
 
 let _cache = null;

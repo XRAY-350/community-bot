@@ -7,12 +7,13 @@
 //   • numbered #1, #2… · staff can delete a bad one, which removes the public post too
 // Self-contained: owns its config (channel ids) + state (counter/cooldown/author map) files.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
 const copy = require('./copy');
 
-const CONFIG_FILE = process.env.FUBU_CONFESSIONS_FILE || '/home/ubuntu/.fubu_confessions.json';
-const STATE_FILE = process.env.FUBU_CONFESSIONS_STATE_FILE || '/home/ubuntu/.fubu_confessions_state.json';
+const CONFIG_FILE = process.env.FUBU_CONFESSIONS_FILE || statePath('confessions.json');
+const STATE_FILE = process.env.FUBU_CONFESSIONS_STATE_FILE || statePath('confessions_state.json');
 const COOLDOWN_MS = 3 * 60 * 1000, DAILY_MAX = 20;
 const MIN_LEN = 5, MAX_LEN = 1000;
 const P = PermissionsBitField.Flags;

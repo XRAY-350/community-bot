@@ -3,7 +3,8 @@
 // season) and the Discord I/O. GATED behind the `achievements` feature flag at every call site, so this is
 // fully inert until an owner flips it on (build-then-tune-then-enable). All the tunables live in CATALOG.
 const fs = require('fs');
-const FILE = process.env.FUBU_ACHIEVEMENTS_FILE || '/home/ubuntu/.fubu_achievements.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_ACHIEVEMENTS_FILE || statePath('achievements.json');
 
 // Each achievement is counter-based: it unlocks when the member's `counter` reaches `threshold`. `title` (if
 // present) is the equippable title the achievement grants. Tune freely while the feature is still dark.

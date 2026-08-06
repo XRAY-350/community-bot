@@ -9,7 +9,8 @@
 //                              score, correct,               // sealed: running score/correct count
 //                              contributors: {uid:count}, answered: [ids] } } }
 const fs = require('fs');
-const FILE = process.env.FUBU_SEALED_FILE || '/home/ubuntu/.fubu_sealed.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_SEALED_FILE || statePath('sealed.json');
 
 let _cache = null;
 function load() { if (_cache) return _cache; try { _cache = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { _cache = {}; } return _cache; }

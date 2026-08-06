@@ -3,12 +3,13 @@
 // but WHO reported is sealed and revealable only to admins+ (per the locked visibility model:
 // report → author visible to admins), via a button. Mirrors the confessions pattern.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
 const copy = require('./copy');
 
-const CONFIG_FILE = process.env.FUBU_REPORTS_FILE || '/home/ubuntu/.fubu_reports.json';
-const STATE_FILE = process.env.FUBU_REPORTS_STATE_FILE || '/home/ubuntu/.fubu_reports_state.json';
+const CONFIG_FILE = process.env.FUBU_REPORTS_FILE || statePath('reports.json');
+const STATE_FILE = process.env.FUBU_REPORTS_STATE_FILE || statePath('reports_state.json');
 const COOLDOWN_MS = 30 * 60 * 1000, DAILY_MAX = 6;
 const MIN_LEN = 10, MAX_LEN = 1000;
 const P = PermissionsBitField.Flags;

@@ -8,7 +8,8 @@
 // Deadlines are PERSISTED so a bot restart re-arms them from disk instead of orphaning the message forever
 // (a plain in-process setTimeout is lost on restart, which would defeat the whole "keep it clear" point).
 const fs = require('fs');
-const FILE = process.env.FUBU_THRONE_EXPIRE_FILE || '/home/ubuntu/.fubu_throne_expire.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_THRONE_EXPIRE_FILE || statePath('throne_expire.json');
 const TTL_MS = 24 * 60 * 60 * 1000;   // 24 hours
 
 let _q = null;

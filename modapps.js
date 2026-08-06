@@ -8,6 +8,7 @@
 //     just a joke; watchlist + strikes are the real signals). Accept grants the Trial Mod role.
 //   • Private staff talk happens in #mod-discussion or the staff post — the applicant can't see either.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField,
   MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const opspanel = require('./opspanel');
@@ -16,8 +17,8 @@ const langmods = require('./langmods');
 const ownerlog = require('./ownerlog');
 const watchlist = require('./watchlist');
 
-const CONFIG_FILE = process.env.FUBU_MODAPPS_FILE || '/home/ubuntu/.fubu_modapps.json';
-const STATE_FILE = process.env.FUBU_MODAPPS_STATE_FILE || '/home/ubuntu/.fubu_modapps_state.json';
+const CONFIG_FILE = process.env.FUBU_MODAPPS_FILE || statePath('modapps.json');
+const STATE_FILE = process.env.FUBU_MODAPPS_STATE_FILE || statePath('modapps_state.json');
 const P = PermissionsBitField.Flags;
 // A vote's weight is the voter's staff tier — an admin's 👍/👎 counts double a mod's, an owner's triple.
 const VOTE_WEIGHT = { mod: 1, admin: 2, owner: 3 };

@@ -3,6 +3,7 @@
 // mechanic). Staff review the private thread and Approve (removes the strike, lifts any still-live
 // timeout it carried) or Deny (starts a cooldown before the SAME strike can be re-appealed).
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const config = require('./config');
 const strikes = require('./strikes');
@@ -12,8 +13,8 @@ const threads = require('./threads');
 const { withLock } = require('./mutex');
 const LOCK_KEY = 'strikeAppeals';
 
-const CONFIG_FILE = process.env.FUBU_STRIKE_APPEALS_FILE || '/home/ubuntu/.fubu_strike_appeals.json';
-const STATE_FILE = process.env.FUBU_STRIKE_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_strike_appeals_state.json';
+const CONFIG_FILE = process.env.FUBU_STRIKE_APPEALS_FILE || statePath('strike_appeals.json');
+const STATE_FILE = process.env.FUBU_STRIKE_APPEALS_STATE_FILE || statePath('strike_appeals_state.json');
 const P = PermissionsBitField.Flags;
 
 function _load(f, d) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } }

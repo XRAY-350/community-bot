@@ -4,17 +4,18 @@
 // don't meet it. Deps (state/corner/sweep/config/…) are injected by index.js via wire() so the panel
 // reuses the bot's own logic. Members are targeted by @username / display name / ID (resolved live).
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
   UserSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
 const { ensureMembers } = require('./memberCache');
 
-const PANEL_FILE = process.env.FUBU_OPS_PANEL_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_ops_panel.json`;
+const PANEL_FILE = process.env.FUBU_OPS_PANEL_FILE || statePath('ops_panel.json');
 // Separate pinned message: a static staff command reference (the "what every command does" list that used
 // to bloat the Overview page). Kept as its own pinned message at the top of #mod-dashboard so the live
 // panel stays lean. Its own ref file so it never collides with the interactive panel's ref.
-const GUIDE_REF_FILE = process.env.FUBU_OPS_GUIDE_FILE || `${process.env.HOME || '/home/ubuntu'}/.fubu_ops_guide.json`;
+const GUIDE_REF_FILE = process.env.FUBU_OPS_GUIDE_FILE || statePath('ops_guide.json');
 
 // --- tiers (role-based, so they survive the admin restructure: personal roles carry Admin, ADMINS-★
 // will lose it). owner = 4 personal-admin roles + guild owner; admin = ADMINS-★; mod = MODS-✰. ------
@@ -94,7 +95,7 @@ function saveRef(r) { try { fs.writeFileSync(PANEL_FILE, JSON.stringify(r)); } c
 
 // Persist a config override (survives restart via config.js merge) AND apply it live.
 function persistOverride(patch) {
-  const f = (D.config && D.config.overrideFile) || `${process.env.HOME || '/home/ubuntu'}/.fubu_config_overrides.json`;
+  const f = (D.config && D.config.overrideFile) || statePath('config_overrides.json');
   let cur = {}; try { cur = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
   Object.assign(cur, patch);
   fs.writeFileSync(f, JSON.stringify(cur, null, 2));
@@ -204,13 +205,13 @@ async function buildOverview() {
 function _stateCount(file, key) { try { return JSON.parse(fs.readFileSync(file, 'utf8'))[key] || 0; } catch { return 0; } }
 function buildAnonTools() {
   const home = process.env.HOME || '/home/ubuntu';
-  const conf = _stateCount(`${home}/.fubu_confessions_state.json`, 'counter');
-  const rep = _stateCount(`${home}/.fubu_reports_state.json`, 'counter');
-  const mm = _stateCount(`${home}/.fubu_modmail_state.json`, 'counter');
-  const wb = _stateCount(`${home}/.fubu_whistleblow_state.json`, 'counter');
-  const sug = _stateCount(`${home}/.fubu_suggestions_state.json`, 'counter');
+  const conf = _stateCount(statePath('confessions_state.json'), 'counter');
+  const rep = _stateCount(statePath('reports_state.json'), 'counter');
+  const mm = _stateCount(statePath('modmail_state.json'), 'counter');
+  const wb = _stateCount(statePath('whistleblow_state.json'), 'counter');
+  const sug = _stateCount(statePath('suggestions_state.json'), 'counter');
   let sugOpen = 0;
-  try { const s = JSON.parse(fs.readFileSync(`${home}/.fubu_suggestions_state.json`, 'utf8')); sugOpen = Object.values(s.posts || {}).filter(p => p.status === 'open').length; } catch {}
+  try { const s = JSON.parse(fs.readFileSync(statePath('suggestions_state.json'), 'utf8')); sugOpen = Object.values(s.posts || {}).filter(p => p.status === 'open').length; } catch {}
   const embed = new EmbedBuilder().setColor(0x9b59b6).setDescription(
     'The anonymous **reporting + feedback** system. Members run these in any chat channel; the mod-side actions (reveal / delete / unseal / approve) live **on the posts themselves**, not here.')
     .addFields(

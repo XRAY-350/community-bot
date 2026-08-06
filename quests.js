@@ -4,7 +4,8 @@
 // which tribe has already CLAIMED which reward. Deterministic weekly rotation (no Math.random — reproducible on
 // restart). Registry fail-off via the 'tribeQuests' flag, checked in index.js.
 const fs = require('fs');
-const FILE = process.env.FUBU_QUESTS_FILE || '/home/ubuntu/.fubu_quests.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_QUESTS_FILE || statePath('quests.json');
 
 // Each quest measures ONE lore-derived stat across the week. Same set for every tribe (a fair race: who gets
 // there first, or at all). reward pays the tribe once, on first completion.

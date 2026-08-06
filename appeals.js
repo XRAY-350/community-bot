@@ -3,6 +3,7 @@
 // argue the case on their behalf. One appeal thread per banned person; up to 5 supporters can join it.
 // Staff review the thread and Approve (unbans them) or Deny — nothing hits anyone's DMs.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const { CATEGORY_LABEL } = require('./opspanel');
 const config = require('./config');
@@ -12,8 +13,8 @@ const threads = require('./threads');
 const { withLock } = require('./mutex');
 const LOCK_KEY = 'appeals';
 
-const CONFIG_FILE = process.env.FUBU_APPEALS_FILE || '/home/ubuntu/.fubu_appeals.json';
-const STATE_FILE = process.env.FUBU_APPEALS_STATE_FILE || '/home/ubuntu/.fubu_appeals_state.json';
+const CONFIG_FILE = process.env.FUBU_APPEALS_FILE || statePath('appeals.json');
+const STATE_FILE = process.env.FUBU_APPEALS_STATE_FILE || statePath('appeals_state.json');
 const P = PermissionsBitField.Flags;
 const MAX_FRIENDS = 5;
 

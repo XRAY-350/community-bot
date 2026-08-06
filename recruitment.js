@@ -2,7 +2,8 @@
 // (Phase 6). Pure state/logic; index.js does the awarding + Discord I/O, GATED behind the `recruitment`
 // feature flag, so this is fully inert until an owner tunes the numbers and flips it on. Tunables up top.
 const fs = require('fs');
-const FILE = process.env.FUBU_RECRUITMENT_FILE || '/home/ubuntu/.fubu_recruitment.json';
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_RECRUITMENT_FILE || statePath('recruitment.json');
 
 const RECRUITER_TIDES = 25;      // personal Tides to the recruiter when their invitee STICKS (see below)
 const RECRUITER_TREASURY = 50;   // treasury to the recruiter's tribe

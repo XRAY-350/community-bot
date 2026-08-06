@@ -1,6 +1,7 @@
 // config.js — read + validate configuration from the environment (systemd EnvironmentFile).
 // Nothing secret is hardcoded; the token lives only in the env file. Fails fast with a clear
 // message if a required value is missing, so a misconfigured deploy never silently no-ops.
+const { statePath } = require('./statepath');
 
 function req(name) {
   const v = (process.env[name] || '').trim();
@@ -241,7 +242,7 @@ const config = {
   dryRun: bool('DRY_RUN', true),
 
   // Where the small persistence file lives (last-nudge / warned timestamps, processed members).
-  stateFile: opt('STATE_FILE', '/home/ubuntu/.fubu_verify_state.json'),
+  stateFile: opt('STATE_FILE', statePath('verify_state.json')),
 };
 
 config.alertChannelId = config.modAlertChannelId || config.verifyChannelId;
@@ -250,7 +251,7 @@ config.warnChannelId = config.unverifiedChatChannelId || config.verifyChannelId;
 // Runtime overrides written by the ops dashboard (Settings/Danger toggles + timings). They persist
 // across restarts and take precedence over the env, so a live toggle survives a reboot. Only keys that
 // already exist in config are honored, so a stray override can't inject anything unexpected.
-config.overrideFile = opt('FUBU_CONFIG_OVERRIDE_FILE', `${process.env.HOME || '/home/ubuntu'}/.fubu_config_overrides.json`);
+config.overrideFile = opt('FUBU_CONFIG_OVERRIDE_FILE', statePath('config_overrides.json'));
 try {
   const _ov = JSON.parse(require('fs').readFileSync(config.overrideFile, 'utf8'));
   const applied = Object.keys(_ov).filter(k => k in config);

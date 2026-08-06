@@ -7,11 +7,12 @@
 // Mods run /watchlist-suggest; an ADMINS-★ picks the good ones from a multi-select → they're added.
 // Nothing is auto-added. Ignored suggestions are remembered so they don't nag next scan.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ChannelType } = require('discord.js');
 const watchlist = require('./watchlist');
 const opspanel = require('./opspanel');   // memberTier() - the canonical staff-tier check
 
-const IGNORE_FILE = process.env.FUBU_SUGGEST_IGNORE_FILE || '/home/ubuntu/.fubu_watchlist_suggest_ignore.json';
+const IGNORE_FILE = process.env.FUBU_SUGGEST_IGNORE_FILE || statePath('watchlist_suggest_ignore.json');
 const US = '␟'; // unit separator for customId/select-value encoding (never appears in a term)
 
 // ---- curated lexicon: term → the list it should live on --------------------------------------------

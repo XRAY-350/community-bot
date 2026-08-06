@@ -3,12 +3,13 @@
 // modmail → author visible to owners), via a button. Intake v1 (member → staff); a staff
 // reply-relay can be layered on later. Mirrors the confessions/reports pattern.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const watchlist = require('./watchlist');
 const copy = require('./copy');
 
-const CONFIG_FILE = process.env.FUBU_MODMAIL_FILE || '/home/ubuntu/.fubu_modmail.json';
-const STATE_FILE = process.env.FUBU_MODMAIL_STATE_FILE || '/home/ubuntu/.fubu_modmail_state.json';
+const CONFIG_FILE = process.env.FUBU_MODMAIL_FILE || statePath('modmail.json');
+const STATE_FILE = process.env.FUBU_MODMAIL_STATE_FILE || statePath('modmail_state.json');
 const COOLDOWN_MS = 30 * 60 * 1000, DAILY_MAX = 6;
 const MIN_LEN = 5, MAX_LEN = 1000;
 const P = PermissionsBitField.Flags;

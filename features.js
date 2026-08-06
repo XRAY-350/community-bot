@@ -7,7 +7,8 @@
 // running today — not because they're privileged. Planned features are seeded false (dark) until
 // someone flips them on.
 const fs = require('fs');
-const FLAGS_FILE = process.env.FUBU_FEATURES_FILE || '/home/ubuntu/.fubu_features.json';
+const { statePath } = require('./statepath');
+const FLAGS_FILE = process.env.FUBU_FEATURES_FILE || statePath('features.json');
 
 // audience: 'core'  = structural, never shown in /help
 //           'staff' = mod tools

@@ -6,11 +6,12 @@
 // through. That's a structural risk for ANY channel with a partial role overwrite, not just this one —
 // this sweep catches drift of that shape automatically, on a schedule, instead of waiting for a report.
 const { Routes, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
+const { statePath } = require('./statepath');
 const fs = require('fs');
 const ownerlog = require('./ownerlog');
 const opspanel = require('./opspanel');   // for the owner-tier gate on the reconcile popup
 
-const MANIFEST_FILE = process.env.FUBU_PERM_MANIFEST_FILE || '/home/ubuntu/.fubu_perm_manifest.json';
+const MANIFEST_FILE = process.env.FUBU_PERM_MANIFEST_FILE || statePath('perm_manifest.json');
 const EPH = 1 << 6;   // MessageFlags.Ephemeral
 const PERM_NAMES = Object.fromEntries(Object.entries(PermissionsBitField.Flags).map(([k, v]) => [v.toString(), k]));
 const permList = bf => { const o = []; let b = BigInt(bf || '0'); for (const [v, k] of Object.entries(PERM_NAMES)) if (b & BigInt(v)) o.push(k); return o; };

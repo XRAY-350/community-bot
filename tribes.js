@@ -5,7 +5,8 @@
 // lives in one JSON file so tribes survive restarts. Any tribe (Cobalt Vigil, Valith, future ones) plugs
 // in the same way — this is a framework, not a one-off.
 const fs = require('fs');
-const STATE_FILE = process.env.FUBU_TRIBES_FILE || '/home/ubuntu/.fubu_tribes.json';
+const { statePath } = require('./statepath');
+const STATE_FILE = process.env.FUBU_TRIBES_FILE || statePath('tribes.json');
 
 // In-memory cache — load() is called MANY times per message (memberTribe, the Tides hall lookup, the arena
 // blitz, etc.), so a sync fs.readFileSync each time saturates the event loop under high message volume (this

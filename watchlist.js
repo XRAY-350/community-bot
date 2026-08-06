@@ -2,7 +2,8 @@
 // see loadWatched/isWatched below), plus the editable term store. The term list lives in a JSON file (no
 // redeploy to edit) that the /watchlist-terms command manages.
 const fs = require('fs');
-const TERMS_FILE = process.env.FUBU_WATCHLIST_TERMS_FILE || '/home/ubuntu/.fubu_watchlist_terms.json';
+const { statePath } = require('./statepath');
+const TERMS_FILE = process.env.FUBU_WATCHLIST_TERMS_FILE || statePath('watchlist_terms.json');
 
 // The watched-IDs + term lists are read on EVERY message (isWatched, loadTerms/loadLoose/loadWelfare), so a
 // sync readFileSync each time saturates the event loop in busy channels (which starved interactions like
@@ -68,7 +69,7 @@ function matchTerms(content, terms) {
 // gone: a role gets stripped when someone leaves/is banned, so re-applying it needed to wait for a rejoin
 // event, but ID-keyed state just persists on its own regardless of guild membership — add/remove takes
 // effect immediately, unban-with-watch no longer needs to defer anything.
-const WATCHED_FILE = process.env.FUBU_WATCHLIST_WATCHED_FILE || '/home/ubuntu/.fubu_watchlist_watched.json';
+const WATCHED_FILE = process.env.FUBU_WATCHLIST_WATCHED_FILE || statePath('watchlist_watched.json');
 function loadWatched() { return _cachedArr(WATCHED_FILE); }
 function saveWatched(ids) { const clean = [...new Set(ids)]; try { fs.writeFileSync(WATCHED_FILE, JSON.stringify(clean)); _fresh(WATCHED_FILE, clean); } catch (e) { console.error('[watchlist] watched save:', e.message); } }
 function isWatched(id) { return !!id && loadWatched().includes(id); }
@@ -77,7 +78,7 @@ function removeWatch(id) { saveWatched(loadWatched().filter(x => x !== id)); }
 
 // Loose "day-to-day" term list — a second, softer set matched against everyone-except-staff, reported
 // quietly to #watch-log (no ping). Same matcher; its own editable file.
-const LOOSE_FILE = process.env.FUBU_WATCHLIST_LOOSE_FILE || '/home/ubuntu/.fubu_watchlist_loose.json';
+const LOOSE_FILE = process.env.FUBU_WATCHLIST_LOOSE_FILE || statePath('watchlist_loose.json');
 function loadLoose() { return _cachedArr(LOOSE_FILE); }
 function saveLoose(terms) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
@@ -88,7 +89,7 @@ function removeLoose(term) { const v = String(term).trim().toLowerCase(); return
 
 // Welfare list — distress signals ("i want to die", "sh") matched against everyone-except-staff, reported
 // to #watch-log as a SUPPORT check-in (soft, no ban button), kept separate so it reads differently.
-const WELFARE_FILE = process.env.FUBU_WATCHLIST_WELFARE_FILE || '/home/ubuntu/.fubu_watchlist_welfare.json';
+const WELFARE_FILE = process.env.FUBU_WATCHLIST_WELFARE_FILE || statePath('watchlist_welfare.json');
 function loadWelfare() { return _cachedArr(WELFARE_FILE); }
 function saveWelfare(terms) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
@@ -101,14 +102,14 @@ function removeWelfare(term) { const v = String(term).trim().toLowerCase(); retu
 // admin eval channel, never the public watch-log. Deliberately broad/noisy: they exist to stress-test the
 // AI judge with more borderline candidates (reclaimed words, benign homonyms, mild profanity) so admins can
 // see whether it correctly hides the false positives and surfaces the real ones. Same matcher, own files.
-const LAB_STRICT_FILE = process.env.FUBU_WATCHLIST_LAB_STRICT_FILE || '/home/ubuntu/.fubu_watchlist_lab_strict.json';
-const LAB_LOOSE_FILE = process.env.FUBU_WATCHLIST_LAB_LOOSE_FILE || '/home/ubuntu/.fubu_watchlist_lab_loose.json';
+const LAB_STRICT_FILE = process.env.FUBU_WATCHLIST_LAB_STRICT_FILE || statePath('watchlist_lab_strict.json');
+const LAB_LOOSE_FILE = process.env.FUBU_WATCHLIST_LAB_LOOSE_FILE || statePath('watchlist_lab_loose.json');
 function _loadArr(file) { return _cachedArr(file); }
 function _saveArr(file, terms, label) {
   const clean = [...new Set((terms || []).map(t => String(t).trim()).filter(Boolean))];
   try { fs.writeFileSync(file, JSON.stringify(clean)); _fresh(file, clean); return clean; } catch (e) { console.error(`[watchlist] ${label} save:`, e.message); return _loadArr(file); }
 }
-const LAB_WELFARE_FILE = process.env.FUBU_WATCHLIST_LAB_WELFARE_FILE || '/home/ubuntu/.fubu_watchlist_lab_welfare.json';
+const LAB_WELFARE_FILE = process.env.FUBU_WATCHLIST_LAB_WELFARE_FILE || statePath('watchlist_lab_welfare.json');
 function loadLabStrict() { return _loadArr(LAB_STRICT_FILE); }
 function loadLabLoose() { return _loadArr(LAB_LOOSE_FILE); }
 function loadLabWelfare() { return _loadArr(LAB_WELFARE_FILE); }

@@ -3,7 +3,8 @@
 // (text + VC). Replaces the old single langMiniModRoleId model. Config file:
 //   /home/ubuntu/.fubu_langmods.json = { "<Language>": { roleId, channelIds: [textId, vcId] }, ... }
 const fs = require('fs');
-const CONFIG_FILE = process.env.FUBU_LANGMODS_FILE || '/home/ubuntu/.fubu_langmods.json';
+const { statePath } = require('./statepath');
+const CONFIG_FILE = process.env.FUBU_LANGMODS_FILE || statePath('langmods.json');
 
 function load() { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; } }
 function languages() { return Object.keys(load()); }

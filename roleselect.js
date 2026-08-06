@@ -10,14 +10,15 @@
 // the same index regardless of which sections currently have roles in them (an empty section still posts
 // its heading with a placeholder line, so indices never shift).
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const copy = require('./copy');
 const path = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 const { ensureMembers } = require('./memberCache');
 
 const DIVIDER_IMAGE = path.join(__dirname, 'assets', 'roles_divider.png');
-const STATE_FILE = process.env.FUBU_ROLESELECT_FILE || '/home/ubuntu/.fubu_roleselect.json';
-const SECTIONS_FILE = process.env.FUBU_ROLESELECT_SECTIONS_FILE || '/home/ubuntu/.fubu_roleselect_sections.json';
+const STATE_FILE = process.env.FUBU_ROLESELECT_FILE || statePath('roleselect.json');
+const SECTIONS_FILE = process.env.FUBU_ROLESELECT_SECTIONS_FILE || statePath('roleselect_sections.json');
 
 function _load() { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { messageIds: [] }; } }
 function _save(s) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('[roleselect] save:', e.message); } }

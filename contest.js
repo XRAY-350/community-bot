@@ -19,6 +19,7 @@
 // State lives in one JSON file (self-contained, same pattern as ownerlog/permguard), NOT the shared
 // state.js — a contest round is its own concern with its own lifecycle.
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const { EmbedBuilder, ChannelType, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,
   ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('./config');
@@ -27,7 +28,7 @@ const opspanel = require('./opspanel');
 const copy = require('./copy');
 
 const P = PermissionsBitField.Flags;
-const CFG_FILE = process.env.FUBU_CONTEST_FILE || '/home/ubuntu/.fubu_contest.json';
+const CFG_FILE = process.env.FUBU_CONTEST_FILE || statePath('contest.json');
 const VOTE_EMOJI = '🩷';
 
 // Known FUBU ids (env-overridable, same convention as the rest of the bot). Discovered from the live

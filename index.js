@@ -6,6 +6,7 @@
 // must also be enabled in the Discord Developer Portal for this application.
 
 const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType, MessageType } = require('discord.js');
+const { statePath } = require('./statepath');
 const { MessageFlags } = require('discord.js');
 const config = require('./config');
 const State = require('./state');
@@ -67,7 +68,7 @@ const SMALL_CAPS = { a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', 
 const toSmallCaps = s => String(s).split('').map(ch => SMALL_CAPS[ch.toLowerCase()] || ch).join('');
 // Tribe banner art (Phase 7, owner: members make the art, the bot displays it). Stored on DISK and re-attached
 // via attachment:// at render time, so it survives Discord's CDN URL expiry (a stored URL would break in ~24h).
-const TRIBE_BANNER_DIR = process.env.FUBU_TRIBE_BANNER_DIR || '/home/ubuntu/.fubu_tribe_banners';
+const TRIBE_BANNER_DIR = process.env.FUBU_TRIBE_BANNER_DIR || statePath('tribe_banners');
 try { fs.mkdirSync(TRIBE_BANNER_DIR, { recursive: true }); } catch { /* exists */ }
 const tribeBannerPath = key => `${TRIBE_BANNER_DIR}/${key}.png`;
 const tribeHasBanner = key => { try { return fs.existsSync(tribeBannerPath(key)); } catch { return false; } };
@@ -3056,7 +3057,7 @@ async function dashCleanTick(guild) {
 
 // --- Member-facing bot guide: one embed, shown by /help AND kept as a single continuously-edited
 // message in the server-guide channel (re-rendered on every startup so it never goes stale).
-const GUIDE_FILE = process.env.FUBU_GUIDE_FILE || '/home/ubuntu/.fubu_guide.json';
+const GUIDE_FILE = process.env.FUBU_GUIDE_FILE || statePath('guide.json');
 const SERVER_GUIDE_CH = process.env.FUBU_SERVER_GUIDE_CHANNEL_ID || '1533511860459016314';   // #bot-guide (moved from #server-guide 2026-08-02)
 function helpEmbed(guild) {
   const e = new EmbedBuilder().setColor(0x5865F2).setTitle('🤖 What you can use the bot for')

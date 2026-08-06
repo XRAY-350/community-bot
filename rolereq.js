@@ -4,10 +4,11 @@
 // (managed) role, sits at/above the bot (unassignable), carries ANY power permission, or is a known
 // system/staff role (mod/admin/owner/trial/verified/unverified/corner/watchlist/strike).
 const fs = require('fs');
+const { statePath } = require('./statepath');
 const copy = require('./copy');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 
-const CONFIG_FILE = process.env.FUBU_ROLEREQ_FILE || '/home/ubuntu/.fubu_rolereq.json';
+const CONFIG_FILE = process.env.FUBU_ROLEREQ_FILE || statePath('rolereq.json');
 const P = PermissionsBitField.Flags;
 // Any of these on a role = "important", not requestable.
 const POWER = [P.Administrator, P.ManageGuild, P.ManageRoles, P.ManageChannels, P.BanMembers, P.KickMembers,
