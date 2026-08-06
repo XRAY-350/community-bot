@@ -402,16 +402,16 @@ async function buildTribe(guild, opts, config) {
     try { role = await guild.roles.create({ ...roleBase, colors: roleColors }); }
     catch { role = await guild.roles.create({ ...roleBase, color: opts.color }); }
   }
-  if (slotRolePos != null) await role.setPosition(slotRolePos).catch(() => {});
+  // NOTE: role positions are set in ONE atomic bulk reorder AFTER all roles exist (see below). Per-role
+  // setPosition() races itself across the ~7 roles + silently no-ops, so new tribes' roles all piled up at the
+  // bottom instead of slotting into the cluster (owner report 2026-08-06).
   const leaderRole = await guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, colors: roleColors, mentionable: false, reason: `Tribe leader: ${opts.name}` })
     .catch(() => guild.roles.create({ name: `${opts.shortName || opts.name} Leader`, color: opts.color, mentionable: false, reason: `Tribe leader: ${opts.name}` }).catch(() => null));
-  if (leaderRole && slotLeaderPos != null) await leaderRole.setPosition(slotLeaderPos).catch(() => {});
   if (leaderRole && opts.leaderMember) await opts.leaderMember.roles.add(leaderRole.id, 'Tribe leader').catch(() => {});
   // "General" — any staff (mod/admin) who joins as a regular member sits above the whole rank ladder
   // automatically (owner, 2026-08-03). Sits just below the leader role in the hierarchy.
   const staffRankRole = await guild.roles.create({ name: `${emoji} ${rankLabel(`${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`)}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
     .catch(() => guild.roles.create({ name: `${emoji} ${rankLabel(`${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`)}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
-  if (staffRankRole && slotLeaderPos != null) await staffRankRole.setPosition(slotLeaderPos).catch(() => {});
   const corner = config.cornerRoleId;
   const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
   const leaderAllow = leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel] }] : [];
@@ -453,9 +453,23 @@ async function buildTribe(guild, opts, config) {
     // Rank roles carry the tribe's colour + emoji (owner, 2026-08-04: "all ranks themed to match" the tribe).
     const rr = await guild.roles.create({ name: `${emoji} ${rankLabel(r.name)}`, colors: rankColors, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` })
       .catch(() => guild.roles.create({ name: `${emoji} ${rankLabel(r.name)}`, color: opts.color, hoist: false, mentionable: false, reason: `Tribe rank: ${opts.name}` }).catch(() => null));
-    if (rr) await rr.setPosition(1).catch(() => {});
-    rankRoles.push({ ...r, roleId: rr ? rr.id : null });
+    rankRoles.push({ ...r, roleId: rr ? rr.id : null });   // rank roles stay at the bottom (default create position)
   }
+  // ONE atomic bulk reorder now that every role exists — slot the base role into the tribe-role cluster and the
+  // leader + General roles into the leader-role cluster (positions recomputed fresh, since creating the ~7 new
+  // roles shifted everything). Rank roles are left where created (bottom). Replaces the old per-role setPosition
+  // calls that raced + silently no-op'd, leaving new tribes' roles piled at the bottom (owner report 2026-08-06).
+  try {
+    await guild.roles.fetch();
+    const others = tribes.all();   // existing tribes only — the new one isn't registered yet
+    const baseP = others.map(t => guild.roles.cache.get(t.roleId)?.position).filter(p => p != null);
+    const leadP = others.map(t => t.leaderRoleId && guild.roles.cache.get(t.leaderRoleId)?.position).filter(p => p != null);
+    const positions = [];
+    if (baseP.length) positions.push({ role: role.id, position: Math.min(...baseP) });
+    if (leadP.length && leaderRole) positions.push({ role: leaderRole.id, position: Math.min(...leadP) });
+    if (leadP.length && staffRankRole) positions.push({ role: staffRankRole.id, position: Math.min(...leadP) });
+    if (positions.length) await guild.roles.setPositions(positions);
+  } catch (e) { console.error('[tribe role-position]', e.message); }
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
   const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color, color2: opts.color2 || null,
     pointsName: (opts.pointsName || 'points').slice(0, 20),
