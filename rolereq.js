@@ -14,8 +14,11 @@ const POWER = [P.Administrator, P.ManageGuild, P.ManageRoles, P.ManageChannels, 
   P.ModerateMembers, P.ManageMessages, P.MentionEveryone, P.ManageWebhooks, P.ManageEvents, P.ManageThreads,
   P.ManageNicknames, P.ViewAuditLog, P.ManageGuildExpressions];
 // Known staff/system roles, never requestable (belt-and-suspenders on top of the power check).
-const STAFF = ['1528316361665675316', '1516179051105226833', '1527430885287264438', '1532037321740779860',
+const STAFF = ['1528316361665675316', '1516179051105226833', '1532037321740779860',
   '1516235123841040394', '1517718734989693038', '1517718258784927814', '1517717893415047328'];
+// NOTE: OWNER⚜️ (1527430885287264438) intentionally REMOVED from this blocklist (owner 2026-08-05) — it was
+// stripped to zero permissions + zero channel overwrites to become a cosmetic joke role, so it's now
+// self-requestable via /request-role (the power check keeps any FUTURE perms from sneaking it through).
 
 const loadConfig = () => { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; } };
 const saveConfig = c => { try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(c)); } catch (e) { console.error('[rolereq] save:', e.message); } };
