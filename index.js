@@ -3297,7 +3297,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('icon').setDescription('Set an emoji OR image icon on your tribe role (needs the Tribe Icon unlock; leaders only)')
           .addStringOption(o => o.setName('emoji').setDescription('An emoji for the icon (or "none" to clear)').setRequired(false).setMaxLength(60))
           .addAttachmentOption(o => o.setName('image').setDescription('A square image (PNG/JPG, under 256KB) to use as the icon').setRequired(false)))
-        .addSubcommand(s => s.setName('banish').setDescription('Remove a member from your tribe (leaders only)')
+        .addSubcommand(s => s.setName('banish').setDescription('Remove a member from a tribe (leaders from their own; staff from any tribe)')
           .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
         .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
           .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
@@ -6965,6 +6965,19 @@ client.on('interactionCreate', async (interaction) => {
       if (tribes.getMemberFounding()) return interaction.reply({ content: 'A member-founded tribe petition is already open. Only one can run at a time — wait for it to finish or lapse.', flags: MessageFlags.Ephemeral });
       return safeShowModal(interaction, tribeMemberFoundModal());
     }
+    // ---- Banish: staff (mod+) can banish from ANY tribe (resolved from the TARGET's tribe), so it's handled
+    // BEFORE the myTribe(actor) resolution below. A leader is still scoped to the tribe they lead. ----
+    if (sub === 'banish') {
+      const target = interaction.options.getMember('user');
+      if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
+      const isStaff = !!opspanel.tierOf(interaction);
+      const banishTribe = isStaff ? tribes.myTribe(target) : tribes.myTribe(interaction.member);
+      if (!banishTribe) return interaction.reply({ content: isStaff ? `<@${target.id}> isn’t in any tribe.` : 'You don’t lead a tribe, so there’s nothing to manage.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (!isStaff && !tribes.isLeader(interaction.member, banishTribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(banishTribe)} of **${banishTribe.shortName || banishTribe.name}** (or staff) can banish.`, flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const r = await submitBanish(interaction.guild, banishTribe, target, interaction.user.tag);
+      return interaction.editReply(r.content);
+    }
     const argTribe = interaction.options.getString('tribe');
     // Warden tools always act on the tribe you LEAD/belong to; info/roster accept an explicit tribe arg.
     const wardenSub = ['invite', 'banish', 'announce', 'note', 'rank'].includes(sub);
@@ -7125,12 +7138,7 @@ client.on('interactionCreate', async (interaction) => {
         const r = await submitInvite(interaction.guild, tribe, interaction.user.id, target);
         return interaction.reply({ content: r.content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
-      if (sub === 'banish') {
-        if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const r = await submitBanish(interaction.guild, tribe, target, interaction.user.tag);
-        return interaction.editReply(r.content);
-      }
+      // (banish is handled earlier — staff can banish from any tribe — see the sub==='banish' block above)
       if (sub === 'announce') {
         if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel to announce in.', flags: MessageFlags.Ephemeral });
         const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
