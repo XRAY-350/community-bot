@@ -470,13 +470,15 @@ async function buildTribe(guild, opts, config) {
     if (leadP.length && staffRankRole) positions.push({ role: staffRankRole.id, position: Math.min(...leadP) });
     // Each rank slots into its OWN TIER's cluster across existing tribes (owner: ranks are "sprinkled" — tier-1
     // with the tier-1s, tier-2 with the tier-2s, etc. — not bunched at the bottom). Matched by ladder index.
-    rankRoles.forEach((rr, i) => {
-      if (!rr.roleId) return;
-      const tierP = others.map(t => (t.ranks && t.ranks[i]) ? guild.roles.cache.get(t.ranks[i].roleId)?.position : null).filter(p => p != null);
-      // TOP of the tier cluster (max), not min — a stray low outlier (e.g. one tribe's Initiate parked near the
-      // bottom) would otherwise drag new ranks down there instead of into the cluster.
-      if (tierP.length) positions.push({ role: rr.roleId, position: Math.max(...tierP) });
-    });
+    // Only the TOP rank (rank 4 / last in the ladder) is slotted up into its cluster — it sits ABOVE the base
+    // member role so top-rank members outrank regulars. Ranks 1-3 stay at the very bottom as low cosmetic tags
+    // (owner ruling 2026-08-06: "keep them all at the bottom except rank 4"). Max = top of that rank's cluster.
+    const topIdx = rankRoles.length - 1;
+    const top = rankRoles[topIdx];
+    if (top && top.roleId) {
+      const tierP = others.map(t => (t.ranks && t.ranks[topIdx]) ? guild.roles.cache.get(t.ranks[topIdx].roleId)?.position : null).filter(p => p != null);
+      if (tierP.length) positions.push({ role: top.roleId, position: Math.max(...tierP) });
+    }
     if (positions.length) await guild.roles.setPositions(positions);
   } catch (e) { console.error('[tribe role-position]', e.message); }
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
