@@ -85,6 +85,7 @@ const REGISTRY = [
   { key: 'cornerReason', audience: 'core',   built: false }, // right-click "Send to corner" asks for an optional reason
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist
+  { key: 'memberCorner', audience: 'core',   built: false }, // FUBU-only: a VERIFIED member may corner one non-staff member (≤5m, 3/day cap, NO rule/reason so it never feeds corner→strike conversion). Off elsewhere. Registration-affecting: flips /corner + "Send to corner" visibility.
 ];
 // Retired (superseded by the weighted-strike model in strikes.js — always on now, not flag-gated):
 // 'strikeReason' (weight+reason are core to every strike now) and 'fiveStrikes' (replaced by the

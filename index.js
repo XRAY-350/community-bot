@@ -3129,6 +3129,10 @@ client.once('ready', async () => {
   // Register the /corner and /uncorner slash commands to this guild (instant, no global wait).
   try {
     features.ensureSeeded(); // must run before allCmds is built - feature-gated options below read it
+    // Corner entry-point visibility: normally mods-only (ModerateMembers). When the FUBU-only 'memberCorner'
+    // feature is on, expose /corner + "Send to corner" to everyone (null = no default restriction) so verified
+    // members can reach them; the handlers still gate who may actually corner. Off elsewhere → stays mods-only.
+    const cornerVis = features.enabled('memberCorner') ? null : PermissionsBitField.Flags.ModerateMembers;
     const allCmds = [
       new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner: strips roles, pulls them from voice, jails them (optionally timed)')
         .addUserOption(o => o.setName('user').setDescription('Member to corner').setRequired(true))
@@ -3138,7 +3142,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods lack ManageRoles but HAVE ModerateMembers; handler enforces trial restrictions
+        .setDefaultMemberPermissions(cornerVis),   // mods-only by default; when 'memberCorner' is on, visible to all (handler enforces trial + member restrictions)
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(`Optional, e.g. release automatically instead of now`).setRequired(false))
@@ -3465,7 +3469,7 @@ client.once('ready', async () => {
       new ContextMenuCommandBuilder().setName('Report to watchlist').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Send to corner').setType(ApplicationCommandType.Message)
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
+        .setDefaultMemberPermissions(cornerVis),   // see cornerVis: mods-only unless 'memberCorner' is on
       new ContextMenuCommandBuilder().setName('Strike').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Report').setType(ApplicationCommandType.Message).setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),   // member-facing anon report
@@ -4119,6 +4123,48 @@ const isOwner = (i) => ['owner', 'botowner'].includes(opspanel.tierOf(i));      
 // Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
 // low-risk, bounded things: VERIFY, view the dashboard read-only, and CORNER (rule+reason, ≤1h).
 const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.has(config.trialModRoleId));
+// Verified-member cornering (FUBU-only, feature 'memberCorner'): a plain VERIFIED member (not staff, not
+// trial, not unverified) may corner one non-staff member with tight limits — no rule/reason, ≤5m, capped
+// per day. Kept deliberately separate from staff/trial powers.
+const isMemberCorner = (i) => features.enabled('memberCorner') && !!config.verifiedRoleId
+  && !opspanel.tierOf(i) && !isTrialMod(i)
+  && !!i.member?.roles?.cache?.has(config.verifiedRoleId);
+// Per-member daily corner counter, keyed by UTC calendar day (resets 00:00 UTC). Stored in verify_state meta.
+function memberCornerCountToday(userId) {
+  const day = new Date().toISOString().slice(0, 10);
+  const rec = (state.getMeta('memberCornerDaily') || {})[userId];
+  return rec && rec.date === day ? (rec.count || 0) : 0;
+}
+function bumpMemberCornerCount(userId) {
+  const day = new Date().toISOString().slice(0, 10);
+  const m = state.getMeta('memberCornerDaily') || {};
+  const rec = m[userId];
+  m[userId] = { date: day, count: (rec && rec.date === day ? rec.count : 0) + 1 };
+  state.setMeta('memberCornerDaily', m);
+}
+// Execute a verified-member corner: no rule/reason (ruleN=null → never feeds corner→strike conversion),
+// duration clamped to the max, daily-capped, single target. Assumes the actor's access + the target's
+// eligibility (non-staff, not owner/self/bot) were already checked by the caller. Replies to `interaction`.
+async function doMemberCorner(interaction, targetMember, durationMs) {
+  const cap = config.memberCornerDailyCap;
+  if (memberCornerCountToday(interaction.user.id) >= cap)
+    return (interaction.deferred || interaction.replied)
+      ? interaction.editReply(`You’ve used all ${cap} of today’s corners — they reset at midnight UTC.`)
+      : interaction.reply({ content: `You’ve used all ${cap} of today’s corners — they reset at midnight UTC.`, flags: MessageFlags.Ephemeral });
+  const dur = Math.min(durationMs || config.memberCornerMaxMs, config.memberCornerMaxMs);
+  if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const r = await corner.corner(interaction.guild, targetMember, dur, state, interaction.user.id, null);
+  if (!r.ok) return interaction.editReply(`Couldn’t corner: ${r.error}`);
+  bumpMemberCornerCount(interaction.user.id);
+  const relSec = Math.floor((Date.now() + dur) / 1000);
+  try {
+    const cc = await interaction.guild.channels.fetch(config.cornerChannelId).catch(() => null);
+    if (cc) await cc.send(cornerSentMessage(targetMember.id, `until <t:${relSec}:f>`, null, interaction.user.id));
+  } catch (e) { console.error('[member-corner] announce:', e.message); }
+  await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
+    desc: `<@${targetMember.id}> was cornered until <t:${relSec}:f>.\n**By:** <@${interaction.user.id}> _(member corner)_` }).catch(() => {});
+  return interaction.editReply(`🚫 Sent <@${targetMember.id}> to the corner for **${Math.round(dur / 60000)} min**. (${memberCornerCountToday(interaction.user.id)}/${cap} today)`);
+}
 // Who can use a tribe's leader-tools (owner ruling 2026-08-06): the tribe's LEADER, a staff member who is
 // actually IN that tribe (holds its base role), or the OWNER (owner tier overrides across ANY tribe). Regular
 // staff can no longer manage tribes they aren't in. Replaces the old `isLeader || any-staff` gate everywhere.
@@ -6319,6 +6365,21 @@ client.on('interactionCreate', async (interaction) => {
     // Same access + tier rules as /corner, but the trigger is a specific message — and that message
     // gets forwarded into the corner so the member (and mods) see exactly what put them there.
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
+    // Verified-member path (FUBU 'memberCorner'): no rule picker, no reason — corner the message's author
+    // directly for the member max duration, non-staff only, subject to the daily cap. Runs before the
+    // staff/mini-mod gate so a plain member never sees the rule dropdown.
+    if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId) && isMemberCorner(interaction)) {
+      const tmsg = interaction.targetMessage;
+      if (!tmsg) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
+      if (tmsg.author?.bot || tmsg.author.id === client.user.id) return interaction.reply({ content: 'You can’t corner a bot.', flags: MessageFlags.Ephemeral });
+      if (tmsg.author.id === interaction.guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
+      if (tmsg.author.id === interaction.user.id) return interaction.reply({ content: 'You can’t corner yourself.', flags: MessageFlags.Ephemeral });
+      const tm = await interaction.guild.members.fetch(tmsg.author.id).catch(() => null);
+      if (!tm) return interaction.reply({ content: 'They’re not in the server anymore.', flags: MessageFlags.Ephemeral });
+      if (opspanel.memberTier(tm) || (config.trialModRoleId && tm.roles.cache.has(config.trialModRoleId)))
+        return interaction.reply({ content: 'You can’t corner staff.', flags: MessageFlags.Ephemeral });
+      return doMemberCorner(interaction, tm, config.memberCornerMaxMs);
+    }
     if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
@@ -7566,6 +7627,11 @@ client.on('interactionCreate', async (interaction) => {
     if (member.id === client.user.id) return interaction.reply({ content: 'I cannot corner myself.', flags: MessageFlags.Ephemeral });
 
     if (name === 'corner') {
+      const mCorner = isMemberCorner(interaction);
+      // Access gate: staff/trial-mods always; a verified member only when 'memberCorner' is on (FUBU). Because
+      // the flag also opens up command VISIBILITY, anyone else who can now see /corner is turned away here.
+      if (!opspanel.tierOf(interaction) && !isTrialMod(interaction) && !mCorner)
+        return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
       // Self-cornering is blocked for everyone EXCEPT this one member (owner-approved standing exception,
       // 2026-08-03: "white korean baddie" / beautyinelijah). She picks her own duration like anyone else
       // would; nothing here changes /uncorner, so only staff can still release her early — this exemption is
@@ -7607,6 +7673,18 @@ client.on('interactionCreate', async (interaction) => {
         if ((interaction.options.getString('also') || '').trim() || (interaction.options.getString('sweep') || '').trim())
           return interaction.reply({ content: 'As a **trial mod**, you can only corner **one member at a time** — `also` and `sweep` are mod-only.', flags: MessageFlags.Ephemeral });
       }
+      // Verified-member restrictions: NO rule/reason (so it never feeds corner→strike conversion), single
+      // target, ≤ the member max (blank → max), and a hard daily cap.
+      if (mCorner) {
+        if (ruleN || customReason) return interaction.reply({ content: 'As a member you can’t attach a **rule or reason** to a corner — just pick who, and optionally how long (up to 5 min).', flags: MessageFlags.Ephemeral });
+        if ((interaction.options.getString('also') || '').trim() || (interaction.options.getString('sweep') || '').trim())
+          return interaction.reply({ content: 'As a member you can only corner **one person at a time**.', flags: MessageFlags.Ephemeral });
+        if (durationMs && durationMs > config.memberCornerMaxMs)
+          return interaction.reply({ content: `As a member, a corner can be **at most ${Math.round(config.memberCornerMaxMs / 60000)} minutes**.`, flags: MessageFlags.Ephemeral });
+        if (!durationMs) durationMs = config.memberCornerMaxMs;   // blank → the max
+        if (memberCornerCountToday(interaction.user.id) >= config.memberCornerDailyCap)
+          return interaction.reply({ content: `You’ve used all **${config.memberCornerDailyCap}** of today’s corners — they reset at midnight UTC.`, flags: MessageFlags.Ephemeral });
+      }
       // Multi-corner: `also` (named IDs) and/or `sweep` (everyone non-staff active in THIS channel in the last
       // N minutes) → corner the whole deduped set at once, same duration/reason. Either option triggers it.
       const alsoStr = interaction.options.getString('also');
@@ -7646,6 +7724,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
       const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN);
       if (!r.ok) return interaction.editReply(`Failed to corner: ${r.error}`);
+      if (mCorner) bumpMemberCornerCount(interaction.user.id);   // count it against their daily cap
       await maybeAlertCornerRepeat(guild, member, ruleN, r.repeatCount);
       const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
       const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';

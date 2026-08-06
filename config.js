@@ -62,6 +62,11 @@ const config = {
   // converting to a Strike, with a one-click button). Deliberately tunable: the enforcement-model spec
   // doesn't finalize an exact number, so this is a clearly-labeled default, not a guess baked into logic.
   cornerRepeatAlertThreshold: Number(opt('CORNER_REPEAT_ALERT_THRESHOLD', '3')) || 3,
+  // Verified-member cornering (feature 'memberCorner', FUBU-only). Max duration a non-staff member may set
+  // (blank defaults to this), and how many member-initiated corners each member may do per UTC day. Member
+  // corners carry NO rule/reason, so they never feed the corner→strike repeat-conversion count.
+  memberCornerMaxMs: Number(opt('MEMBER_CORNER_MAX_MS', String(5 * 60 * 1000))) || 5 * 60 * 1000,
+  memberCornerDailyCap: Number(opt('MEMBER_CORNER_DAILY_CAP', '3')) || 3,
   // How long after a DENIED strike appeal before that same strike can be re-appealed. Not specified by
   // the enforcement-model spec — tunable, not a silent guess baked into logic.
   strikeAppealCooldownDays: Number(opt('STRIKE_APPEAL_COOLDOWN_DAYS', '7')) || 7,
