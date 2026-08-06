@@ -473,7 +473,9 @@ async function buildTribe(guild, opts, config) {
     rankRoles.forEach((rr, i) => {
       if (!rr.roleId) return;
       const tierP = others.map(t => (t.ranks && t.ranks[i]) ? guild.roles.cache.get(t.ranks[i].roleId)?.position : null).filter(p => p != null);
-      if (tierP.length) positions.push({ role: rr.roleId, position: Math.min(...tierP) });
+      // TOP of the tier cluster (max), not min — a stray low outlier (e.g. one tribe's Initiate parked near the
+      // bottom) would otherwise drag new ranks down there instead of into the cluster.
+      if (tierP.length) positions.push({ role: rr.roleId, position: Math.max(...tierP) });
     });
     if (positions.length) await guild.roles.setPositions(positions);
   } catch (e) { console.error('[tribe role-position]', e.message); }
