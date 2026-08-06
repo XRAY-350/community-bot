@@ -430,12 +430,12 @@ async function buildTribe(guild, opts, config) {
   const throne = await guild.channels.create({ name: chName(chNames.throne || 'throne'), type: ChannelType.GuildText, parent: cat.id, topic: chTopics.throne || undefined, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.ReadMessageHistory, P.AddReactions], deny: [P.SendMessages, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePrivateThreads] },
-    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages, P.MentionEveryone] }] : []),
     ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
   const hall = await guild.channels.create({ name: chName(chNames.hall || 'hall'), type: ChannelType.GuildText, parent: cat.id, topic: chTopics.hall || undefined, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
     { id: role.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AddReactions, P.EmbedLinks, P.AttachFiles, P.UseExternalEmojis, P.UseExternalStickers, P.MentionEveryone] },
-    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages] }] : []),
+    ...(leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel, P.SendMessages, P.ManageMessages, P.MentionEveryone] }] : []),
     ...staffAllow([P.ViewChannel, P.SendMessages, P.ManageMessages]), ...deny] });
   const vc = await guild.channels.create({ name: chName(chNames.voice || 'voice'), type: ChannelType.GuildVoice, parent: cat.id, permissionOverwrites: [
     { id: guild.id, deny: [P.ViewChannel] },
