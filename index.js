@@ -462,24 +462,30 @@ async function buildTribe(guild, opts, config) {
   try {
     await guild.roles.fetch();
     const others = tribes.all();   // existing tribes only — the new one isn't registered yet
-    const baseP = others.map(t => guild.roles.cache.get(t.roleId)?.position).filter(p => p != null);
-    const leadP = others.map(t => t.leaderRoleId && guild.roles.cache.get(t.leaderRoleId)?.position).filter(p => p != null);
+    const posOf = id => guild.roles.cache.get(id)?.position;
+    const minPos = arr => { const v = arr.filter(p => p != null); return v.length ? Math.min(...v) : null; };
+    const maxPos = arr => { const v = arr.filter(p => p != null); return v.length ? Math.max(...v) : null; };
     const positions = [];
-    if (baseP.length) positions.push({ role: role.id, position: Math.min(...baseP) });
-    if (leadP.length && leaderRole) positions.push({ role: leaderRole.id, position: Math.min(...leadP) });
-    if (leadP.length && staffRankRole) positions.push({ role: staffRankRole.id, position: Math.min(...leadP) });
-    // Each rank slots into its OWN TIER's cluster across existing tribes (owner: ranks are "sprinkled" — tier-1
-    // with the tier-1s, tier-2 with the tier-2s, etc. — not bunched at the bottom). Matched by ladder index.
+    // base -> bottom of the tribe-role cluster; leader/General -> bottom of THEIR OWN clusters (staffRank has its
+    // own cluster, distinct from leader). Each computed separately so nothing lands above the existing tribes.
+    const bp = minPos(others.map(t => posOf(t.roleId)));
+    const lp = minPos(others.map(t => t.leaderRoleId ? posOf(t.leaderRoleId) : null));
+    const sp = minPos(others.map(t => t.staffRankRoleId ? posOf(t.staffRankRoleId) : null));
+    if (bp != null) positions.push({ id: role.id, position: bp });
+    if (lp != null && leaderRole) positions.push({ id: leaderRole.id, position: lp });
+    if (sp != null && staffRankRole) positions.push({ id: staffRankRole.id, position: sp });
     // Only the TOP rank (rank 4 / last in the ladder) is slotted up into its cluster — it sits ABOVE the base
     // member role so top-rank members outrank regulars. Ranks 1-3 stay at the very bottom as low cosmetic tags
     // (owner ruling 2026-08-06: "keep them all at the bottom except rank 4"). Max = top of that rank's cluster.
     const topIdx = rankRoles.length - 1;
     const top = rankRoles[topIdx];
     if (top && top.roleId) {
-      const tierP = others.map(t => (t.ranks && t.ranks[topIdx]) ? guild.roles.cache.get(t.ranks[topIdx].roleId)?.position : null).filter(p => p != null);
-      if (tierP.length) positions.push({ role: top.roleId, position: Math.max(...tierP) });
+      const t3 = maxPos(others.map(t => (t.ranks && t.ranks[topIdx]) ? posOf(t.ranks[topIdx].roleId) : null));
+      if (t3 != null) positions.push({ id: top.roleId, position: t3 });
     }
-    if (positions.length) await guild.roles.setPositions(positions);
+    // Raw bulk endpoint (PATCH /guilds/{id}/roles) — reliable; discord.js's roles.setPositions() mis-resolved
+    // multi-role moves and put a new tribe's leader ABOVE the whole cluster (owner report 2026-08-06).
+    if (positions.length) await guild.client.rest.patch(`/guilds/${guild.id}/roles`, { body: positions });
   } catch (e) { console.error('[tribe role-position]', e.message); }
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
   const tribe = tribes.register({ key, name: opts.name, shortName: opts.shortName || opts.name, emoji, color: opts.color, color2: opts.color2 || null,
