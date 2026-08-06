@@ -468,6 +468,13 @@ async function buildTribe(guild, opts, config) {
     if (baseP.length) positions.push({ role: role.id, position: Math.min(...baseP) });
     if (leadP.length && leaderRole) positions.push({ role: leaderRole.id, position: Math.min(...leadP) });
     if (leadP.length && staffRankRole) positions.push({ role: staffRankRole.id, position: Math.min(...leadP) });
+    // Each rank slots into its OWN TIER's cluster across existing tribes (owner: ranks are "sprinkled" — tier-1
+    // with the tier-1s, tier-2 with the tier-2s, etc. — not bunched at the bottom). Matched by ladder index.
+    rankRoles.forEach((rr, i) => {
+      if (!rr.roleId) return;
+      const tierP = others.map(t => (t.ranks && t.ranks[i]) ? guild.roles.cache.get(t.ranks[i].roleId)?.position : null).filter(p => p != null);
+      if (tierP.length) positions.push({ role: rr.roleId, position: Math.min(...tierP) });
+    });
     if (positions.length) await guild.roles.setPositions(positions);
   } catch (e) { console.error('[tribe role-position]', e.message); }
   const key = (opts.key || opts.shortName || opts.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `tribe-${role.id}`;
