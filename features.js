@@ -86,6 +86,8 @@ const REGISTRY = [
   { key: 'timeServed',   audience: 'core',   built: false }, // release shows how long they were in the corner
   { key: 'langMiniMod',  audience: 'core',   built: false }, // language mini-mod role may use Send-to-corner + Report-to-watchlist
   { key: 'memberCorner', audience: 'core',   built: false }, // FUBU-only: a VERIFIED member may corner one non-staff member (≤5m, 3/day cap, NO rule/reason so it never feeds corner→strike conversion). Off elsewhere. Registration-affecting: flips /corner + "Send to corner" visibility.
+  { key: 'amongUs',      audience: 'member', built: false, commands: ['amongus'], // VC "Among Us mode": staff /amongus starts a game for their VC; a panel toggles mute phases (Lobby/Play/Discussion) + dead tracking. Anyone in the VC drives it. Registration-affecting.
+    help: { name: '🔴 Among Us mode', value: 'Playing Among Us in a voice channel? A mod runs `/amongus` to start a game, then anyone in the VC uses the panel to mute for the round and unmute for discussion (dead players stay muted).' } },
 ];
 // Retired (superseded by the weighted-strike model in strikes.js — always on now, not flag-gated):
 // 'strikeReason' (weight+reason are core to every strike now) and 'fiveStrikes' (replaced by the

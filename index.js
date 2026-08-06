@@ -20,6 +20,7 @@ const { ensureMembers } = require('./memberCache');
 const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
 const wordfilter = require('./wordfilter');
+const amongus = require('./amongus');
 const tribes = require('./tribes');
 const pubdash = require('./pubdash');
 const suggest = require('./suggest');
@@ -3134,6 +3135,7 @@ client.once('ready', async () => {
     // members can reach them; the handlers still gate who may actually corner. Off elsewhere → stays mods-only.
     const cornerVis = features.enabled('memberCorner') ? null : PermissionsBitField.Flags.ModerateMembers;
     const allCmds = [
+      ...(features.enabled('amongUs') ? [amongus.commandBuilder()] : []),   // /amongus (staff-start VC game); off unless the flag is on
       new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner: strips roles, pulls them from voice, jails them (optionally timed)')
         .addUserOption(o => o.setName('user').setDescription('Member to corner').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(copy.corner.durationOpt).setRequired(false))
@@ -3539,6 +3541,7 @@ client.once('ready', async () => {
     const permResult = await permguard.sweepPermissions(guild, { notify: false }).catch(e => { console.error('[permguard] boot sweep failed:', e.message); return null; });
     if (permResult) console.log(`[permguard] boot sweep: ${permResult.fixed} overwrite(s) corrected, ${permResult.newMemberOverwrites.length} new member-overwrite(s) flagged, ${permResult.unmanagedChannels} channel(s) unmanaged (created after snapshot)`);
     permguard.register(client);
+    if (features.enabled('amongUs')) amongus.register(client);   // VC Among Us mode: voice-state hook + boot cleanup of stale games
     // Monthly contests: arm the auto-close tick (crowns winners on the 1st of the month if a round's open).
     if (features.enabled('contest')) contest.register(client);
     // Sweep every current staff member's own application: mod+ gets archived (owner-only channel, removed
@@ -4737,6 +4740,12 @@ client.on('interactionCreate', async (interaction) => {
       : interaction.isModalSubmit?.() ? `modal:${interaction.customId}`
       : `other:${interaction.type}`;
     console.error(`[idiag] IN ${kind} by ${interaction.user?.id} in #${interaction.channelId}`);
+  }
+  // Among Us VC mode (feature-gated): the /amongus start + the control-panel buttons/select. Routed early
+  // so they never fall through to the generic command/button handlers below.
+  if (features.enabled('amongUs')) {
+    if (interaction.isChatInputCommand?.() && interaction.commandName === 'amongus') return amongus.handleCommand(interaction).catch(e => console.error('[amongus cmd]', e.message));
+    if (amongus.isInteraction(interaction)) return amongus.handleInteraction(interaction).catch(e => console.error('[amongus int]', e.message));
   }
   // /unban's user_id: autocomplete search over the actual ban list (see the names, don't paste a raw ID blind).
   if (interaction.isAutocomplete?.()) {
