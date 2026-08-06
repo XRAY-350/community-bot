@@ -7618,7 +7618,10 @@ client.on('interactionCreate', async (interaction) => {
     // and under restrictions (rule + reason required, ≤1h), enforced in the corner block.
     const trial = isTrialMod(interaction);
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
-    if (!isMod && !trial) return interaction.reply({ content: 'Only staff (mods+ or trial mods) can use this.', flags: MessageFlags.Ephemeral });
+    // Verified members may use /corner (ONLY — not /uncorner) when the memberCorner feature is on. Their tight
+    // limits (≤5m, no rule/reason, daily cap) are enforced inside the `name === 'corner'` block below.
+    const memberMayCorner = name === 'corner' && isMemberCorner(interaction);
+    if (!isMod && !trial && !memberMayCorner) return interaction.reply({ content: 'Only staff (mods+ or trial mods) can use this.', flags: MessageFlags.Ephemeral });
 
     const guild = interaction.guild;
     const user = interaction.options.getUser('user');
