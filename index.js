@@ -4086,6 +4086,16 @@ const isOwner = (i) => ['owner', 'botowner'].includes(opspanel.tierOf(i));      
 // Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
 // low-risk, bounded things: VERIFY, view the dashboard read-only, and CORNER (rule+reason, ≤1h).
 const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.has(config.trialModRoleId));
+// Who can use a tribe's leader-tools (owner ruling 2026-08-06): the tribe's LEADER, a staff member who is
+// actually IN that tribe (holds its base role), or the OWNER (owner tier overrides across ANY tribe). Regular
+// staff can no longer manage tribes they aren't in. Replaces the old `isLeader || any-staff` gate everywhere.
+function canManageTribe(interaction, tribe) {
+  if (!tribe) return false;
+  if (tribes.isLeader(interaction.member, tribe)) return true;
+  const tier = opspanel.tierOf(interaction);
+  if (tier === 'owner' || tier === 'botowner') return true;                 // owner override — any tribe
+  return !!(tier && interaction.member?.roles?.cache?.has(tribe.roleId));    // in-tribe staff
+}
 const canVerify = (i) => canBan(i) || isTrialMod(i);
 // A language mini-mod may use Send-to-corner + Report-to-watchlist, but ONLY on messages in THEIR OWN
 // language's channels (per-language roles now — French Mini-Mod acts only in French chat/VC, etc.), and
@@ -5243,7 +5253,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!nom || nom.status !== 'pending_approval') return interaction.reply({ content: 'This nomination is no longer pending.', flags: MessageFlags.Ephemeral });
     const tribe = tribes.get(nom.tribeKey);
     if (!tribe) { tribes.clearNomination(targetId); return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral }); }
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (!canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can approve this.`, flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(targetId).catch(() => null);
     // Delete the throne prompt on resolution instead of editing it in place (owner, 2026-08-04: nominations +
@@ -5263,7 +5273,7 @@ client.on('interactionCreate', async (interaction) => {
     const nom = tribes.getNomination(targetId);
     if (!nom || nom.status !== 'pending_approval') return interaction.reply({ content: 'This nomination is no longer pending.', flags: MessageFlags.Ephemeral });
     const tribe = tribes.get(nom.tribeKey);
-    if (tribe && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (tribe && !canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can deny this.`, flags: MessageFlags.Ephemeral });
     tribes.clearNomination(targetId);
     await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
@@ -5334,7 +5344,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!req || req.status !== 'pending') return interaction.update({ content: 'This request is no longer active.', components: [] }).catch(() => {});
     const tribe = tribes.get(req.tribeKey);
     if (!tribe) { tribes.clearLeaveRequest(memberId); return interaction.update({ content: 'That tribe no longer exists.', components: [] }); }
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (!canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(memberId).catch(() => null);
     tribes.clearLeaveRequest(memberId);
@@ -5349,7 +5359,7 @@ client.on('interactionCreate', async (interaction) => {
     const req = tribes.getLeaveRequest(memberId);
     if (!req || req.status !== 'pending') return interaction.update({ content: 'This request is no longer active.', components: [] }).catch(() => {});
     const tribe = tribes.get(req.tribeKey);
-    if (tribe && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (tribe && !canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribe ? tribes.leaderTitle(tribe) : 'the leader'} or staff can decide this.`, flags: MessageFlags.Ephemeral });
     tribes.clearLeaveRequest(memberId);
     await interaction.deferUpdate(); await interaction.message.delete().catch(() => {});
@@ -5396,7 +5406,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton?.() && interaction.customId === 'tribehub_shop') {
     const tribe = tribes.myTribe(interaction.member);
     if (!tribe) return interaction.reply({ content: 'You’re not in a tribe yet. Head to #roles to pledge one.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (!canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can open the shop.`, flags: MessageFlags.Ephemeral });
     if (tribes.isFrozen(tribe)) return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s shop is frozen — it’s short on leaders. An admin can restore it with \`/tribe-admin set-leader\`.`, flags: MessageFlags.Ephemeral });
     return interaction.reply({ ...tribeShopView(tribe, interaction.guild), flags: MessageFlags.Ephemeral });
@@ -5440,7 +5450,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     const act = action.slice('tribethrone_'.length);
     const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster', 'war', 'alliance', 'allybreak', 'allygift'].includes(act);
-    if (isLeaderTool && !tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (isLeaderTool && !canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     // Frozen perks (mod-tribe short on leaders): war/alliances/shop are locked until it's back to 3 leaders.
     if (['war', 'alliance', 'allybreak', 'allygift', 'shop'].includes(act) && tribes.isFrozen(tribe))
@@ -5635,7 +5645,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, tribe)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
     const target = await interaction.guild.members.fetch(interaction.values[0]).catch(() => null);
     if (!target) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
     const r = await submitInvite(interaction.guild, tribe, interaction.user.id, target);
@@ -5645,7 +5655,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, tribe)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
     const target = await interaction.guild.members.fetch(interaction.values[0]).catch(() => null);
     if (!target) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
     await interaction.deferUpdate();
@@ -5656,7 +5666,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, tribe)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
     const targetId = interaction.values[0];
     const modal = new ModalBuilder().setCustomId(`tribethrone_note_modal:${tribeKey}:${targetId}`).setTitle('Note').addComponents(
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('text').setLabel('Note (blank to just view existing)').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)));
@@ -5666,7 +5676,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, tribe)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
     const targetId = interaction.values[0];
     const target = await interaction.guild.members.fetch(targetId).catch(() => null);
     if (!target || !tribes.isMember(target, tribe)) return interaction.update({ content: `That member isn’t in **${tribe.shortName || tribe.name}**. Invite them first.`, components: [] });
@@ -5680,7 +5690,7 @@ client.on('interactionCreate', async (interaction) => {
     const [, tribeKey, targetId] = interaction.customId.split(':');
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, tribe)) return interaction.update({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, components: [] });
     const target = await interaction.guild.members.fetch(targetId).catch(() => null);
     if (!target) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
     const idx = parseInt(interaction.values[0], 10);
@@ -5699,7 +5709,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const attacker = tribes.get(tribeKey);
     if (!attacker) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, attacker) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(attacker)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, attacker)) return interaction.update({ content: `Only ${tribes.leaderTitle(attacker)} or staff can do that.`, components: [] });
     if (tribes.onOutboundCooldown(attacker) || tribes.activeOutboundWar(attacker.key)) return interaction.update({ content: 'No longer eligible to declare war right now (attack cooldown or you already have a war underway).', components: [] }).catch(() => {});
     const defender = tribes.get(interaction.values[0]);
     if (!defender) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
@@ -5713,7 +5723,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const proposer = tribes.get(tribeKey);
     if (!proposer) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, proposer) && !opspanel.tierOf(interaction)) return interaction.update({ content: `Only ${tribes.leaderTitle(proposer)} or staff can do that.`, components: [] });
+    if (!canManageTribe(interaction, proposer)) return interaction.update({ content: `Only ${tribes.leaderTitle(proposer)} or staff can do that.`, components: [] });
     if (proposer.allyKey || tribes.activeAllianceVoteFor(proposer.key)) return interaction.update({ content: 'No longer eligible to propose an alliance right now.', components: [] }).catch(() => {});
     const target = tribes.get(interaction.values[0]);
     if (!target || target.allyKey) return interaction.update({ content: 'That tribe is no longer available (already allied or gone).', components: [] }).catch(() => {});
@@ -5726,7 +5736,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     const color = parseTribeHex(interaction.fields.getTextInputValue('color'));
     if (color === null) return interaction.reply(badHexReply('primary'));
     const c2raw = interaction.fields.getTextInputValue('color2');
@@ -5763,7 +5773,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     if (!tribe.throneId) return interaction.reply({ content: 'This tribe has no throne channel.', flags: MessageFlags.Ephemeral });
     const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
     if (!throne) return interaction.reply({ content: 'Couldn’t find the throne channel.', flags: MessageFlags.Ephemeral });
@@ -5775,7 +5785,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     const text = interaction.fields.getTextInputValue('text');
     tribes.setMotto(tribe.key, text);
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -5787,7 +5797,7 @@ client.on('interactionCreate', async (interaction) => {
     const [, tribeKey, targetId] = interaction.customId.split(':');
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     const text = interaction.fields.getTextInputValue('text').trim();
     if (text) { tribes.addNote(tribe.key, targetId, text, interaction.user.id); return interaction.reply({ content: `📝 Noted on <@${targetId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }); }
     const notes = tribes.getNotes(tribe.key, targetId);
@@ -5799,7 +5809,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     const ally = tribes.getAlly(tribe.key);
     if (!ally) return interaction.reply({ content: 'No current ally to gift treasury to.', flags: MessageFlags.Ephemeral });
     const amount = parseInt(interaction.fields.getTextInputValue('amount'), 10);
@@ -5814,7 +5824,7 @@ client.on('interactionCreate', async (interaction) => {
     const [, tribeKey, unlockKey] = interaction.customId.split(':');
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (!canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can buy for the tribe.`, flags: MessageFlags.Ephemeral });
     if (tribes.isFrozen(tribe)) return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s shop is frozen — it’s short on leaders.`, flags: MessageFlags.Ephemeral });
     const u = TRIBE_UNLOCKS.find(x => x.key === unlockKey);
@@ -5838,7 +5848,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribeKey = interaction.customId.split(':')[1];
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (!canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can buy for the tribe.`, flags: MessageFlags.Ephemeral });
     if (tribes.isFrozen(tribe)) return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s shop is frozen — it’s short on leaders.`, flags: MessageFlags.Ephemeral });
     const cost = strongholdCost(tribe);
@@ -5879,7 +5889,7 @@ client.on('interactionCreate', async (interaction) => {
     const [, tribeKey, unlockKey] = interaction.customId.split(':');
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
-    if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+    if (!canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can tear down tribe channels.`, flags: MessageFlags.Ephemeral });
     await interaction.deferUpdate();
     await teardownTribeUnlock(interaction.guild, tribe, unlockKey);
@@ -5932,7 +5942,7 @@ client.on('interactionCreate', async (interaction) => {
     const war = tribes.getWar(warId);
     if (!war || war.status !== 'voting') return interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
     const attacker = tribes.get(war.attackerKey);
-    if (attacker && !tribes.isLeader(interaction.member, attacker) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${attacker ? tribes.leaderTitle(attacker) : 'a leader'} or staff can cancel this vote.`, flags: MessageFlags.Ephemeral });
+    if (attacker && !canManageTribe(interaction, attacker)) return interaction.reply({ content: `Only ${attacker ? tribes.leaderTitle(attacker) : 'a leader'} or staff can cancel this vote.`, flags: MessageFlags.Ephemeral });
     tribes.resolveWarRecord(warId, { status: 'failed', resolvedAt: Date.now() });
     return interaction.update({ content: `## ⚔️ War vote cancelled\nCalled off by <@${interaction.user.id}>. No war, no cooldown.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
@@ -5944,7 +5954,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!war || war.status !== 'awaiting_target') return interaction.reply({ content: 'This war is no longer awaiting a response.', flags: MessageFlags.Ephemeral });
     const defender = tribes.get(war.defenderKey), attacker = tribes.get(war.attackerKey);
     if (!defender || !attacker) return interaction.update({ content: 'One of the tribes no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, defender) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(defender)} or staff can answer this.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, defender)) return interaction.reply({ content: `Only ${tribes.leaderTitle(defender)} or staff can answer this.`, flags: MessageFlags.Ephemeral });
     await interaction.update({ components: [] }).catch(() => {});
     if (act === 'tribewar_accept') {
       await interaction.followUp({ content: `⚔️ <@${interaction.user.id}> **accepted** the war on behalf of **${defender.shortName || defender.name}**. To battle!`, allowedMentions: { parse: [] } }).catch(() => {});
@@ -5975,7 +5985,7 @@ client.on('interactionCreate', async (interaction) => {
     const vote = tribes.getAllianceVote(voteId);
     if (!vote || vote.status !== 'voting') return interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
     const proposer = tribes.get(vote.proposerKey);
-    if (proposer && !tribes.isLeader(interaction.member, proposer) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${proposer ? tribes.leaderTitle(proposer) : 'a leader'} or staff can cancel this vote.`, flags: MessageFlags.Ephemeral });
+    if (proposer && !canManageTribe(interaction, proposer)) return interaction.reply({ content: `Only ${proposer ? tribes.leaderTitle(proposer) : 'a leader'} or staff can cancel this vote.`, flags: MessageFlags.Ephemeral });
     tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
     return interaction.update({ content: `## 🤝 Alliance vote cancelled\nCalled off by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
@@ -6050,7 +6060,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!vote || vote.status !== 'awaiting_target') return interaction.reply({ content: 'This proposal is no longer active.', flags: MessageFlags.Ephemeral });
     const target = tribes.get(vote.targetKey), proposer = tribes.get(vote.proposerKey);
     if (!target || !proposer) return interaction.update({ content: 'One of the tribes no longer exists.', components: [] }).catch(() => {});
-    if (!tribes.isLeader(interaction.member, target) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(target)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
+    if (!canManageTribe(interaction, target)) return interaction.reply({ content: `Only ${tribes.leaderTitle(target)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
     if (proposer.allyKey || target.allyKey) {
       tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
       return interaction.update({ content: `❌ Can't ally — one of the two tribes already has an ally (capped at 1).`, components: [] }).catch(() => {});
@@ -6066,7 +6076,7 @@ client.on('interactionCreate', async (interaction) => {
     const vote = tribes.getAllianceVote(voteId);
     if (!vote || vote.status !== 'awaiting_target') return interaction.reply({ content: 'This proposal is no longer active.', flags: MessageFlags.Ephemeral });
     const target = tribes.get(vote.targetKey);
-    if (target && !tribes.isLeader(interaction.member, target) && !opspanel.tierOf(interaction)) return interaction.reply({ content: `Only ${tribes.leaderTitle(target)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
+    if (target && !canManageTribe(interaction, target)) return interaction.reply({ content: `Only ${tribes.leaderTitle(target)} or staff can decide this.`, flags: MessageFlags.Ephemeral });
     tribes.resolveAllianceVoteRecord(voteId, { status: 'failed', resolvedAt: Date.now() });
     return interaction.update({ content: `❌ Alliance declined by <@${interaction.user.id}>.`, components: [], allowedMentions: { parse: [] } }).catch(() => {});
   }
@@ -6973,10 +6983,12 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'banish') {
       const target = interaction.options.getMember('user');
       if (!target) return interaction.reply({ content: 'Couldn’t find that member.', flags: MessageFlags.Ephemeral });
-      const isStaff = !!opspanel.tierOf(interaction);
-      const banishTribe = isStaff ? tribes.myTribe(target) : tribes.myTribe(interaction.member);
-      if (!banishTribe) return interaction.reply({ content: isStaff ? `<@${target.id}> isn’t in any tribe.` : 'You don’t lead a tribe, so there’s nothing to manage.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-      if (!isStaff && !tribes.isLeader(interaction.member, banishTribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(banishTribe)} of **${banishTribe.shortName || banishTribe.name}** (or staff) can banish.`, flags: MessageFlags.Ephemeral });
+      const btier = opspanel.tierOf(interaction);
+      const isOwner = btier === 'owner' || btier === 'botowner';
+      // Owner can banish from ANY tribe (resolved from the target); a leader / in-tribe staff acts on their OWN tribe.
+      const banishTribe = isOwner ? tribes.myTribe(target) : tribes.myTribe(interaction.member);
+      if (!banishTribe) return interaction.reply({ content: isOwner ? `<@${target.id}> isn’t in any tribe.` : 'You aren’t in a tribe, so there’s nothing to manage.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (!canManageTribe(interaction, banishTribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(banishTribe)} of **${banishTribe.shortName || banishTribe.name}** (or its in-tribe staff / the owner) can banish from it.`, flags: MessageFlags.Ephemeral });
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await submitBanish(interaction.guild, banishTribe, target, interaction.user.tag);
       return interaction.editReply(r.content);
@@ -7003,7 +7015,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply(withBanner(tribe.key, { content, embeds: [embed], allowedMentions: { parse: [] } }));
     }
     if (sub === 'motto') {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      if (!canManageTribe(interaction, tribe))
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its motto.`, flags: MessageFlags.Ephemeral });
       const text = interaction.options.getString('text');
       tribes.setMotto(tribe.key, text);
@@ -7013,7 +7025,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply({ content: `${tribe.emoji || '🌊'} Motto set for **${tribe.shortName || tribe.name}**:\n> *${text.slice(0, 300)}*`, allowedMentions: { parse: [] } });
     }
     if (sub === 'banner') {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      if (!canManageTribe(interaction, tribe))
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can set its banner.`, flags: MessageFlags.Ephemeral });
       const image = interaction.options.getAttachment('image');
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -7064,7 +7076,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `🪙 Offered **${amount} ${pts}** to **${tribe.shortName || tribe.name}**'s treasury, now **${tribes.getTreasury(tribe.key)}**. Your rank doesn't drop, this only slows your climb to the next one.`, allowedMentions: { parse: [] } });
     }
     if (sub === 'retheme') {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      if (!canManageTribe(interaction, tribe))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can retheme the tribe.`, flags: MessageFlags.Ephemeral });
       if (!tribes.hasUnlock(tribe, 'retheme') && !tribes.hasFreeRetheme(tribe)) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked Re-theme yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
       const color = parseTribeHex(interaction.options.getString('color'));
@@ -7081,7 +7093,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply(r.content + freeNote);
     }
     if (sub === 'icon') {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      if (!canManageTribe(interaction, tribe))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can set the tribe icon.`, flags: MessageFlags.Ephemeral });
       if (!tribes.hasUnlock(tribe, 'icon')) return interaction.reply({ content: `**${tribe.shortName || tribe.name}** hasn’t unlocked the **Tribe Icon** yet. Check the Shop button in #tribes-hub or your throne.`, flags: MessageFlags.Ephemeral });
       const role = interaction.guild.roles.cache.get(tribe.roleId);
@@ -7120,7 +7132,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply(`🖼️ Set **${tribe.shortName || tribe.name}**’s role icon (leader, General, and ranks too) to ${m[0]}.`);
     }
     if (sub === 'muster') {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      if (!canManageTribe(interaction, tribe))
         return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can call a muster.`, flags: MessageFlags.Ephemeral });
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await submitMuster(interaction.guild, tribe, interaction.user.id);
@@ -7128,7 +7140,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     // ---- Warden's tools: leaders of THIS tribe (or staff) ----
     if (wardenSub) {
-      if (!tribes.isLeader(interaction.member, tribe) && !opspanel.tierOf(interaction))
+      if (!canManageTribe(interaction, tribe))
         return interaction.reply({ content: `Only the leader of **${tribe.shortName || tribe.name}** (or staff) can do that.`, flags: MessageFlags.Ephemeral });
       const target = interaction.options.getMember('user');
       if (sub === 'invite') {
