@@ -3058,22 +3058,24 @@ async function backfillThroneExpiries(guild) {
 // so they're not swept here. Boot + hourly. (Members fully stripped of every role can't be detected from roles;
 // those are a manual/banish concern, not an accidental-loss one.)
 async function reconcileTribeRoles(guild) {
-  let restored = 0;
-  for (const t of tribes.all()) {
-    const base = t.roleId && guild.roles.cache.get(t.roleId);
-    if (!base) continue;
-    for (const r of (t.ranks || [])) {
-      const role = r.roleId && guild.roles.cache.get(r.roleId);
-      if (!role) continue;
-      for (const m of role.members.values()) {
-        if (!m.roles.cache.has(t.roleId)) {
-          await m.roles.add(t.roleId, 'Tribe reconcile: restore lost base membership role (still held a rank)').catch(() => {});
-          restored++;
-        }
-      }
-    }
+  // MUST full-fetch: role.members / members.cache only holds active (gateway-seen) members, so an INACTIVE member
+  // who lost their base role is invisible without this — the original bug where "people are still missing".
+  await guild.members.fetch().catch(e => console.error('[tribe reconcile] member fetch:', e.message));
+  const all = tribes.all().filter(t => t.roleId);
+  let restored = 0, failed = 0, conflicts = 0;
+  for (const m of guild.members.cache.values()) {
+    // rank-and-file of a tribe = holds one of its RANK roles but NOT its leader/general role (leaders/generals
+    // intentionally don't carry the base role, so never restore it for them).
+    const rankOf = all.filter(t =>
+      (t.ranks || []).some(r => r.roleId && m.roles.cache.has(r.roleId)) &&
+      !((t.leaderRoleId && m.roles.cache.has(t.leaderRoleId)) || (t.staffRankRoleId && m.roles.cache.has(t.staffRankRoleId))));
+    const missing = rankOf.filter(t => !m.roles.cache.has(t.roleId));
+    if (!missing.length) continue;
+    if (rankOf.length >= 2) { conflicts++; continue; }   // leftover rank roles from 2 tribes — needs a human call, don't guess a tribe
+    try { await m.roles.add(missing[0].roleId, 'Tribe reconcile: restore lost base membership role (held a rank role)'); restored++; }
+    catch (e) { failed++; console.error(`[tribe reconcile] restore ${missing[0].key} base for ${m.id} failed: ${e.message}`); }
   }
-  if (restored) console.log(`[tribe reconcile] restored the base tribe role to ${restored} ranked member(s) who had lost it`);
+  if (restored || failed || conflicts) console.log(`[tribe reconcile] restored ${restored} base role(s)${failed ? `, ${failed} FAILED` : ''}${conflicts ? `, ${conflicts} multi-tribe conflict(s) skipped (need manual resolution)` : ''}`);
   return restored;
 }
 
