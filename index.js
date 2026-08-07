@@ -3401,10 +3401,11 @@ client.once('ready', async () => {
   // Register the /corner and /uncorner slash commands to this guild (instant, no global wait).
   try {
     features.ensureSeeded(); // must run before allCmds is built - feature-gated options below read it
-    // Corner entry-point visibility: normally mods-only (ModerateMembers). When the FUBU-only 'memberCorner'
-    // feature is on, expose /corner + "Send to corner" to everyone (null = no default restriction) so verified
-    // members can reach them; the handlers still gate who may actually corner. Off elsewhere → stays mods-only.
-    const cornerVis = features.enabled('memberCorner') ? null : PermissionsBitField.Flags.ModerateMembers;
+    // Corner entry-point visibility: always open (null = no default restriction) so /corner + "Send to
+    // corner" stay visible whether or not 'memberCorner' is currently on — the handlers gate who may
+    // actually corner, and tell a verified member plainly if the feature itself is turned off. Keeping
+    // visibility flag-independent means toggling 'memberCorner' takes effect live, no bot restart needed.
+    const cornerVis = null;
     const allCmds = [
       ...(features.enabled('amongUs') ? [amongus.commandBuilder()] : []),   // /amongus (staff-start VC game); off unless the flag is on
       new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner: strips roles, pulls them from voice, jails them (optionally timed)')
@@ -3415,7 +3416,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
-        .setDefaultMemberPermissions(cornerVis),   // mods-only by default; when 'memberCorner' is on, visible to all (handler enforces trial + member restrictions)
+        .setDefaultMemberPermissions(cornerVis),   // always visible; the handler enforces staff/trial/member restrictions (and tells a member plainly if 'memberCorner' is off)
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(`Optional, e.g. release automatically instead of now`).setRequired(false))
@@ -3744,7 +3745,7 @@ client.once('ready', async () => {
       new ContextMenuCommandBuilder().setName('Report to watchlist').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Send to corner').setType(ApplicationCommandType.Message)
-        .setDefaultMemberPermissions(cornerVis),   // see cornerVis: mods-only unless 'memberCorner' is on
+        .setDefaultMemberPermissions(cornerVis),   // see cornerVis: always visible, handler gates who may actually act
       new ContextMenuCommandBuilder().setName('Strike').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Report').setType(ApplicationCommandType.Message).setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),   // member-facing anon report
@@ -4405,9 +4406,13 @@ const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.ha
 // Verified-member cornering (FUBU-only, feature 'memberCorner'): a plain VERIFIED member (not staff, not
 // trial, not unverified) may corner one non-staff member with tight limits — no rule/reason, ≤5m, capped
 // per day. Kept deliberately separate from staff/trial powers.
-const isMemberCorner = (i) => features.enabled('memberCorner') && !!config.verifiedRoleId
+// Split from the feature-flag check so callers can tell "you're not the right role" apart from "the role
+// is right, but the feature is currently off" and say so explicitly (/corner + Send to corner stay visible
+// to verified members regardless of the flag — no command-registration restart needed to turn this off).
+const isMemberCornerEligibleRole = (i) => !!config.verifiedRoleId
   && !opspanel.tierOf(i) && !isTrialMod(i)
   && !!i.member?.roles?.cache?.has(config.verifiedRoleId);
+const isMemberCorner = (i) => features.enabled('memberCorner') && isMemberCornerEligibleRole(i);
 // Per-member daily corner counter, keyed by UTC calendar day (resets 00:00 UTC). Stored in verify_state meta.
 function memberCornerCountToday(userId) {
   const day = new Date().toISOString().slice(0, 10);
@@ -6736,6 +6741,9 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: 'You can’t corner staff.', flags: MessageFlags.Ephemeral });
       return doMemberCorner(interaction, tm, config.memberCornerMaxMs);
     }
+    // Same "tell them plainly it's off" as /corner, for a verified member who'd otherwise qualify.
+    if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId) && isMemberCornerEligibleRole(interaction))
+      return interaction.reply({ content: '🚫 Member cornering is currently **turned off**. Only staff can use this right now.', flags: MessageFlags.Ephemeral });
     if (!isMod && !miniModCanActOn(interaction, interaction.targetMessage?.channelId)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
@@ -7977,7 +7985,13 @@ client.on('interactionCreate', async (interaction) => {
     // Verified members may use /corner (ONLY — not /uncorner) when the memberCorner feature is on. Their tight
     // limits (≤5m, no rule/reason, daily cap) are enforced inside the `name === 'corner'` block below.
     const memberMayCorner = name === 'corner' && isMemberCorner(interaction);
-    if (!isMod && !trial && !memberMayCorner) return interaction.reply({ content: 'Only staff (mods+ or trial mods) can use this.', flags: MessageFlags.Ephemeral });
+    if (!isMod && !trial && !memberMayCorner) {
+      // A verified member who WOULD qualify if the feature were on gets told plainly it's off, instead of
+      // the generic staff-only message (command visibility no longer hides this from them either way).
+      if (name === 'corner' && isMemberCornerEligibleRole(interaction))
+        return interaction.reply({ content: '🚫 Member cornering is currently **turned off**. Only staff can use this right now.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Only staff (mods+ or trial mods) can use this.', flags: MessageFlags.Ephemeral });
+    }
 
     const guild = interaction.guild;
     const user = interaction.options.getUser('user');
@@ -7987,8 +8001,10 @@ client.on('interactionCreate', async (interaction) => {
 
     if (name === 'corner') {
       const mCorner = isMemberCorner(interaction);
-      // Access gate: staff/trial-mods always; a verified member only when 'memberCorner' is on (FUBU). Because
-      // the flag also opens up command VISIBILITY, anyone else who can now see /corner is turned away here.
+      // Belt-and-suspenders re-check of the same gate the caller already applied above (kept in case this
+      // block is ever reached another way) — staff/trial-mods always; a verified member only when
+      // 'memberCorner' is on. /corner is visible to everyone regardless of the flag, so this can still
+      // fire for a non-eligible member.
       if (!opspanel.tierOf(interaction) && !isTrialMod(interaction) && !mCorner)
         return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
       // Self-cornering is blocked for everyone EXCEPT this one member (owner-approved standing exception,

@@ -338,7 +338,7 @@ function buildSettings() {
     '✅ **React-resolve**: post a weekly message those members can react to, to fix themselves.\n' +
     '🗒️ **Digest**: a once-a-day recap of everything the bot did.\n' +
     '🧵 **Orphan-reap**: delete verification threads whose owner already left the server.\n' +
-    '👤 **Member cornering** (👑 Owner only): let a plain VERIFIED member corner one other non-staff member (≤5m, 3/day cap). Off elsewhere. ⚠️ Changing this needs a bot restart to fully take effect (it flips who can see `/corner`).')
+    '👤 **Member cornering** (👑 Owner only): let a plain VERIFIED member corner one other non-staff member (≤5m, 3/day cap). Takes effect **immediately** — `/corner` stays visible to members either way; when it\'s off, they\'re told plainly instead of the command just disappearing.')
     .setFooter({ text: copy.guards.needsAdmin });
   const row1 = new ActionRowBuilder().addComponents(
     toggleBtn('featureNudge', 'Nudge'), toggleBtn('conflictPing', 'Conflict-ping'),
@@ -895,8 +895,10 @@ async function handlePanel(interaction) {
       if (!meets(tier, 'owner')) return deny('owner');
       const next = !features.enabled(key);
       features.setEnabled(key, next);
-      try { require('./ownerlog').log(interaction.guild, { emoji: next ? '🟢' : '⚫', title: `Feature ${next ? 'enabled' : 'disabled'}`, color: next ? 0x57F287 : 0x99AAB5, detail: `\`${key}\` — via dashboard by <@${interaction.user.id}>.` }); } catch { /* ownerlog best-effort */ }
-      await interaction.editReply(`${next ? '🟢' : '⚫'} **${key}** → ${next ? 'ON' : 'OFF'}. ⚠️ Restart the bot for this to fully take effect (it changes who can see \`/corner\`).`);
+      const FRIENDLY = { memberCorner: 'Member cornering' };   // extend as more feature toggles land on the panel
+      const label = FRIENDLY[key] || key;
+      try { require('./ownerlog').log(interaction.guild, { emoji: next ? '🟢' : '⚫', title: `Feature ${next ? 'enabled' : 'disabled'}`, color: next ? 0x57F287 : 0x99AAB5, detail: `**${label}** (\`${key}\`) — via dashboard by <@${interaction.user.id}>.` }); } catch { /* ownerlog best-effort */ }
+      await interaction.editReply(`${next ? '🟢' : '⚫'} **${label}** → ${next ? 'ON' : 'OFF'}. Takes effect immediately, no restart needed.`);
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_modapps_toggle') {
