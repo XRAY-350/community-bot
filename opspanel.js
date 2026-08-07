@@ -142,6 +142,13 @@ function toggleBtn(key, label) {
   return new ButtonBuilder().setCustomId(`fops_toggle:${key}`).setLabel(`${label}: ${on ? 'ON' : 'OFF'}`)
     .setStyle(on ? ButtonStyle.Success : ButtonStyle.Secondary);
 }
+// Same idea as toggleBtn but for a features.js registry flag instead of a D.config key (owner-gated —
+// see the fops_ftoggle: handler).
+function featureToggleBtn(key, label) {
+  const on = features.enabled(key);
+  return new ButtonBuilder().setCustomId(`fops_ftoggle:${key}`).setLabel(`${label}: ${on ? 'ON' : 'OFF'}`)
+    .setStyle(on ? ButtonStyle.Success : ButtonStyle.Secondary);
+}
 
 // Personal panel (/panel): a private, per-user ephemeral copy. Its nav is FILTERED to the pages the
 // caller's tier can actually use (customId fops_pnav, so it routes separately from the shared pinned
@@ -330,12 +337,14 @@ function buildSettings() {
     '⚖️ **Conflict-ping**: automatically flag members who somehow have both roles.\n' +
     '✅ **React-resolve**: post a weekly message those members can react to, to fix themselves.\n' +
     '🗒️ **Digest**: a once-a-day recap of everything the bot did.\n' +
-    '🧵 **Orphan-reap**: delete verification threads whose owner already left the server.')
+    '🧵 **Orphan-reap**: delete verification threads whose owner already left the server.\n' +
+    '👤 **Member cornering** (👑 Owner only): let a plain VERIFIED member corner one other non-staff member (≤5m, 3/day cap). Off elsewhere. ⚠️ Changing this needs a bot restart to fully take effect (it flips who can see `/corner`).')
     .setFooter({ text: copy.guards.needsAdmin });
   const row1 = new ActionRowBuilder().addComponents(
     toggleBtn('featureNudge', 'Nudge'), toggleBtn('conflictPing', 'Conflict-ping'),
     toggleBtn('reactResolveEnabled', 'React-resolve'), toggleBtn('digestEnabled', 'Digest'), toggleBtn('reapOrphans', 'Orphan-reap'));
   const row2 = new ActionRowBuilder().addComponents(
+    featureToggleBtn('memberCorner', 'Member cornering'),
     new ButtonBuilder().setCustomId('fops_refresh').setEmoji('🔄').setLabel('Refresh').setStyle(ButtonStyle.Secondary));
   return { content: '## ⚙️ FUBU Ops · Settings', embeds: [embed], components: [row1, row2, navRow(pageIdx('Settings'))] };
 }
@@ -878,6 +887,16 @@ async function handlePanel(interaction) {
       const next = !D.config[key];
       persistOverride({ [key]: next });
       await interaction.editReply(`⚙️ **${key}** → ${next ? 'ON' : 'OFF'}${key === 'dryRun' && !next ? '. ⚠️ Reaping is now **LIVE** (members will be kicked).' : ''}`);
+      return refreshPanel(interaction.client);
+    }
+    if (id.startsWith('fops_ftoggle:')) {
+      const key = id.slice('fops_ftoggle:'.length);
+      // Same policy tier as the /features toggle command: these are owner calls, not day-to-day admin ones.
+      if (!meets(tier, 'owner')) return deny('owner');
+      const next = !features.enabled(key);
+      features.setEnabled(key, next);
+      try { require('./ownerlog').log(interaction.guild, { emoji: next ? '🟢' : '⚫', title: `Feature ${next ? 'enabled' : 'disabled'}`, color: next ? 0x57F287 : 0x99AAB5, detail: `\`${key}\` — via dashboard by <@${interaction.user.id}>.` }); } catch { /* ownerlog best-effort */ }
+      await interaction.editReply(`${next ? '🟢' : '⚫'} **${key}** → ${next ? 'ON' : 'OFF'}. ⚠️ Restart the bot for this to fully take effect (it changes who can see \`/corner\`).`);
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_modapps_toggle') {
