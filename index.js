@@ -262,7 +262,7 @@ async function submitJoinRequest(guild, member, tribe) {
 async function submitInvite(guild, tribe, inviterId, target) {
   if (target.user.bot) return { ok: false, content: 'Bots can’t join tribes.' };
   if (target.roles.cache.has(tribe.roleId)) return { ok: false, content: `<@${target.id}> is already in **${tribe.shortName || tribe.name}**.` };
-  const other = tribes.memberTribe(target);
+  const other = tribes.inAnyTribe(target);
   if (other && other.key !== tribe.key) return { ok: false, content: `<@${target.id}> is already in **${other.shortName || other.name}**. A member can only be in one tribe. Banish them there first.` };
   const existing = tribes.getNomination(target.id);
   if (existing && ['pending_approval', 'pending_accept'].includes(existing.status)) return { ok: false, content: `<@${target.id}> already has a pending nomination or invite.` };
@@ -2838,6 +2838,32 @@ async function backfillThroneExpiries(guild) {
   if (scheduled) console.log(`[throneExpire] boot backfill: scheduled ${scheduled} previously-untimed throne message(s)`);
 }
 
+// Auto-restore lost tribe membership: a ranked member (holds a rank role: Initiate/Member/…) who has LOST the
+// base tribe role is in a broken state — they don't count as "in a tribe" (join gates, standings, points all
+// key off the base role), so they can even be poached into another tribe. Re-add the base role to any such
+// member. Leaders/General are intentionally NOT rank-and-file (they hold the leader/staff role, not the base),
+// so they're not swept here. Boot + hourly. (Members fully stripped of every role can't be detected from roles;
+// those are a manual/banish concern, not an accidental-loss one.)
+async function reconcileTribeRoles(guild) {
+  let restored = 0;
+  for (const t of tribes.all()) {
+    const base = t.roleId && guild.roles.cache.get(t.roleId);
+    if (!base) continue;
+    for (const r of (t.ranks || [])) {
+      const role = r.roleId && guild.roles.cache.get(r.roleId);
+      if (!role) continue;
+      for (const m of role.members.values()) {
+        if (!m.roles.cache.has(t.roleId)) {
+          await m.roles.add(t.roleId, 'Tribe reconcile: restore lost base membership role (still held a rank)').catch(() => {});
+          restored++;
+        }
+      }
+    }
+  }
+  if (restored) console.log(`[tribe reconcile] restored the base tribe role to ${restored} ranked member(s) who had lost it`);
+  return restored;
+}
+
 // --- Panel-driven setup (owner: consolidate the 10 *-setup commands into /panel → 🧩 Setup) --------------
 // Wired as opspanel D.runSetup. Each kind mirrors the OLD *-setup slash handler: same guard, same
 // module.setup() call, ephemeral reply — just triggered by a panel button instead of a slash command.
@@ -3686,6 +3712,8 @@ client.once('ready', async () => {
   if (dguild) await backfillThroneExpiries(dguild).catch(e => console.error(`[throneExpire] backfill: ${e.message}`));
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
+  if (dguild) await reconcileTribeRoles(dguild).catch(e => console.error(`[tribe reconcile] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => reconcileTribeRoles(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
   if (dguild) await sweepLeaderRequirement(dguild).catch(e => console.error(`[leader-req] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepLeaderRequirement(g)).catch(() => {}), 3600000);
@@ -5003,7 +5031,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribe = tribes.get(interaction.values[0]);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     const member = interaction.member;
-    const current = tribes.memberTribe(member);
+    const current = tribes.inAnyTribe(member);
     if (current) return interaction.reply({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t leave or switch on your own. Its **${tribes.leaderTitle(current)} must release you** first (\`/tribe banish\`).`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     if (tribes.isVeteran(member.id)) return interaction.reply({ content: `You’ve pledged to a tribe before, so you can’t just self-join. **${tribe.shortName || tribe.name}** has to **accept** you. Use \`/request-role\` to petition, or ask its ${tribes.leaderTitle(tribe)} to invite you.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     const gate = tribes.getEntranceGate(tribe.key);
@@ -5022,7 +5050,7 @@ client.on('interactionCreate', async (interaction) => {
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.update({ content: 'That tribe no longer exists.', components: [] }).catch(() => {});
     const member = interaction.member;
-    const current = tribes.memberTribe(member);
+    const current = tribes.inAnyTribe(member);
     if (current) return interaction.update({ content: `You’re already pledged to **${current.shortName || current.name}**. You can’t self-join anywhere else.`, components: [] });
     if (tribes.isVeteran(member.id)) return interaction.update({ content: `You’ve pledged before, so you can’t self-join anymore. Ask to be accepted instead.`, components: [] });
     const gate = tribes.getEntranceGate(tribe.key);

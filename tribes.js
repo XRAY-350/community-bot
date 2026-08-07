@@ -50,6 +50,16 @@ function isLeader(member, tribe) { return !!(member && tribe && tribe.leaderRole
 // member of their own tribe (holds the leader role, not the member role) — so "my tribe" checks both.
 function leaderTribe(member) { if (!member) return null; return all().find(t => t.leaderRoleId && member.roles.cache.has(t.leaderRoleId)) || null; }
 function myTribe(member) { return leaderTribe(member) || memberTribe(member); }
+// Is the member in ANY tribe, by ANY of its roles — base, leader, General, or a rank role? memberTribe/myTribe
+// only look at base+leader, so a leader/general/ranked member who somehow lacks the base role slips through the
+// "already in a tribe" join gates and can pledge a second tribe. This closes that for the loyalty model.
+function inAnyTribe(member) {
+  if (!member) return null;
+  return all().find(t => {
+    const ids = [t.roleId, t.leaderRoleId, t.staffRankRoleId, ...((t.ranks || []).map(r => r.roleId))].filter(Boolean);
+    return ids.some(id => member.roles.cache.has(id));
+  }) || null;
+}
 
 // Private leader notes on a member: tribe.notes[userId] = [{ text, by, at }].
 function addNote(key, userId, text, byId) {
@@ -680,7 +690,7 @@ function grantFreeRetheme(key) { const t = get(key); if (!t) return; update(key,
 function hasFreeRetheme(tribe) { return !!(tribe && (tribe.freeRethemes || 0) > 0); }
 function consumeFreeRetheme(key) { const t = get(key); if (!t || !(t.freeRethemes > 0)) return false; update(key, { freeRethemes: t.freeRethemes - 1 }); return true; }
 
-module.exports = { load, save, all, get, getByRole, resolve, memberTribe, isMember, isLeader, leaderTribe, myTribe,
+module.exports = { load, save, all, get, getByRole, resolve, memberTribe, inAnyTribe, isMember, isLeader, leaderTribe, myTribe,
   MIN_MOD_LEADERS, LEADER_GRACE_MS, isModFounded, isMemberFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
   grantFreeRetheme, hasFreeRetheme, consumeFreeRetheme,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
