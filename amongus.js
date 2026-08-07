@@ -10,7 +10,7 @@
 // it to mute a VC that isn't actually playing. Once started, any member IN that VC can use the controls.
 const fs = require('fs');
 const { SlashCommandBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,
-        UserSelectMenuBuilder, EmbedBuilder, MessageFlags, ActivityType } = require('discord.js');
+        StringSelectMenuBuilder, EmbedBuilder, MessageFlags, ActivityType } = require('discord.js');
 const { statePath } = require('./statepath');
 
 const STATE_FILE = process.env.FUBU_AMONGUS_FILE || statePath('amongus.json');
@@ -79,12 +79,20 @@ function panel(game, guild) {
     new ButtonBuilder().setCustomId(`amongus_discussion:${game.vcId}`).setEmoji('💬').setLabel('Discussion').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`amongus_lobby:${game.vcId}`).setEmoji('🔄').setLabel('New Round').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`amongus_end:${game.vcId}`).setEmoji('⏹️').setLabel('End Game').setStyle(ButtonStyle.Secondary));
-  // Dead picker lives directly on the panel (a user-select) — no extra "open picker" round-trip. Selecting
-  // sets the dead instantly; they go muted at the next Discussion.
-  const dead = new UserSelectMenuBuilder().setCustomId(`amongus_deadpick:${game.vcId}`)
-    .setPlaceholder('☠️ Mark dead — pick players (they stay muted in Discussion)').setMinValues(0).setMaxValues(25);
-  try { if (game.dead && game.dead.length) dead.setDefaultUsers(game.dead.slice(0, 25)); } catch { /* older discord.js: skip pre-select */ }
-  const row2 = new ActionRowBuilder().addComponents(dead);
+  // Dead picker lives directly on the panel — a string-select of ONLY the current VC members (kept fresh by
+  // re-rendering the panel on every VC join/leave). Selecting sets the dead instantly; no "open picker" step.
+  const vc = guild && guild.channels && guild.channels.cache.get(game.vcId);
+  const members = vc && vc.members ? [...vc.members.values()] : [];
+  const deadSet = new Set(game.dead);
+  const sel = new StringSelectMenuBuilder().setCustomId(`amongus_deadpick:${game.vcId}`)
+    .setPlaceholder('☠️ Mark dead — pick players in the VC (stay muted in Discussion)').setMinValues(0);
+  if (members.length) {
+    const opts = members.slice(0, 25).map(m => ({ label: (m.displayName || m.user.username).slice(0, 100), value: m.id, default: deadSet.has(m.id) }));
+    sel.addOptions(opts).setMaxValues(opts.length);
+  } else {
+    sel.addOptions([{ label: '(nobody in the voice channel yet)', value: 'none' }]).setMaxValues(1).setDisabled(true);
+  }
+  const row2 = new ActionRowBuilder().addComponents(sel);
   return { embeds: [e], components: [row1, row2] };
 }
 
@@ -127,7 +135,7 @@ async function postPanel(interaction, game) {
     } catch { /* old panel gone */ }
   }
   game.textChannelId = interaction.channelId; save();
-  await interaction.reply(panel(game));
+  await interaction.reply(panel(game, interaction.guild));
   const sent = await interaction.fetchReply().catch(() => null);
   if (sent) { game.panelMessageId = sent.id; save(); }
 }
@@ -157,7 +165,7 @@ async function handleInteraction(interaction) {
   if (action === 'amongus_deadpick') {   // user-select on the panel: sets the dead set
     if (!inGameVc(interaction, game)) return interaction.reply({ content: `Join <#${game.vcId}> to control the game.`, flags: EPH });
     await interaction.deferUpdate().catch(() => {});   // ack instantly; re-render the panel with the new dead
-    game.dead = interaction.values || []; save();
+    game.dead = (interaction.values || []).filter(v => v !== 'none'); save();
     if (game.phase === 'discussion') await applyPhase(guild, game);   // apply immediately if we're mid-discussion
     return updatePanel(interaction.client, game);
   }
@@ -211,14 +219,16 @@ function register(client) {
         g.dead = (g.dead || []).filter(id => id !== (m?.id));
         g.mutedIds = (g.mutedIds || []).filter(id => id !== (m?.id));
         save();
-        // auto-end if the VC is now empty
+        // auto-end if the VC is now empty; otherwise refresh the panel so the dead-picker drops the leaver
         const ch = oldState.guild.channels.cache.get(g.vcId);
         if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); refreshPresence(client); await deletePanel(client, g).catch(() => {}); }
+        else await updatePanel(client, g).catch(() => {});
       }
       if (joined) {
         const g = games[newState.channelId];
         const m = newState.member;
         if (m) { const shouldMute = g.phase === 'play' ? true : g.phase === 'discussion' ? new Set(g.dead).has(m.id) : false; await setMute(m, shouldMute); if (shouldMute && !g.mutedIds.includes(m.id)) { g.mutedIds.push(m.id); save(); } }
+        await updatePanel(client, g).catch(() => {});   // new member now shows up in the dead-picker
       }
     } catch (e) { console.error('[amongus] voiceStateUpdate:', e.message); }
   });
