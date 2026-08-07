@@ -127,14 +127,21 @@ async function pollAuditLog(guild) {
     // mentions render normally inside blockquotes/headers — only code blocks would suppress them.
     const byExec = new Map();
     for (const e of fresh) {
-      const key = e.executorId || 'unknown';
-      if (!byExec.has(key)) byExec.set(key, { actor: e.executor ? `<@${e.executor.id}>` : '**Unknown**', lines: [] });
-      const label = EVENT_LABEL[e.action] || `Action ${e.action}`;
-      const targetIsUser = e.target && (e.target.tag !== undefined || e.target.username !== undefined);
-      const target = e.target ? (targetIsUser ? `<@${e.target.id}>` : `**${e.target.name || e.targetId || 'unknown'}**`) : null;
-      const reason = e.reason ? ` — _${e.reason}_` : '';
-      byExec.get(key).lines.push(`> ${label}${target ? ` ${target}` : ''}${changesInline(e)}${reason}`);
+      // Per-entry guard: discord.js throws "not a cached User or Role" when an entry (e.g. a permission-
+      // overwrite change) references a DELETED role/member. Skip that one entry instead of failing the whole
+      // poll — otherwise the watermark below never advances and the same bad entry re-throws every cycle.
+      try {
+        const key = e.executorId || 'unknown';
+        if (!byExec.has(key)) byExec.set(key, { actor: e.executor ? `<@${e.executor.id}>` : '**Unknown**', lines: [] });
+        const label = EVENT_LABEL[e.action] || `Action ${e.action}`;
+        const targetIsUser = e.target && (e.target.tag !== undefined || e.target.username !== undefined);
+        const target = e.target ? (targetIsUser ? `<@${e.target.id}>` : `**${e.target.name || e.targetId || 'unknown'}**`) : null;
+        const reason = e.reason ? ` — _${e.reason}_` : '';
+        byExec.get(key).lines.push(`> ${label}${target ? ` ${target}` : ''}${changesInline(e)}${reason}`);
+      } catch (err) { console.error('[ownerlog] skipped an unresolvable audit entry:', err.message); }
     }
+    // Nothing survived (all skipped) — still advance the watermark so we don't re-scan the same batch forever.
+    if (!byExec.size) { saveState({ lastAuditLogId: entries[entries.length - 1].id }); return 0; }
     const blocks = ['### 🗒️ Server audit log'];
     for (const { actor, lines } of byExec.values()) {
       blocks.push(`${actor} — ${lines.length} action${lines.length === 1 ? '' : 's'}`);
