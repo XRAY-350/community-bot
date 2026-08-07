@@ -195,16 +195,28 @@ async function handleInteraction(interaction) {
 // an emptied VC auto-ends the game.
 function register(client) {
   load();
-  // Boot cleanup: force-end any game that survived a restart — unmute whoever we had muted, then clear.
+  // Boot RESUME: games PERSIST across restarts (owner). Re-sync each surviving game to its saved phase (re-apply
+  // the right mutes), refresh its panel, and restore the "Playing Among Us" presence. Only a game whose VC is
+  // gone or now empty is ended (unmute its tracked players + delete its panel).
   (async () => {
     const active = Object.values(games);
     if (!active.length) return;
+    let resumed = 0, dropped = 0;
     for (const g of active) {
       const guild = client.guilds.cache.get(g.guildId) || await client.guilds.fetch(g.guildId).catch(() => null);
-      if (guild) for (const id of g.mutedIds || []) { const m = await guild.members.fetch(id).catch(() => null); if (m) await setMute(m, false); }
+      const vc = guild && (guild.channels.cache.get(g.vcId) || await guild.channels.fetch(g.vcId).catch(() => null));
+      if (!guild || !vc || !vc.members || vc.members.size === 0) {
+        if (guild) for (const id of g.mutedIds || []) { const m = await guild.members.fetch(id).catch(() => null); if (m) await setMute(m, false); }
+        await deletePanel(client, g).catch(() => {});
+        delete games[g.vcId]; dropped++;
+        continue;
+      }
+      await applyPhase(guild, g).catch(e => console.error('[amongus] resume applyPhase:', e.message));   // re-mute to saved phase
+      await updatePanel(client, g).catch(() => {});   // refresh the panel (its buttons already survive the restart)
+      resumed++;
     }
-    games = {}; save(); refreshPresence(client);
-    if (active.length) console.log(`[amongus] boot cleanup: force-ended ${active.length} stale game(s), unmuted their players`);
+    save(); refreshPresence(client);
+    if (resumed || dropped) console.log(`[amongus] boot: resumed ${resumed} game(s)${dropped ? `, dropped ${dropped} empty/gone` : ''}`);
   })();
 
   client.on('voiceStateUpdate', async (oldState, newState) => {

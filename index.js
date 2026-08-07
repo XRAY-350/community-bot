@@ -3811,7 +3811,7 @@ client.once('ready', async () => {
     const permResult = await permguard.sweepPermissions(guild, { notify: false }).catch(e => { console.error('[permguard] boot sweep failed:', e.message); return null; });
     if (permResult) console.log(`[permguard] boot sweep: ${permResult.fixed} overwrite(s) corrected, ${permResult.newMemberOverwrites.length} new member-overwrite(s) flagged, ${permResult.unmanagedChannels} channel(s) unmanaged (created after snapshot)`);
     permguard.register(client);
-    if (features.enabled('amongUs')) amongus.register(client);   // VC Among Us mode: voice-state hook + boot cleanup of stale games
+    if (features.enabled('amongUs')) amongus.register(client);   // VC Among Us mode: voice-state hook + boot RESUME of persisted games
     // Monthly contests: arm the auto-close tick (crowns winners on the 1st of the month if a round's open).
     if (features.enabled('contest')) contest.register(client);
     // Sweep every current staff member's own application: mod+ gets archived (owner-only channel, removed
