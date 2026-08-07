@@ -1798,8 +1798,9 @@ const SEALED_CORRECT_PTS = 100;         // flat points for a correct answer
 const SEALED_SPEED_MAX = 100;           // max speed bonus, decaying linearly FAST_MS..ROUND_MS
 const SEALED_DAILY_CAP = 3;
 const SEALED_MIN_GAP_MS = 3 * 3600000;  // at least 3h between sealed arenas
-const _sealedTimers = { round: null };
-function clearSealedTimers() { if (_sealedTimers.round) { clearTimeout(_sealedTimers.round); _sealedTimers.round = null; } }
+const SEALED_LOBBY_MS = 5 * 60000;      // "gather in your throne" countdown before the first round (matches the arena)
+const _sealedTimers = { start: null, round: null };
+function clearSealedTimers() { for (const k of ['start', 'round']) if (_sealedTimers[k]) { clearTimeout(_sealedTimers[k]); _sealedTimers[k] = null; } }
 // The 13 timing-precise types (button + typed); reaction + blitz excluded (no precise tap-time / not a race).
 function sealedGamePool() { return [...arena.BUTTON_TYPES, ...arena.TYPED_TYPES]; }
 // Build ONE question set shared by every throne (identical questions), de-duped for freshness.
@@ -1842,19 +1843,33 @@ async function startSealedArena(guild, { type, startedById } = {}) {
   const thrones = {};
   for (const t of withThrone) {
     const ch = await guild.channels.fetch(t.throneId).catch(() => null); if (!ch) continue;
-    if (set.kind === 'typed') await ch.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'sealed arena: typed answers' }).catch(() => {});
+    // NOTE: typed-answer SendMessages perms are opened in beginSealedArena (at first round), NOT now, so the
+    // throne stays locked during the lobby countdown.
     thrones[t.key] = { channelId: t.throneId, promptMessageId: null, promptTs: 0, qNum: 0, done: false, score: 0, correct: 0, contributors: {}, answered: false };
   }
   if (Object.keys(thrones).length < 2) return { ok: false, error: 'Could not reach enough thrones.' };
-  sealed.set({ mode: 'sealed', gameType, kind: set.kind, items: set.items, startedAt: Date.now(), phase: 'live', thrones, startedById: startedById || null });
+  const startsAt = Date.now() + SEALED_LOBBY_MS;   // LOBBY: rally now, the first round drops after the countdown
+  sealed.set({ mode: 'sealed', gameType, kind: set.kind, items: set.items, startedAt: Date.now(), startsAt, phase: 'lobby', thrones, startedById: startedById || null });
+  sealed.bumpDaily(Date.now());   // count the launch immediately (daily cap + min-gap start from now)
   await Promise.all(Object.keys(thrones).map(async (k) => {
     const th = thrones[k]; const ch = await guild.channels.fetch(th.channelId).catch(() => null); const t = tribes.get(k);
-    if (ch) await ch.send({ content: `# 🚪 Sealed Arena begins!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, ${SEALED_QUESTIONS} rounds, blind against every other tribe. Answer fast. Results are revealed to everyone at the end.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
+    if (ch) await ch.send({ content: `# 🚪 Sealed Arena begins <t:${Math.floor(startsAt / 1000)}:R>!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather here now — in about **${Math.round(SEALED_LOBBY_MS / 60000)} minutes** it's ${SEALED_QUESTIONS} rounds, blind against every other tribe. Answer fast. Results are revealed to everyone at the end.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
   }));
-  await warSleep(4000);
-  sealed.bumpDaily(Date.now());
-  await sealedRound(guild);
+  clearSealedTimers();
+  _sealedTimers.start = setTimeout(() => beginSealedArena(guild).catch(e => console.error('[sealed] begin:', e.message)), SEALED_LOBBY_MS);
   return { ok: true, gameType };
+}
+// Lobby countdown elapsed: open typed-answer perms (if needed), go live, drop the first round.
+async function beginSealedArena(guild) {
+  const a = sealed.get(); if (!a || a.mode !== 'sealed') return;
+  if (a.kind === 'typed') {
+    for (const th of sealed.thronesArr()) {
+      const ch = await guild.channels.fetch(th.channelId).catch(() => null);
+      if (ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'sealed arena: typed answers' }).catch(() => {});
+    }
+  }
+  sealed.update({ phase: 'live' });
+  await sealedRound(guild);
 }
 // Send the current question to every throne at once, capture each throne's own prompt timestamp, arm the shared
 // round timer.
@@ -1930,6 +1945,16 @@ async function revealSealedArena(guild, board, winner, label) {
 async function reconcileSealed(guild) {
   const a = sealed.get();
   if (!a || a.mode !== 'sealed') return;   // a Trial is handled by reconcileTrial (RESUME, not resolve)
+  // Restart DURING the lobby: the rounds never started, so re-arm the countdown (or begin now if it elapsed)
+  // rather than resolving an event with no scores.
+  if (a.phase === 'lobby') {
+    const untilStart = (a.startsAt || 0) - Date.now();
+    if (untilStart <= 0) { console.log('[sealed] lobby elapsed during downtime, beginning now'); return beginSealedArena(guild).catch(() => {}); }
+    console.log(`[sealed] resuming lobby (${Math.round(untilStart / 1000)}s until start)`);
+    clearSealedTimers();
+    _sealedTimers.start = setTimeout(() => beginSealedArena(guild).catch(e => console.error('[sealed] begin:', e.message)), untilStart);
+    return;
+  }
   console.log('[sealed] resolving interrupted Sealed Arena on boot');
   return finishSealedArena(guild).catch(e => console.error('[sealed] boot resolve:', e.message));
 }
@@ -1950,6 +1975,7 @@ async function sealedAutoTick(guild) {
 // (a faster tribe clears more), and the score is total correct x a BREADTH multiplier (distinct contributors)
 // x a VC bonus (members gathered in the tribe voice channel). v1 game: The Assembly. (Relay + Mosaic to follow.)
 const TRIAL_WINDOW_MS = 12 * 60000;    // the collaborative window
+const TRIAL_LOBBY_MS = 5 * 60000;      // "gather in voice" countdown before the Trial actually begins (matches the arena)
 const TRIAL_POOL = 40;                 // big shared question list so a fast tribe won't run it dry
 const TRIAL_BREADTH_PER = 0.15;        // +15% per distinct contributor beyond the first
 const TRIAL_BREADTH_CAP = 2.0;         // breadth multiplier capped at 2.0x
@@ -1968,8 +1994,8 @@ const MOSAIC_PHRASES = ['the early bird catches the worm', 'better late than nev
   'practice makes perfect every time', 'slow and steady wins the race', 'two wrongs do not make right',
   'do not count your chickens early', 'every dog has its day', 'great minds think alike',
   'the grass is always greener', 'strike while the iron is hot', 'never look back with regret'];
-const _trialTimers = { end: null };
-function clearTrialTimers() { if (_trialTimers.end) { clearTimeout(_trialTimers.end); _trialTimers.end = null; } }
+const _trialTimers = { start: null, end: null };
+function clearTrialTimers() { for (const k of ['start', 'end']) if (_trialTimers[k]) { clearTimeout(_trialTimers[k]); _trialTimers[k] = null; } }
 async function buildAssembly() {
   const f = await arena.fetchTrivia(TRIAL_POOL, null);
   return arena.freshenQuestions('trial', (f && f.length) ? f : arena.localTrivia(TRIAL_POOL, []), TRIAL_POOL);
@@ -2048,18 +2074,25 @@ async function startTrial(guild, { mode = 'scheduled', tribeKey, startedById, ga
     if (!items.length) return { ok: false, error: 'Could not build the question set.' };
     for (const t of withThrone) thrones[t.key] = { channelId: t.throneId, promptMessageId: null, qNum: 0, done: false, score: 0, correct: 0, contributors: {}, perQ: [], lastUid: null };
   }
-  sealed.set({ mode: 'trial', trialKind: mode, game, kind: 'button', items, startedAt: Date.now(), endsAt: Date.now() + TRIAL_WINDOW_MS, phase: 'live', thrones, startedById: startedById || null });
+  const startsAt = Date.now() + TRIAL_LOBBY_MS;   // LOBBY: rally now, the game itself begins after the countdown
+  sealed.set({ mode: 'trial', trialKind: mode, game, kind: 'button', items, startedAt: Date.now(), startsAt, endsAt: startsAt + TRIAL_WINDOW_MS, phase: 'lobby', thrones, startedById: startedById || null });
   const label = TRIAL_GAME_LABEL[game] || 'A Trial';
   const verb = game === 'mosaic' ? 'claim tiles' : 'answer';
   await Promise.all(Object.keys(thrones).map(async (k) => {
     const t = tribes.get(k); const ch = await guild.channels.fetch(t.throneId).catch(() => null);
-    if (ch) await ch.send({ content: `# ⚔️ ${label} begins!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather in your **voice channel**${t.vcId ? ` <#${t.vcId}>` : ''} and ${verb} together for the next **${Math.round(TRIAL_WINDOW_MS / 60000)} minutes**. Everyone who chips in counts, and more of you in voice raises your score.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
+    if (ch) await ch.send({ content: `# ⚔️ ${label} begins <t:${Math.floor(startsAt / 1000)}:R>!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather in your **voice channel**${t.vcId ? ` <#${t.vcId}>` : ''} now — it starts in about **${Math.round(TRIAL_LOBBY_MS / 60000)} minutes** and runs **${Math.round(TRIAL_WINDOW_MS / 60000)} minutes**. Everyone who chips in counts, and more of you in voice raises your score.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
   }));
-  await warSleep(3000);
-  for (const k of Object.keys(thrones)) await (game === 'mosaic' ? mosaicPost(guild, k) : trialPost(guild, k));
   clearTrialTimers();
-  _trialTimers.end = setTimeout(() => finishTrial(guild).catch(e => console.error('[trial] end:', e.message)), TRIAL_WINDOW_MS);
+  _trialTimers.start = setTimeout(() => beginTrial(guild).catch(e => console.error('[trial] begin:', e.message)), TRIAL_LOBBY_MS);
   return { ok: true, game };
+}
+// Lobby countdown elapsed: NOW post the actual game surface to every throne and arm the finish timer.
+async function beginTrial(guild) {
+  const a = sealed.get(); if (!a || a.mode !== 'trial') return;
+  sealed.update({ phase: 'live' });
+  for (const k of Object.keys(a.thrones || {})) await (a.game === 'mosaic' ? mosaicPost(guild, k) : trialPost(guild, k));
+  clearTrialTimers();
+  _trialTimers.end = setTimeout(() => finishTrial(guild).catch(e => console.error('[trial] end:', e.message)), Math.max(0, (a.endsAt || Date.now()) - Date.now()));
 }
 async function trialVcBonus(guild, tribeKey) {
   const t = tribes.get(tribeKey); if (!t || !t.vcId) return 0;
@@ -2117,6 +2150,15 @@ async function revealTrial(guild, board, winner, isMuster) {
 // The Trials RESUME on restart (long VC event people gathered for): re-arm the window for whatever's left.
 async function reconcileTrial(guild) {
   const a = sealed.get(); if (!a || a.mode !== 'trial') return;
+  // Restart DURING the lobby: don't post the game yet — re-arm the countdown (or begin now if it already elapsed).
+  if (a.phase === 'lobby') {
+    const untilStart = (a.startsAt || 0) - Date.now();
+    if (untilStart <= 0) { console.log('[trial] lobby elapsed during downtime, beginning now'); return beginTrial(guild).catch(() => {}); }
+    console.log(`[trial] resuming lobby (${Math.round(untilStart / 1000)}s until start)`);
+    clearTrialTimers();
+    _trialTimers.start = setTimeout(() => beginTrial(guild).catch(e => console.error('[trial] begin:', e.message)), untilStart);
+    return;
+  }
   const left = (a.endsAt || 0) - Date.now();
   if (left <= 0) { console.log('[trial] window elapsed during downtime, finishing'); return finishTrial(guild).catch(() => {}); }
   console.log(`[trial] resuming ${a.game || 'assembly'} (${Math.round(left / 1000)}s left)`);
