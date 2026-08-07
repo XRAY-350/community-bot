@@ -10,7 +10,7 @@
 // it to mute a VC that isn't actually playing. Once started, any member IN that VC can use the controls.
 const fs = require('fs');
 const { SlashCommandBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,
-        StringSelectMenuBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+        StringSelectMenuBuilder, EmbedBuilder, MessageFlags, ActivityType } = require('discord.js');
 const { statePath } = require('./statepath');
 
 const STATE_FILE = process.env.FUBU_AMONGUS_FILE || statePath('amongus.json');
@@ -21,6 +21,15 @@ const COLOR = 0xE0392B;
 let games = {};
 function load() { try { games = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { games = {}; } return games; }
 function save() { try { fs.writeFileSync(STATE_FILE, JSON.stringify(games)); } catch (e) { console.error('[amongus] save:', e.message); } }
+
+// Show "Playing Among Us" on the bot while ANY game is running; clear it when the last one ends. (The bot
+// sets no other presence, so clearing back to nothing is the correct default.)
+function refreshPresence(client) {
+  try {
+    if (Object.keys(games).length) client.user.setPresence({ activities: [{ name: 'Among Us', type: ActivityType.Playing }] });
+    else client.user.setPresence({ activities: [] });
+  } catch (e) { console.error('[amongus] presence:', e.message); }
+}
 
 // Set a member's server-mute, best-effort (needs Mute Members; ignores members not in voice / perm issues).
 async function setMute(member, on) {
@@ -97,6 +106,7 @@ async function handleCommand(interaction) {
   const g = { vcId: vc.id, guildId: interaction.guildId, textChannelId: interaction.channelId, panelMessageId: null,
     phase: 'lobby', dead: [], mutedIds: [], startedBy: interaction.user.id };
   games[vc.id] = g; save();
+  refreshPresence(interaction.client);   // → "Playing Among Us"
   await interaction.reply(panel(g, interaction.guild));
   const sent = await interaction.fetchReply().catch(() => null);
   if (sent) { g.panelMessageId = sent.id; save(); }
@@ -139,6 +149,7 @@ async function handleInteraction(interaction) {
   if (action === 'amongus_end') {
     game.phase = 'lobby'; game.dead = []; await applyPhase(guild, game);   // unmute everyone the bot muted
     delete games[vcId]; save();
+    refreshPresence(interaction.client);   // clear "Playing Among Us" if that was the last game
     try { const m = await interaction.message.fetch?.() || interaction.message; await m.edit({ content: '🔴 Among Us game ended — everyone unmuted.', embeds: [], components: [] }); } catch { /* panel gone */ }
     return interaction.deferUpdate().catch(() => {});
   }
@@ -156,7 +167,7 @@ function register(client) {
       const guild = client.guilds.cache.get(g.guildId) || await client.guilds.fetch(g.guildId).catch(() => null);
       if (guild) for (const id of g.mutedIds || []) { const m = await guild.members.fetch(id).catch(() => null); if (m) await setMute(m, false); }
     }
-    games = {}; save();
+    games = {}; save(); refreshPresence(client);
     if (active.length) console.log(`[amongus] boot cleanup: force-ended ${active.length} stale game(s), unmuted their players`);
   })();
 
@@ -174,7 +185,7 @@ function register(client) {
         save();
         // auto-end if the VC is now empty
         const ch = oldState.guild.channels.cache.get(g.vcId);
-        if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); await updatePanel(client, { ...g }).catch(() => {}); }
+        if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); refreshPresence(client); await updatePanel(client, { ...g }).catch(() => {}); }
       }
       if (joined) {
         const g = games[newState.channelId];
