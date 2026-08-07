@@ -2810,6 +2810,33 @@ function rearmThroneExpiries() {
   for (const e of q) armThroneExpire(e.channelId, e.messageId, e.deleteAt - now);
   if (q.length) console.log(`[throneExpire] re-armed ${q.length} pending throne message expiry(ies)`);
 }
+// Boot backfill: throne messages posted while the bot was down (or before expiry tracking existed, e.g. the
+// old server) carry NO timer, so they never clear. Scan each tribe's throne and schedule every un-timed
+// transient message to delete 24h after IT was posted — overdue ones (>24h) fire on the next tick. Skips the
+// pinned control panel and anything already tracked. Idempotent, so it's safe to run on every boot.
+async function backfillThroneExpiries(guild) {
+  const now = Date.now();
+  const tracked = new Set(throneExpire.all().map(e => e.messageId));
+  let scheduled = 0;
+  for (const t of tribes.all()) {
+    if (!t.throneId) continue;
+    const ch = await guild.channels.fetch(t.throneId).catch(() => null);
+    if (!ch || !ch.messages) continue;
+    const msgs = await ch.messages.fetch({ limit: 100 }).catch(() => null);
+    if (!msgs) continue;
+    for (const m of msgs.values()) {
+      if (m.pinned || tracked.has(m.id)) continue;
+      if (m.type !== MessageType.Default && m.type !== MessageType.Reply) continue;
+      const isPanel = t.panelMessageId ? m.id === t.panelMessageId : !!(m.content && m.content.includes(': what you can do'));
+      if (isPanel) continue;
+      const deadline = m.createdTimestamp + throneExpire.TTL_MS;
+      throneExpire.add(m.channelId, m.id, deadline);
+      armThroneExpire(m.channelId, m.id, deadline - now);   // past-due → deletes on the next tick
+      scheduled++;
+    }
+  }
+  if (scheduled) console.log(`[throneExpire] boot backfill: scheduled ${scheduled} previously-untimed throne message(s)`);
+}
 
 // --- Panel-driven setup (owner: consolidate the 10 *-setup commands into /panel → 🧩 Setup) --------------
 // Wired as opspanel D.runSetup. Each kind mirrors the OLD *-setup slash handler: same guard, same
@@ -3656,6 +3683,7 @@ client.once('ready', async () => {
   if (dguild) await proverWeeklyIfDue(dguild).catch(e => console.error(`[proving] boot weekly: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => proverWeeklyIfDue(g)).catch(() => {}), 3600000);
   try { rearmThroneExpiries(); } catch (e) { console.error(`[throneExpire] re-arm: ${e.message}`); }
+  if (dguild) await backfillThroneExpiries(dguild).catch(e => console.error(`[throneExpire] backfill: ${e.message}`));
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
