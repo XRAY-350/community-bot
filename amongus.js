@@ -97,6 +97,16 @@ async function updatePanel(client, game) {
   } catch (e) { console.error('[amongus] panel update:', e.message); }
 }
 
+// Remove the control panel entirely (on game end — don't leave a dead panel behind).
+async function deletePanel(client, game) {
+  if (!game.panelMessageId) return;
+  try {
+    const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
+    const msg = ch && await ch.messages.fetch(game.panelMessageId).catch(() => null);
+    if (msg) await msg.delete().catch(() => {});
+  } catch { /* panel already gone */ }
+}
+
 // Must be IN the game's VC to drive it.
 function inGameVc(interaction, game) { return interaction.member?.voice?.channelId === game.vcId; }
 const notInVc = (interaction, game) => interaction.reply({ content: `Join <#${game.vcId}> to control the game.`, flags: EPH });
@@ -168,7 +178,7 @@ async function handleInteraction(interaction) {
     game.phase = 'lobby'; game.dead = []; await applyPhase(guild, game);   // unmute everyone the bot muted
     delete games[vcId]; save();
     refreshPresence(interaction.client);   // clear "Playing Among Us" if that was the last game
-    try { const m = await interaction.message.fetch?.() || interaction.message; await m.edit({ content: '🔴 Among Us game ended — everyone unmuted.', embeds: [], components: [] }); } catch { /* panel gone */ }
+    await interaction.message.delete().catch(() => {});   // remove the panel entirely
     return;
   }
 }
@@ -203,7 +213,7 @@ function register(client) {
         save();
         // auto-end if the VC is now empty
         const ch = oldState.guild.channels.cache.get(g.vcId);
-        if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); refreshPresence(client); await updatePanel(client, { ...g }).catch(() => {}); }
+        if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); refreshPresence(client); await deletePanel(client, g).catch(() => {}); }
       }
       if (joined) {
         const g = games[newState.channelId];
