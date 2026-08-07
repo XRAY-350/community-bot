@@ -10,7 +10,7 @@
 // it to mute a VC that isn't actually playing. Once started, any member IN that VC can use the controls.
 const fs = require('fs');
 const { SlashCommandBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,
-        StringSelectMenuBuilder, EmbedBuilder, MessageFlags, ActivityType } = require('discord.js');
+        UserSelectMenuBuilder, EmbedBuilder, MessageFlags, ActivityType } = require('discord.js');
 const { statePath } = require('./statepath');
 
 const STATE_FILE = process.env.FUBU_AMONGUS_FILE || statePath('amongus.json');
@@ -46,19 +46,23 @@ async function applyPhase(guild, game) {
   const ch = guild.channels.cache.get(game.vcId) || await guild.channels.fetch(game.vcId).catch(() => null);
   if (!ch || !ch.members) return;
   const dead = new Set(game.dead);
+  const members = [...ch.members.values()];
   const nowMuted = [];
-  for (const m of ch.members.values()) {
+  const tasks = [];   // fire every mute/unmute CONCURRENTLY — sequential awaits made round transitions laggy
+  for (const m of members) {
     const shouldMute = game.phase === 'play' ? true : game.phase === 'discussion' ? dead.has(m.id) : false;
-    await setMute(m, shouldMute);
+    tasks.push(setMute(m, shouldMute));
     if (shouldMute) nowMuted.push(m.id);
   }
-  // Anyone we muted before but shouldn't be now (left the VC, revived, phase→lobby): unmute.
+  // Anyone we muted before but shouldn't be now (left the VC, revived, phase→lobby): unmute — also in parallel.
   for (const id of game.mutedIds || []) {
     if (!nowMuted.includes(id)) {
-      const m = ch.guild.members.cache.get(id) || await ch.guild.members.fetch(id).catch(() => null);
-      if (m) await setMute(m, false);
+      const cached = ch.guild.members.cache.get(id);
+      if (cached) tasks.push(setMute(cached, false));
+      else tasks.push(ch.guild.members.fetch(id).then(m => setMute(m, false)).catch(() => {}));
     }
   }
+  await Promise.allSettled(tasks);
   game.mutedIds = nowMuted;
   save();
 }
@@ -73,10 +77,14 @@ function panel(game, guild) {
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`amongus_play:${game.vcId}`).setEmoji('▶️').setLabel('Play').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`amongus_discussion:${game.vcId}`).setEmoji('💬').setLabel('Discussion').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`amongus_lobby:${game.vcId}`).setEmoji('🔄').setLabel('New Round').setStyle(ButtonStyle.Secondary));
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`amongus_dead:${game.vcId}`).setEmoji('☠️').setLabel('Mark Dead').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`amongus_lobby:${game.vcId}`).setEmoji('🔄').setLabel('New Round').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`amongus_end:${game.vcId}`).setEmoji('⏹️').setLabel('End Game').setStyle(ButtonStyle.Secondary));
+  // Dead picker lives directly on the panel (a user-select) — no extra "open picker" round-trip. Selecting
+  // sets the dead instantly; they go muted at the next Discussion.
+  const dead = new UserSelectMenuBuilder().setCustomId(`amongus_deadpick:${game.vcId}`)
+    .setPlaceholder('☠️ Mark dead — pick players (they stay muted in Discussion)').setMinValues(0).setMaxValues(25);
+  try { if (game.dead && game.dead.length) dead.setDefaultUsers(game.dead.slice(0, 25)); } catch { /* older discord.js: skip pre-select */ }
+  const row2 = new ActionRowBuilder().addComponents(dead);
   return { embeds: [e], components: [row1, row2] };
 }
 
@@ -99,21 +107,35 @@ function commandBuilder() {
     .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers);
 }
 
+// Post a fresh control panel for a game and track it, deleting the previous panel so there's only one.
+async function postPanel(interaction, game) {
+  if (game.panelMessageId) {
+    try {
+      const oldCh = await interaction.client.channels.fetch(game.textChannelId).catch(() => null);
+      const old = oldCh && await oldCh.messages.fetch(game.panelMessageId).catch(() => null);
+      if (old) await old.delete().catch(() => {});
+    } catch { /* old panel gone */ }
+  }
+  game.textChannelId = interaction.channelId; save();
+  await interaction.reply(panel(game));
+  const sent = await interaction.fetchReply().catch(() => null);
+  if (sent) { game.panelMessageId = sent.id; save(); }
+}
+
 async function handleCommand(interaction) {
   const vc = interaction.member?.voice?.channel;
   if (!vc) return interaction.reply({ content: 'Join a voice channel first, then run `/amongus` to start a game there.', flags: EPH });
-  if (games[vc.id]) return interaction.reply({ content: `A game is already running in <#${vc.id}>. Its control panel is above — use **End Game** to close it.`, flags: EPH });
+  const existing = games[vc.id];
+  if (existing) return postPanel(interaction, existing);   // game already running → just refresh/re-post its panel (keep phase + dead)
   const g = { vcId: vc.id, guildId: interaction.guildId, textChannelId: interaction.channelId, panelMessageId: null,
     phase: 'lobby', dead: [], mutedIds: [], startedBy: interaction.user.id };
   games[vc.id] = g; save();
   refreshPresence(interaction.client);   // → "Playing Among Us"
-  await interaction.reply(panel(g, interaction.guild));
-  const sent = await interaction.fetchReply().catch(() => null);
-  if (sent) { g.panelMessageId = sent.id; save(); }
+  await postPanel(interaction, g);
 }
 
 function isInteraction(i) {
-  return (i.isButton?.() || i.isStringSelectMenu?.()) && typeof i.customId === 'string' && i.customId.startsWith('amongus_');
+  return (i.isButton?.() || i.isAnySelectMenu?.()) && typeof i.customId === 'string' && i.customId.startsWith('amongus_');
 }
 
 async function handleInteraction(interaction) {
@@ -122,36 +144,32 @@ async function handleInteraction(interaction) {
   if (!game) return interaction.reply({ content: 'That game is no longer running.', flags: EPH }).catch(() => {});
   const guild = interaction.guild;
 
-  if (action === 'amongus_deadpick') {   // multi-select submit
-    if (!inGameVc(interaction, game)) return notInVc(interaction, game);
+  if (action === 'amongus_deadpick') {   // user-select on the panel: sets the dead set
+    if (!inGameVc(interaction, game)) return interaction.reply({ content: `Join <#${game.vcId}> to control the game.`, flags: EPH });
+    await interaction.deferUpdate().catch(() => {});   // ack instantly; re-render the panel with the new dead
     game.dead = interaction.values || []; save();
-    if (game.phase === 'discussion') await applyPhase(guild, game);
-    await updatePanel(interaction.client, game);
-    return interaction.update({ content: `☠️ Dead set: ${game.dead.length ? game.dead.map(id => `<@${id}>`).join(', ') : 'none'}.`, components: [], embeds: [] }).catch(() => {});
+    if (game.phase === 'discussion') await applyPhase(guild, game);   // apply immediately if we're mid-discussion
+    return updatePanel(interaction.client, game);
   }
 
   if (!inGameVc(interaction, game)) return notInVc(interaction, game);
 
-  if (action === 'amongus_dead') {   // open the multi-select of current VC members
-    const ch = guild.channels.cache.get(vcId) || await guild.channels.fetch(vcId).catch(() => null);
-    const members = ch ? [...ch.members.values()] : [];
-    if (!members.length) return interaction.reply({ content: 'Nobody is in the voice channel.', flags: EPH });
-    const dead = new Set(game.dead);
-    const opts = members.slice(0, 25).map(m => ({ label: (m.displayName || m.user.username).slice(0, 100), value: m.id, default: dead.has(m.id) }));
-    const menu = new StringSelectMenuBuilder().setCustomId(`amongus_deadpick:${vcId}`).setPlaceholder('Pick who is DEAD (they stay muted in Discussion)')
-      .setMinValues(0).setMaxValues(opts.length).addOptions(opts);
-    return interaction.reply({ content: 'Select the dead players:', components: [new ActionRowBuilder().addComponents(menu)], flags: EPH });
+  if (action === 'amongus_play' || action === 'amongus_discussion' || action === 'amongus_lobby') {
+    await interaction.deferUpdate().catch(() => {});   // ack the button INSTANTLY, then mute in parallel (no 3s-window risk)
+    if (action === 'amongus_play') game.phase = 'play';
+    else if (action === 'amongus_discussion') game.phase = 'discussion';
+    else { game.phase = 'lobby'; game.dead = []; }
+    save();
+    await applyPhase(guild, game);
+    return updatePanel(interaction.client, game);
   }
-
-  if (action === 'amongus_play') { game.phase = 'play'; save(); await applyPhase(guild, game); await updatePanel(interaction.client, game); return interaction.deferUpdate().catch(() => {}); }
-  if (action === 'amongus_discussion') { game.phase = 'discussion'; save(); await applyPhase(guild, game); await updatePanel(interaction.client, game); return interaction.deferUpdate().catch(() => {}); }
-  if (action === 'amongus_lobby') { game.phase = 'lobby'; game.dead = []; save(); await applyPhase(guild, game); await updatePanel(interaction.client, game); return interaction.deferUpdate().catch(() => {}); }
   if (action === 'amongus_end') {
+    await interaction.deferUpdate().catch(() => {});
     game.phase = 'lobby'; game.dead = []; await applyPhase(guild, game);   // unmute everyone the bot muted
     delete games[vcId]; save();
     refreshPresence(interaction.client);   // clear "Playing Among Us" if that was the last game
     try { const m = await interaction.message.fetch?.() || interaction.message; await m.edit({ content: '🔴 Among Us game ended — everyone unmuted.', embeds: [], components: [] }); } catch { /* panel gone */ }
-    return interaction.deferUpdate().catch(() => {});
+    return;
   }
 }
 
