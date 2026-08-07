@@ -3064,13 +3064,13 @@ async function reconcileTribeRoles(guild) {
   const all = tribes.all().filter(t => t.roleId);
   let restored = 0, failed = 0, conflicts = 0;
   for (const m of guild.members.cache.values()) {
-    // rank-and-file of a tribe = should carry its base membership role.
-    //  - mod-founded tribe: holds a RANK role but NOT leader/general (leaders/generals are staff, no base role).
-    //  - MEMBER-founded tribe: co-leaders ARE members (they founded it) — holding the leader role counts too.
+    // Anyone carrying a tribe role — rank-and-file OR leader/general — should carry its base membership
+    // role too. Leaders are staff AND members (owner policy, 2026-08-07): being staff of a tribe never
+    // excludes you from being a member of it, for every tribe, not just member-founded ones.
     const rankOf = all.filter(t => {
       const holdsRank = (t.ranks || []).some(r => r.roleId && m.roles.cache.has(r.roleId));
       const holdsLeaderGen = (t.leaderRoleId && m.roles.cache.has(t.leaderRoleId)) || (t.staffRankRoleId && m.roles.cache.has(t.staffRankRoleId));
-      return t.foundedByMember ? (holdsRank || holdsLeaderGen) : (holdsRank && !holdsLeaderGen);
+      return holdsRank || holdsLeaderGen;
     });
     const missing = rankOf.filter(t => !m.roles.cache.has(t.roleId));
     if (!missing.length) continue;
