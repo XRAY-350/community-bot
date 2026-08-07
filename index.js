@@ -1955,16 +1955,32 @@ const TRIAL_BREADTH_PER = 0.15;        // +15% per distinct contributor beyond t
 const TRIAL_BREADTH_CAP = 2.0;         // breadth multiplier capped at 2.0x
 const TRIAL_VC_PER = 0.05;             // +5% per member in the tribe VC during the Trial
 const TRIAL_VC_CAP = 0.5;              // VC bonus capped at +50%
+const RELAY_ROTATE_PTS = 2;            // Relay: a correct answer from a DIFFERENT member than the last scores double
+const MOSAIC_TILE_PTS = 2;             // Mosaic: points per tile solved
+const MOSAIC_PHRASE_PTS = 8;           // Mosaic: bonus for assembling the full hidden phrase
+const TRIAL_GAMES = ['assembly', 'relay', 'mosaic'];   // scheduled Trial rotates one per day
+const TRIAL_GAME_LABEL = { assembly: 'The Assembly', relay: 'The Relay', mosaic: 'The Mosaic' };
+// Familiar 4–6 word sayings for The Mosaic — guessable from partial words, so a tribe can submit the full phrase
+// before every tile is solved. Each word becomes one scrambled tile.
+// NOTE: no single-letter words — arena.scrambleWord() recurses forever on a 1-char word (shuffle can't change it).
+// buildMosaic also guards this, but keep the bank clean so tiles aren't trivial giveaways either.
+const MOSAIC_PHRASES = ['the early bird catches the worm', 'better late than never', 'actions speak louder than words',
+  'practice makes perfect every time', 'slow and steady wins the race', 'two wrongs do not make right',
+  'do not count your chickens early', 'every dog has its day', 'great minds think alike',
+  'the grass is always greener', 'strike while the iron is hot', 'never look back with regret'];
 const _trialTimers = { end: null };
 function clearTrialTimers() { if (_trialTimers.end) { clearTimeout(_trialTimers.end); _trialTimers.end = null; } }
 async function buildAssembly() {
   const f = await arena.fetchTrivia(TRIAL_POOL, null);
   return arena.freshenQuestions('trial', (f && f.length) ? f : arena.localTrivia(TRIAL_POOL, []), TRIAL_POOL);
 }
-function assemblyRender(item, qNum, tribeKey) {
+function assemblyRender(item, qNum, tribeKey, game) {
   const row = new ActionRowBuilder().addComponents(item.options.map((o, i) =>
     new ButtonBuilder().setCustomId(`trialans:${tribeKey}:${qNum}:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
-  return { content: `# ⚔️ The Trials, The Assembly\nAnswer **#${qNum + 1}** together, everyone who chips in counts:\n\n**${item.q}**`, components: [row], allowedMentions: { parse: [] } };
+  const head = game === 'relay'
+    ? `# ⚔️ The Trials, The Relay\nKeep the chain moving — when a **different** tribemate answers next, it scores **double**. Question **#${qNum + 1}**:`
+    : `# ⚔️ The Trials, The Assembly\nAnswer **#${qNum + 1}** together, everyone who chips in counts:`;
+  return { content: `${head}\n\n**${item.q}**`, components: [row], allowedMentions: { parse: [] } };
 }
 async function trialPost(guild, tribeKey) {
   const a = sealed.get(); if (!a || a.mode !== 'trial') return;
@@ -1972,31 +1988,78 @@ async function trialPost(guild, tribeKey) {
   const item = a.items[th.qNum];
   if (!item) { sealed.updateThrone(tribeKey, { done: true }); return; }   // ran the pool dry (rare)
   const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) return;
-  const msg = await ch.send(assemblyRender(item, th.qNum, tribeKey)).catch(() => null);
+  const msg = await ch.send(assemblyRender(item, th.qNum, tribeKey, a.game)).catch(() => null);
   sealed.updateThrone(tribeKey, { promptMessageId: msg ? msg.id : null, perQ: [] });
 }
-async function startTrial(guild, { mode = 'scheduled', tribeKey, startedById } = {}) {
+// ---- The Mosaic: a grid of scrambled-word tiles; each solved tile reveals a word of a hidden phrase; solve
+// enough tiles to unlock a full-phrase submit for the big bonus. Members claim tiles in PARALLEL (rewards breadth).
+function buildMosaic() {
+  const phrase = _pickOne(MOSAIC_PHRASES);
+  // Guard: never scramble a ≤1-char word (arena.scrambleWord would recurse forever); show it as-is.
+  const tiles = phrase.split(' ').map(w => ({ scrambled: (w.length > 1 ? arena.scrambleWord(w) : w).toUpperCase(), answer: w.toLowerCase() }));
+  return { phrase: phrase.toLowerCase(), tiles };
+}
+function mosaicRender(th, tribeKey) {
+  const solvedCount = th.solved.filter(Boolean).length;
+  const need = Math.max(1, Math.ceil(th.tiles.length * 0.6));
+  const rows = []; let row = new ActionRowBuilder();
+  th.tiles.forEach((tile, i) => {
+    if (i > 0 && i % 5 === 0) { rows.push(row); row = new ActionRowBuilder(); }
+    row.addComponents(new ButtonBuilder().setCustomId(`mosaictile:${tribeKey}:${i}`)
+      .setLabel(th.solved[i] ? `✅ ${tile.answer.toUpperCase()}`.slice(0, 80) : `Tile ${i + 1}`)
+      .setStyle(th.solved[i] ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(!!th.solved[i] || !!th.phraseSolved));
+  });
+  rows.push(row);
+  rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`mosaicphrase:${tribeKey}`)
+    .setLabel('🧩 Solve the phrase').setStyle(ButtonStyle.Primary).setDisabled(solvedCount < need || !!th.phraseSolved)));
+  const skeleton = th.tiles.map((tile, i) => th.solved[i] ? `**${tile.answer.toUpperCase()}**` : '▢'.repeat(tile.answer.length)).join('  ');
+  const body = th.phraseSolved ? `🎉 Phrase solved: **${th.phrase}**` : `Phrase so far:\n${skeleton}`;
+  return { content: `# ⚔️ The Trials, The Mosaic\nClaim a tile and unscramble its word — each one reveals part of the hidden phrase. Solve **${need}**+ tiles to unlock the full-phrase guess for the big points. Split them up!\n\n${body}\n-# ${solvedCount}/${th.tiles.length} tiles solved`, components: rows.slice(0, 5), allowedMentions: { parse: [] } };
+}
+async function mosaicPost(guild, tribeKey) {
+  const a = sealed.get(); if (!a || a.mode !== 'trial' || a.game !== 'mosaic') return;
+  const th = sealed.throne(tribeKey); if (!th || th.done) return;
+  const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) return;
+  const msg = await ch.send(mosaicRender(th, tribeKey)).catch(() => null);
+  if (msg) sealed.updateThrone(tribeKey, { promptMessageId: msg.id });
+}
+async function mosaicRefresh(guild, tribeKey) {
+  const th = sealed.throne(tribeKey); if (!th || !th.promptMessageId) return;
+  const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) return;
+  const msg = await ch.messages.fetch(th.promptMessageId).catch(() => null); if (!msg) return;
+  await msg.edit(mosaicRender(th, tribeKey)).catch(() => {});
+}
+async function startTrial(guild, { mode = 'scheduled', tribeKey, startedById, game = 'assembly' } = {}) {
   if (!features.enabled('theTrials')) return { ok: false, error: 'The Trials aren’t enabled.' };
   if (sealed.isActive()) return { ok: false, error: 'A throne event is already running.' };
   if (arena.isActive()) return { ok: false, error: 'Wait for the current Arena to finish first.' };
+  if (!TRIAL_GAMES.includes(game)) game = 'assembly';
   const withThrone = (mode === 'muster' && tribeKey)
     ? tribes.all().filter(t => t.key === tribeKey && t.throneId)
     : tribes.all().filter(t => t.throneId);
   if (!withThrone.length) return { ok: false, error: 'No tribes with thrones.' };
-  const items = await buildAssembly();
-  if (!items.length) return { ok: false, error: 'Could not build the question set.' };
   const thrones = {};
-  for (const t of withThrone) thrones[t.key] = { channelId: t.throneId, promptMessageId: null, qNum: 0, done: false, score: 0, correct: 0, contributors: {}, perQ: [] };
-  sealed.set({ mode: 'trial', trialKind: mode, game: 'assembly', kind: 'button', items, startedAt: Date.now(), endsAt: Date.now() + TRIAL_WINDOW_MS, phase: 'live', thrones, startedById: startedById || null });
+  let items = [];
+  if (game === 'mosaic') {
+    // each throne gets its OWN mosaic (own phrase + tiles) so tribes can't peek at each other
+    for (const t of withThrone) { const m = buildMosaic(); thrones[t.key] = { channelId: t.throneId, promptMessageId: null, done: false, score: 0, correct: 0, contributors: {}, tiles: m.tiles, solved: m.tiles.map(() => false), phrase: m.phrase, phraseSolved: false }; }
+  } else {
+    items = await buildAssembly();
+    if (!items.length) return { ok: false, error: 'Could not build the question set.' };
+    for (const t of withThrone) thrones[t.key] = { channelId: t.throneId, promptMessageId: null, qNum: 0, done: false, score: 0, correct: 0, contributors: {}, perQ: [], lastUid: null };
+  }
+  sealed.set({ mode: 'trial', trialKind: mode, game, kind: 'button', items, startedAt: Date.now(), endsAt: Date.now() + TRIAL_WINDOW_MS, phase: 'live', thrones, startedById: startedById || null });
+  const label = TRIAL_GAME_LABEL[game] || 'A Trial';
+  const verb = game === 'mosaic' ? 'claim tiles' : 'answer';
   await Promise.all(Object.keys(thrones).map(async (k) => {
     const t = tribes.get(k); const ch = await guild.channels.fetch(t.throneId).catch(() => null);
-    if (ch) await ch.send({ content: `# ⚔️ A Trial begins!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather in your **voice channel**${t.vcId ? ` <#${t.vcId}>` : ''} and answer together for the next **${Math.round(TRIAL_WINDOW_MS / 60000)} minutes**. Everyone who chips in counts, and more of you in voice raises your score.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
+    if (ch) await ch.send({ content: `# ⚔️ ${label} begins!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather in your **voice channel**${t.vcId ? ` <#${t.vcId}>` : ''} and ${verb} together for the next **${Math.round(TRIAL_WINDOW_MS / 60000)} minutes**. Everyone who chips in counts, and more of you in voice raises your score.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
   }));
   await warSleep(3000);
-  for (const k of Object.keys(thrones)) await trialPost(guild, k);
+  for (const k of Object.keys(thrones)) await (game === 'mosaic' ? mosaicPost(guild, k) : trialPost(guild, k));
   clearTrialTimers();
   _trialTimers.end = setTimeout(() => finishTrial(guild).catch(e => console.error('[trial] end:', e.message)), TRIAL_WINDOW_MS);
-  return { ok: true };
+  return { ok: true, game };
 }
 async function trialVcBonus(guild, tribeKey) {
   const t = tribes.get(tribeKey); if (!t || !t.vcId) return 0;
@@ -2013,12 +2076,16 @@ async function finishTrial(guild) {
     const pm = ch && await ch.messages.fetch(th.promptMessageId).catch(() => null);
     if (pm) await pm.edit({ components: [] }).catch(() => {});
   }
+  const game = a.game || 'assembly';
   const board = [];
   for (const th of sealed.thronesArr()) {
     const distinct = Object.keys(th.contributors || {}).length;
     const breadth = Math.min(TRIAL_BREADTH_CAP, 1 + TRIAL_BREADTH_PER * Math.max(0, distinct - 1));
     const vc = await trialVcBonus(guild, th.tribeKey);
-    board.push({ key: th.tribeKey, correct: th.correct || 0, distinct, breadth, vc, score: Math.round((th.correct || 0) * breadth * (1 + vc)) });
+    // Assembly scores on breadth (correct × distinct-contributor multiplier). Relay & Mosaic bake their mechanic
+    // (rotation bonus / tile + phrase points) into the accumulated score already, so use that as the base.
+    const base = game === 'assembly' ? (th.correct || 0) * breadth : (th.score || 0);
+    board.push({ key: th.tribeKey, correct: th.correct || 0, distinct, breadth, vc, score: Math.round(base * (1 + vc)) });
   }
   board.sort((x, y) => y.score - x.score || y.correct - x.correct);
   const winner = board[0] && board[0].score > 0 ? board[0] : null;
@@ -2026,7 +2093,7 @@ async function finishTrial(guild) {
     const mult = underdogMultiplier(guild, winner.key);
     tribes.addTreasury(winner.key, Math.round(arena.WIN_TREASURY * 2 * mult));
     tribes.addGlory(winner.key, Math.round(arena.WIN_GLORY * 2 * mult));
-    { const wt = tribes.get(winner.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || winner.key} won a Trial (The Assembly)`, tribes: [winner.key], score: winner.score }); }
+    { const wt = tribes.get(winner.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || winner.key} won a Trial (${TRIAL_GAME_LABEL[game] || 'The Assembly'})`, tribes: [winner.key], score: winner.score }); }
     checkTribeQuests(guild, winner.key).catch(() => {});
     await refreshThronePanel(guild, tribes.get(winner.key)).catch(() => {});
   }
@@ -2052,8 +2119,8 @@ async function reconcileTrial(guild) {
   const a = sealed.get(); if (!a || a.mode !== 'trial') return;
   const left = (a.endsAt || 0) - Date.now();
   if (left <= 0) { console.log('[trial] window elapsed during downtime, finishing'); return finishTrial(guild).catch(() => {}); }
-  console.log(`[trial] resuming (${Math.round(left / 1000)}s left)`);
-  for (const th of sealed.thronesArr()) if (!th.done) await trialPost(guild, th.tribeKey);
+  console.log(`[trial] resuming ${a.game || 'assembly'} (${Math.round(left / 1000)}s left)`);
+  for (const th of sealed.thronesArr()) if (!th.done) await (a.game === 'mosaic' ? mosaicPost(guild, th.tribeKey) : trialPost(guild, th.tribeKey));
   clearTrialTimers();
   _trialTimers.end = setTimeout(() => finishTrial(guild).catch(e => console.error('[trial] end:', e.message)), left);
 }
@@ -2063,8 +2130,9 @@ async function trialAutoTick(guild) {
   if (sealed.trialDoneToday(Date.now())) return;
   if (!sealedPeakHour()) return;
   sealed.markTrialDay(Date.now());
-  const r = await startTrial(guild, { mode: 'scheduled' }).catch(e => { console.error('[trial] auto start:', e.message); return null; });
-  if (r && r.ok) console.log('[trial] auto-started (scheduled Assembly)');
+  const game = TRIAL_GAMES[Math.floor(Date.now() / 86400000) % TRIAL_GAMES.length];   // rotate one game per day
+  const r = await startTrial(guild, { mode: 'scheduled', game }).catch(e => { console.error('[trial] auto start:', e.message); return null; });
+  if (r && r.ok) console.log(`[trial] auto-started (scheduled ${TRIAL_GAME_LABEL[r.game] || r.game})`);
 }
 
 // ==== PROVING GROUNDS (spec: PROVING_GROUNDS_SPEC.md) — solo async daily gauntlet ======================
@@ -2074,33 +2142,133 @@ async function trialAutoTick(guild) {
 const PG_TIDES_PER = 3;              // Tides to the player per point of score (in their tribe)
 const PG_TREASURY_PER = 5;           // Treasury to the player's tribe per point
 const PG_GAUNTLET_MAX = 25;          // safety cap on gauntlet length
-const _pgRuns = new Map();           // uid -> { questions, idx, correct, tribeKey } (in-memory; a restart abandons a run)
-function pgBuiltGames() { return ['gauntlet']; }   // only the games that are actually built rotate in for now
+const PG_LADDER_MAX = 40;            // Score-Attack rung cap
+const PG_PUZZLE_ANAGRAMS = 5;        // Anagram-Chain size (one modal, ≤5 text inputs)
+const _pgRuns = new Map();           // uid -> run (in-memory; a restart abandons a run)
+function pgBuiltGames() { return ['gauntlet', 'scoreattack', 'puzzle']; }   // all three throne-mode games are built
+const _shuffleArr = a => { const r = a.slice(); for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [r[i], r[j]] = [r[j], r[i]]; } return r; };
+const _pickOne = a => a[Math.floor(Math.random() * a.length)];
+// Short, family-friendly phrases for the Cryptogram (one shared letter-shift; decode word by word). Kept ≤5
+// words so the score scale sits near the other games' (comparable daily leaderboard).
+const CRYPTO_PHRASES = ['practice makes perfect', 'better late than never', 'actions speak louder', 'honesty is the best', 'knowledge is power', 'time heals all wounds', 'look before you leap', 'the early bird wins', 'slow and steady wins', 'kindness is free', 'never give up hope', 'every day is a gift'];
+
+// per-member fresh random draw = per-member seed, so there is no single daily answer to share.
 async function pgBuildGauntlet() {
-  // per-member fresh random draw = per-member seed, so there is no single daily answer to share.
   const f = await arena.fetchTrivia(PG_GAUNTLET_MAX, null);
   return (f && f.length) ? f : arena.localTrivia(PG_GAUNTLET_MAX, []);
 }
-function pgGauntletRender(run) {
+// Build 4 numeric button options around a correct answer (for the math rungs of Score-Attack).
+function pgMathOptions(ans) {
+  const a = Number(ans); const set = new Set([a]);
+  let g = 0; while (set.size < 4 && g++ < 40) { const d = a + (1 + Math.floor(Math.random() * 6)) * (Math.random() < 0.5 ? 1 : -1); if (d >= 0) set.add(d); }
+  while (set.size < 4) set.add(a + set.size + 1);
+  const options = _shuffleArr([...set]).map(String);
+  return { options, answer: options.indexOf(String(a)) };
+}
+// Score-Attack: an ESCALATING ladder — tier 0 quick math + true/false, tier 1 trivia, tier 2 number patterns.
+// All button-answered ({q,options,answer}) so it reuses the pg: handler. Score = rungs cleared before a miss.
+async function pgBuildLadder() {
+  const triv = await arena.fetchTrivia(20, null); const trivia = (triv && triv.length) ? triv : arena.localTrivia(20, []);
+  const pat = arena.genPattern(14);
+  const rungs = []; let ti = 0, pi = 0;
+  for (let n = 0; n < PG_LADDER_MAX; n++) {
+    if (n < 8) {
+      if (n % 2 === 0) { const m = arena.nextMath([]); const o = pgMathOptions(m.answer); rungs.push({ q: `Rung ${n + 1}: what is \`${m.display}\`?`, options: o.options, answer: o.answer }); }
+      else { const b = arena.localBoolean(1)[0]; rungs.push({ q: `Rung ${n + 1} (true or false): ${b.q}`, options: b.options, answer: b.answer }); }
+    } else if (n < 26) {
+      const t = trivia[ti++ % trivia.length]; rungs.push({ q: `Rung ${n + 1}: ${t.q}`, options: t.options, answer: t.answer });
+    } else {
+      const p = pat[pi++ % pat.length]; rungs.push({ q: `Rung ${n + 1}: ${p.q}`, options: p.options, answer: p.answer });
+    }
+  }
+  return rungs;
+}
+// One Puzzles instance, per-member. Kind is fixed per DAY (so the daily leaderboard compares like for like),
+// content is per-member. Anagram Chain = ≤5 scrambled words; Cryptogram = a shifted short phrase.
+function pgBuildPuzzle() {
+  const kind = Math.floor(Date.now() / 86400000) % 2 === 0 ? 'anagram' : 'cryptogram';
+  if (kind === 'anagram') {
+    const used = []; const items = [];
+    for (let i = 0; i < PG_PUZZLE_ANAGRAMS; i++) { const w = arena.nextWord(used); used.push(w); items.push({ scrambled: arena.scrambleWord(w).toUpperCase(), answer: String(w).toLowerCase() }); }
+    return { kind, items };
+  }
+  const phrase = _pickOne(CRYPTO_PHRASES);
+  const shift = 1 + Math.floor(Math.random() * 25);
+  const enc = phrase.toUpperCase().replace(/[A-Z]/g, c => String.fromCharCode((c.charCodeAt(0) - 65 + shift) % 26 + 65));
+  const s = phrase.toUpperCase().match(/[A-Z]/)[0];
+  const es = String.fromCharCode((s.charCodeAt(0) - 65 + shift) % 26 + 65);
+  return { kind, encoded: enc, answer: phrase.toLowerCase(), hint: `${es} = ${s}` };
+}
+function pgRender(run) {
   const q = run.questions[run.idx];
   const row = new ActionRowBuilder().addComponents(q.options.map((o, i) =>
     new ButtonBuilder().setCustomId(`pg:${i}`).setLabel(String(o).slice(0, 80) || '?').setStyle(ButtonStyle.Secondary)));
-  return { content: `# 🏅 Proving Grounds, Knowledge Gauntlet\nStreak: **${run.correct}**. One wrong ends your run.\n\n**${q.q}**`, components: [row], flags: MessageFlags.Ephemeral };
+  const head = run.game === 'scoreattack'
+    ? `# 🏅 Proving Grounds, Score-Attack\nRungs cleared: **${run.correct}**. It keeps getting harder — one miss ends the climb.`
+    : `# 🏅 Proving Grounds, Knowledge Gauntlet\nStreak: **${run.correct}**. One wrong ends your run.`;
+  return { content: `${head}\n\n**${q.q}**`, components: [row], flags: MessageFlags.Ephemeral };
 }
 async function pgStart(interaction) {
   if (!features.enabled('provingGrounds')) return interaction.reply({ content: 'Proving Grounds isn’t enabled yet.', flags: MessageFlags.Ephemeral });
   const uid = interaction.user.id;
-  if (proving.playedToday(uid)) {
-    return interaction.reply({ content: `You’ve already run today’s gauntlet. Come back tomorrow. ${provingRankLine(uid)}`, flags: MessageFlags.Ephemeral });
-  }
+  if (proving.playedToday(uid)) return interaction.reply({ content: `You’ve already run today’s challenge. Come back tomorrow. ${provingRankLine(uid)}`, flags: MessageFlags.Ephemeral });
   const mine = tribes.memberTribe(interaction.member);
   if (!proving.startAttempt(uid, mine ? mine.key : null)) return interaction.reply({ content: 'You’ve already attempted today.', flags: MessageFlags.Ephemeral });
+  const game = proving.todaysGame(Date.now(), pgBuiltGames());
+  if (game === 'puzzle') return pgStartPuzzle(interaction, uid, mine);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const questions = await pgBuildGauntlet();
-  if (!questions.length) { proving.finishAttempt(uid, mine ? mine.key : null, 0); return interaction.editReply('Couldn’t load the gauntlet, try again in a moment.'); }
-  const run = { questions, idx: 0, correct: 0, tribeKey: mine ? mine.key : null };
+  const questions = game === 'scoreattack' ? await pgBuildLadder() : await pgBuildGauntlet();
+  if (!questions.length) { proving.finishAttempt(uid, mine ? mine.key : null, 0); return interaction.editReply('Couldn’t load today’s challenge, try again in a moment.'); }
+  const run = { game, questions, idx: 0, correct: 0, tribeKey: mine ? mine.key : null };
   _pgRuns.set(uid, run);
-  return interaction.editReply(pgGauntletRender(run));
+  return interaction.editReply(pgRender(run));
+}
+// Puzzles delivery: reply with the prompt + an Answer button (NOT deferred, so the button can open a modal).
+async function pgStartPuzzle(interaction, uid, mine) {
+  const puzzle = pgBuildPuzzle();
+  _pgRuns.set(uid, { game: 'puzzle', puzzle, correct: 0, tribeKey: mine ? mine.key : null });
+  const intro = puzzle.kind === 'anagram'
+    ? `# 🏅 Proving Grounds, Puzzles — Anagram Chain\nUnscramble all ${puzzle.items.length} words. Tap **Answer** to fill them in.`
+    : `# 🏅 Proving Grounds, Puzzles — Cryptogram\nEvery letter is shifted by the same amount. Decode the phrase (hint: **${puzzle.hint}**):\n\`\`\`\n${puzzle.encoded}\n\`\`\`\nTap **Answer** to solve.`;
+  const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('pgpz_open').setLabel('✍️ Answer').setStyle(ButtonStyle.Primary));
+  return interaction.reply({ content: intro, components: [row], flags: MessageFlags.Ephemeral });
+}
+async function pgPuzzleOpen(interaction) {
+  const run = _pgRuns.get(interaction.user.id);
+  if (!run || run.game !== 'puzzle') return interaction.reply({ content: 'That puzzle has ended. Come back tomorrow.', flags: MessageFlags.Ephemeral });
+  const p = run.puzzle;
+  const modal = new ModalBuilder().setCustomId('pgpz_submit').setTitle('Proving Grounds — Puzzles');
+  if (p.kind === 'anagram') {
+    p.items.forEach((it, i) => modal.addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId(`a${i}`).setLabel(`Unscramble: ${it.scrambled}`.slice(0, 45)).setStyle(TextInputStyle.Short).setRequired(false))));
+  } else {
+    modal.addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('c0').setLabel('Decode the phrase').setStyle(TextInputStyle.Paragraph).setRequired(false)));
+  }
+  return interaction.showModal(modal);
+}
+async function pgPuzzleSubmit(interaction) {
+  const uid = interaction.user.id;
+  const run = _pgRuns.get(uid);
+  if (!run || run.game !== 'puzzle') return interaction.reply({ content: 'That puzzle has ended.', flags: MessageFlags.Ephemeral });
+  const p = run.puzzle; const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  let score = 0, max = 0, detail = '';
+  if (p.kind === 'anagram') {
+    max = p.items.length; const lines = [];
+    p.items.forEach((it, i) => { let v = ''; try { v = interaction.fields.getTextInputValue(`a${i}`); } catch { } const ok = norm(v) === norm(it.answer); if (ok) score++; lines.push(`${ok ? '✅' : '❌'} ${it.scrambled} → **${it.answer.toUpperCase()}**`); });
+    detail = lines.join('\n');
+  } else {
+    let v = ''; try { v = interaction.fields.getTextInputValue('c0'); } catch { }
+    const gw = norm(v).split(' ').filter(Boolean), aw = norm(p.answer).split(' ');
+    max = aw.length; for (let i = 0; i < aw.length; i++) if (gw[i] && gw[i] === aw[i]) score++;
+    detail = `The phrase was: **${p.answer}**\nYou decoded **${score}/${max}** words.`;
+  }
+  run.correct = score; _pgRuns.delete(uid);
+  proving.finishAttempt(uid, run.tribeKey, score);
+  if (run.tribeKey && score > 0) { tribes.addTides(run.tribeKey, uid, score * PG_TIDES_PER); tribes.addTreasury(run.tribeKey, score * PG_TREASURY_PER); }
+  const board = proving.dailyBoard(Date.now(), 100); const pos = board.findIndex(x => x.uid === uid);
+  const line = `# 🏅 Puzzles complete — **${score}/${max}**\n${detail}${run.tribeKey && score > 0 ? `\n\n+${score * PG_TIDES_PER} points for you, +${score * PG_TREASURY_PER} Treasury for your tribe.` : ''}\n-# Today's rank: ${pos >= 0 ? `#${pos + 1}` : 'unranked'}. ${provingRankLine(uid)}`;
+  return interaction.reply({ content: line, flags: MessageFlags.Ephemeral });
 }
 function provingRankLine(uid) {
   const wk = proving.weeklyBoard(100); const pos = wk.findIndex(x => x.uid === uid);
@@ -2110,13 +2278,13 @@ function provingRankLine(uid) {
 async function pgAnswer(interaction) {
   const uid = interaction.user.id;
   const run = _pgRuns.get(uid);
-  if (!run) return interaction.reply({ content: 'That run has ended. Start again tomorrow.', flags: MessageFlags.Ephemeral });
+  if (!run || !run.questions) return interaction.reply({ content: 'That run has ended. Start again tomorrow.', flags: MessageFlags.Ephemeral });
   const q = run.questions[run.idx];
   const correct = Number(interaction.customId.split(':')[1]) === q.answer;
   if (correct) {
     run.correct += 1; run.idx += 1;
-    if (run.idx >= run.questions.length) return pgFinish(interaction, run, true);   // cleared them all
-    return interaction.update(pgGauntletRender(run));
+    if (run.idx >= run.questions.length) return pgFinish(interaction, run, true);   // cleared the whole set
+    return interaction.update(pgRender(run));
   }
   return pgFinish(interaction, run, false);
 }
@@ -2128,7 +2296,9 @@ async function pgFinish(interaction, run, cleared) {
   // rewards: personal Tides (if in a tribe) + a little tribe Treasury.
   if (run.tribeKey && score > 0) { tribes.addTides(run.tribeKey, uid, score * PG_TIDES_PER); tribes.addTreasury(run.tribeKey, score * PG_TREASURY_PER); }
   const board = proving.dailyBoard(Date.now(), 100); const pos = board.findIndex(x => x.uid === uid);
-  const line = `# 🏅 ${cleared ? 'Flawless run!' : 'Run over.'}\nYou cleared **${score}**${cleared ? ' (the whole gauntlet!)' : ''}.${run.tribeKey && score > 0 ? ` +${score * PG_TIDES_PER} points for you, +${score * PG_TREASURY_PER} Treasury for your tribe.` : ''}\n-# Today's rank: ${pos >= 0 ? `#${pos + 1}` : 'unranked'}. ${provingRankLine(uid)}`;
+  const unit = run.game === 'scoreattack' ? 'rungs' : 'streak';
+  const headline = cleared ? (run.game === 'scoreattack' ? 'Topped the ladder!' : 'Flawless run!') : 'Run over.';
+  const line = `# 🏅 ${headline}\nYou cleared **${score}** ${unit}.${run.tribeKey && score > 0 ? ` +${score * PG_TIDES_PER} points for you, +${score * PG_TREASURY_PER} Treasury for your tribe.` : ''}\n-# Today's rank: ${pos >= 0 ? `#${pos + 1}` : 'unranked'}. ${provingRankLine(uid)}`;
   return interaction.update({ content: line, components: [] }).catch(() => interaction.reply({ content: line, flags: MessageFlags.Ephemeral }).catch(() => {}));
 }
 // Weekly Prover reveal: when the week rolls over, reveal the just-ended top provers + top tribe, then reset.
@@ -3426,7 +3596,9 @@ client.once('ready', async () => {
               { name: '✅ True or False', value: 'truefalse' }, { name: '🔢 Number Pattern', value: 'pattern' },
               { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' })))
         .addSubcommand(s => s.setName('trial').setDescription('Launch a Trial: tribes rally in voice and answer together, breadth + voice scored')
-          .addBooleanOption(o => o.setName('muster').setDescription('Rally only YOUR tribe (leader Muster Trial) instead of all tribes').setRequired(false)))
+          .addBooleanOption(o => o.setName('muster').setDescription('Rally only YOUR tribe (leader Muster Trial) instead of all tribes').setRequired(false))
+          .addStringOption(o => o.setName('game').setDescription('Which game (default: rotates daily)').setRequired(false)
+            .addChoices({ name: 'The Assembly (collaborative quiz)', value: 'assembly' }, { name: 'The Relay (rotation chain)', value: 'relay' }, { name: 'The Mosaic (parallel tiles → phrase)', value: 'mosaic' })))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
@@ -5094,6 +5266,44 @@ client.on('interactionCreate', async (interaction) => {
     try { return await modapps.handleAskModal(interaction); }
     catch (e) { console.error(`[modapps] ask ${e.message}`); return interaction.reply({ content: 'Could not send.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
+  if (interaction.isModalSubmit?.() && interaction.customId === 'pgpz_submit') {
+    return pgPuzzleSubmit(interaction).catch(e => { console.error('[proving] puzzle submit:', e.message); return interaction.reply({ content: 'Something went wrong scoring that.', flags: MessageFlags.Ephemeral }).catch(() => {}); });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('mosaicans:')) {
+    const [, tribeKey, iStr] = interaction.customId.split(':');
+    const a = sealed.get();
+    if (!a || a.mode !== 'trial' || a.game !== 'mosaic') return interaction.reply({ content: 'The Mosaic is over.', flags: MessageFlags.Ephemeral });
+    const th = sealed.throne(tribeKey);
+    if (!th || th.done || th.phraseSolved) return interaction.reply({ content: 'This Mosaic already wrapped up.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine || mine.key !== tribeKey) return interaction.reply({ content: 'Work your own tribe’s Mosaic.', flags: MessageFlags.Ephemeral });
+    const i = Number(iStr);
+    if (th.solved[i]) return interaction.reply({ content: 'A tribemate just solved that tile.', flags: MessageFlags.Ephemeral });
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let v = ''; try { v = interaction.fields.getTextInputValue('w'); } catch { }
+    if (norm(v) !== norm(th.tiles[i].answer)) return interaction.reply({ content: '❌ Not that word — try again.', flags: MessageFlags.Ephemeral });
+    const solved = th.solved.slice(); solved[i] = true;                     // read-modify-write is sync (no await) → no race
+    sealed.updateThrone(tribeKey, { solved });
+    sealed.scoreThrone(tribeKey, interaction.user.id, MOSAIC_TILE_PTS);     // +tile points, credit the solver (breadth)
+    await mosaicRefresh(interaction.guild, tribeKey).catch(() => {});
+    return interaction.reply({ content: `✅ Tile solved: **${th.tiles[i].answer.toUpperCase()}** (+${MOSAIC_TILE_PTS}).`, flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('mosaicphrasesub:')) {
+    const [, tribeKey] = interaction.customId.split(':');
+    const a = sealed.get();
+    if (!a || a.mode !== 'trial' || a.game !== 'mosaic') return interaction.reply({ content: 'The Mosaic is over.', flags: MessageFlags.Ephemeral });
+    const th = sealed.throne(tribeKey);
+    if (!th || th.done || th.phraseSolved) return interaction.reply({ content: 'This Mosaic already wrapped up.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine || mine.key !== tribeKey) return interaction.reply({ content: 'Work your own tribe’s Mosaic.', flags: MessageFlags.Ephemeral });
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let v = ''; try { v = interaction.fields.getTextInputValue('p'); } catch { }
+    if (norm(v) !== norm(th.phrase)) return interaction.reply({ content: '❌ That’s not the phrase — keep solving tiles for more of the words.', flags: MessageFlags.Ephemeral });
+    sealed.updateThrone(tribeKey, { solved: th.tiles.map(() => true), phraseSolved: true, done: true });
+    sealed.scoreThrone(tribeKey, interaction.user.id, MOSAIC_PHRASE_PTS);
+    await mosaicRefresh(interaction.guild, tribeKey).catch(() => {});
+    return interaction.reply({ content: `🎉 Phrase solved: **${th.phrase}** (+${MOSAIC_PHRASE_PTS})! Your Mosaic is complete.`, flags: MessageFlags.Ephemeral });
+  }
   // Send-to-corner reason modal (cornerReason feature). customId: corner_reason:<memberId>:<channelId>:<messageId>
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('corner_reason:')) {
     try {
@@ -6172,6 +6382,9 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton?.() && /^pg:\d+$/.test(interaction.customId)) {
     return pgAnswer(interaction).catch(e => { console.error('[proving] answer:', e.message); return interaction.reply({ content: 'Something went wrong.', flags: MessageFlags.Ephemeral }).catch(() => {}); });
   }
+  if (interaction.isButton?.() && interaction.customId === 'pgpz_open') {
+    return pgPuzzleOpen(interaction).catch(e => { console.error('[proving] puzzle open:', e.message); return interaction.reply({ content: 'Something went wrong.', flags: MessageFlags.Ephemeral }).catch(() => {}); });
+  }
   if (interaction.isButton?.() && interaction.customId.startsWith('sealedans:')) {
     const [, tribeKey, qNumStr, optStr] = interaction.customId.split(':');
     const a = sealed.get();
@@ -6198,11 +6411,41 @@ client.on('interactionCreate', async (interaction) => {
     if ((th.perQ || []).includes(interaction.user.id)) return interaction.reply({ content: 'You already tried this one, let a tribemate take it.', flags: MessageFlags.Ephemeral });
     sealed.updateThrone(tribeKey, { perQ: [...(th.perQ || []), interaction.user.id] });
     if (Number(optStr) !== a.items[th.qNum].answer) return interaction.reply({ content: '❌ Not quite, someone else try.', flags: MessageFlags.Ephemeral });
-    sealed.scoreThrone(tribeKey, interaction.user.id, 1);            // +1 correct, credit the contributor (breadth)
-    sealed.updateThrone(tribeKey, { qNum: th.qNum + 1 });           // this throne advances independently
+    // Relay: a correct answer from a DIFFERENT member than the last scores double (rotation bonus). It's a bonus,
+    // never a gate — the same member can still answer for base points, so a small tribe is never softlocked.
+    const rotated = a.game === 'relay' && th.lastUid && th.lastUid !== interaction.user.id;
+    const pts = rotated ? RELAY_ROTATE_PTS : 1;
+    sealed.scoreThrone(tribeKey, interaction.user.id, pts);         // +1 correct, +pts score, credit the contributor
+    sealed.updateThrone(tribeKey, { qNum: th.qNum + 1, lastUid: interaction.user.id });   // this throne advances independently
     await interaction.update({ components: [] }).catch(() => {});
     await trialPost(interaction.guild, tribeKey);
-    return interaction.followUp({ content: '✅ Correct! On to the next.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    return interaction.followUp({ content: rotated ? '✅🔗 Correct — rotation bonus, double points!' : '✅ Correct! On to the next.', flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('mosaictile:')) {
+    const [, tribeKey, iStr] = interaction.customId.split(':');
+    const a = sealed.get();
+    if (!a || a.mode !== 'trial' || a.game !== 'mosaic') return interaction.reply({ content: 'The Mosaic is over.', flags: MessageFlags.Ephemeral });
+    const th = sealed.throne(tribeKey);
+    if (!th || th.done || th.phraseSolved) return interaction.reply({ content: 'This Mosaic already wrapped up.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine || mine.key !== tribeKey) return interaction.reply({ content: 'Work your own tribe’s Mosaic.', flags: MessageFlags.Ephemeral });
+    const i = Number(iStr);
+    if (th.solved[i]) return interaction.reply({ content: 'That tile is already solved.', flags: MessageFlags.Ephemeral });
+    const modal = new ModalBuilder().setCustomId(`mosaicans:${tribeKey}:${i}`).setTitle('Unscramble the tile');
+    modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('w').setLabel(`Unscramble: ${th.tiles[i].scrambled}`.slice(0, 45)).setStyle(TextInputStyle.Short).setRequired(true)));
+    return interaction.showModal(modal);
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('mosaicphrase:')) {
+    const [, tribeKey] = interaction.customId.split(':');
+    const a = sealed.get();
+    if (!a || a.mode !== 'trial' || a.game !== 'mosaic') return interaction.reply({ content: 'The Mosaic is over.', flags: MessageFlags.Ephemeral });
+    const th = sealed.throne(tribeKey);
+    if (!th || th.done || th.phraseSolved) return interaction.reply({ content: 'This Mosaic already wrapped up.', flags: MessageFlags.Ephemeral });
+    const mine = tribes.memberTribe(interaction.member);
+    if (!mine || mine.key !== tribeKey) return interaction.reply({ content: 'Work your own tribe’s Mosaic.', flags: MessageFlags.Ephemeral });
+    const modal = new ModalBuilder().setCustomId(`mosaicphrasesub:${tribeKey}`).setTitle('Solve the phrase');
+    modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('p').setLabel('Enter the full hidden phrase').setStyle(TextInputStyle.Paragraph).setRequired(true)));
+    return interaction.showModal(modal);
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('arena_ans:')) {
     const a = arena.get();
@@ -7447,8 +7690,9 @@ client.on('interactionCreate', async (interaction) => {
       if (muster && !led && !canWLAdmin(interaction)) return interaction.reply({ content: 'Only a tribe leader can rally a Muster Trial.', flags: MessageFlags.Ephemeral });
       if (!muster && !canWLAdmin(interaction) && !led) return interaction.reply({ content: 'Only a tribe leader or an admin can launch a Trial.', flags: MessageFlags.Ephemeral });
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const r = await startTrial(interaction.guild, muster && led ? { mode: 'muster', tribeKey: led.key, startedById: interaction.user.id } : { mode: 'scheduled', startedById: interaction.user.id });
-      return interaction.editReply(r.ok ? `⚔️ Trial launched. ${muster ? 'Rally your tribe' : 'Every tribe, rally'} in voice and answer together — results reveal at the end.` : `Couldn’t launch it: ${r.error}`);
+      const game = interaction.options.getString('game') || TRIAL_GAMES[Math.floor(Date.now() / 86400000) % TRIAL_GAMES.length];
+      const r = await startTrial(interaction.guild, muster && led ? { mode: 'muster', tribeKey: led.key, startedById: interaction.user.id, game } : { mode: 'scheduled', startedById: interaction.user.id, game });
+      return interaction.editReply(r.ok ? `⚔️ ${TRIAL_GAME_LABEL[r.game] || 'Trial'} launched. ${muster ? 'Rally your tribe' : 'Every tribe, rally'} in voice and ${r.game === 'mosaic' ? 'claim tiles' : 'answer'} together — results reveal at the end.` : `Couldn’t launch it: ${r.error}`);
     }
     if (sub === 'arena') {
       // Any tribe LEADER or an admin may start one (owner, 2026-08-04).
