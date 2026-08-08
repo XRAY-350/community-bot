@@ -5,7 +5,7 @@
 // guildMemberUpdate so we can see the Verified role being assigned). The GuildMembers intent
 // must also be enabled in the Discord Developer Portal for this application.
 
-const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType, MessageType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType, MessageType, AttachmentBuilder } = require('discord.js');
 const { statePath } = require('./statepath');
 const { MessageFlags } = require('discord.js');
 const config = require('./config');
@@ -5015,12 +5015,30 @@ client.on('messageDelete', async (msg) => {
     const ch = await client.channels.fetch(config.watchLogChannelId).catch(() => null);
     if (!ch) return;
     const content = (msg.content || '').trim();
-    const attachments = [...(msg.attachments?.values() || [])].map(a => a.url);
     const embed = new EmbedBuilder().setColor(0x99AAB5)
       .setDescription(`🗑️ **Message deleted** by <@${msg.author.id}> in <#${msg.channelId}>` + (content ? `\n\n${content.slice(0, 1500)}` : '\n\n_(no text — attachment/embed only)_'))
       .setFooter({ text: `${msg.author.tag} · ${msg.author.id}` }).setTimestamp(msg.createdAt || new Date());
-    if (attachments.length) embed.addFields({ name: `📎 Attachment link(s) (${attachments.length})`, value: attachments.slice(0, 5).join('\n').slice(0, 1000) });
-    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+    // Re-upload attachments into the log message itself rather than just linking the CDN URL — a deleted
+    // message's attachment links tend to go dead within minutes, which made the link-only version useless
+    // for anything a mod didn't check immediately. Fetch now (right as the delete event fires, the CDN URL
+    // is still freshest) and attach the bytes directly; a per-file size cap + fallback link covers anything
+    // too big to re-upload or that already 404'd by the time we got to it.
+    const ATTACH_MAX_BYTES = 25 * 1024 * 1024;
+    const original = [...(msg.attachments?.values() || [])].slice(0, 5);
+    const files = [];
+    const failedLinks = [];
+    for (const a of original) {
+      try {
+        if (a.size && a.size > ATTACH_MAX_BYTES) { failedLinks.push(`${a.name || 'file'} (too large to re-upload) — ${a.url}`); continue; }
+        const res = await fetch(a.url);
+        if (!res.ok) { failedLinks.push(`${a.name || 'file'} (couldn't re-fetch, ${res.status}) — ${a.url}`); continue; }
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > ATTACH_MAX_BYTES) { failedLinks.push(`${a.name || 'file'} (too large to re-upload) — ${a.url}`); continue; }
+        files.push(new AttachmentBuilder(buf, { name: a.name || `attachment-${a.id}` }));
+      } catch (e) { failedLinks.push(`${a.name || 'file'} (fetch failed: ${e.message}) — ${a.url}`); }
+    }
+    if (failedLinks.length) embed.addFields({ name: `📎 Couldn't re-upload (${failedLinks.length})`, value: failedLinks.join('\n').slice(0, 1000) });
+    await ch.send({ embeds: [embed], files, allowedMentions: { parse: [] } }).catch(() => {});
   } catch (e) { console.error('[watchlist] delete-log:', e.message); }
 });
 
