@@ -102,7 +102,7 @@ const config = {
 
   // Role pinged by the pending-thread nudge, and channel the nudge is posted to
   // (defaults to the verify channel if no separate alert channel is given).
-  modRoleId: opt('MOD_ROLE_ID', ''),
+  modRoleId: opt('MOD_ROLE_ID', '1528316361665675316'), // MODS-✰ — was '' with no fallback, silently dropped mods from every ping (verify threads, watchlist strict alerts) once MOD_ROLE_ID fell out of .community_env post-migration (found 2026-08-08)
   adminRoleId: opt('ADMIN_ROLE_ID', '1516179051105226833'),                      // ADMINS-★
   adminDiscussionChannelId: opt('ADMIN_DISCUSSION_CHANNEL_ID', '1530793201751953508'), // 👤┆ᴀᴅᴍɪɴ-ᴅɪsᴄᴜssɪᴏɴ (no admin-announcements, so promotions post here)
   // Trial Mod — a restricted training tier: may VERIFY, view the dashboard read-only, and CORNER (rule +
