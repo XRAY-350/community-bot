@@ -4340,6 +4340,11 @@ client.on('threadCreate', async (thread, newlyCreated) => {
 // this rule existed). Returns true if the thread was acted on (cornered + deleted), false if skipped.
 async function autoCornerThread(guild, thread) {
   const parent = thread.parent || await guild.channels.fetch(thread.parentId).catch(() => null);
+  // Forum/media channels: a "thread" there IS a post — the whole point of the channel type, not someone
+  // derailing a chat channel. Exempt them regardless of category (bug found 2026-08-08: the new language
+  // forum sits in the same category as general chat channels and got a real member auto-cornered for
+  // making a normal forum post).
+  if (parent && (parent.type === ChannelType.GuildForum || parent.type === ChannelType.GuildMedia)) return false;
   if (!parent || !config.autoCornerThreadCategoryIds.includes(parent.parentId)) return false;
   if (config.autoCornerThreadExcludedChannelIds.includes(thread.parentId)) return false;
   if (!thread.ownerId) return false;
@@ -5022,6 +5027,10 @@ client.on('messageDelete', async (msg) => {
   try {
     if (msg.partial || !msg.guild || !config.watchLogChannelId || msg.channelId === config.watchLogChannelId) return;
     if (!msg.author || msg.author.bot) return;
+    // Skip THRONE channels — throneExpire.js routinely auto-deletes every throne message after 24h by
+    // design (not a moderation event), so logging those was just clutter (owner, 2026-08-08: "skip
+    // messages deleted by the bot in the deletion log" re: throne 24h expiry).
+    if (tribes.all().some(t => t.throneId === msg.channelId)) return;
     const ch = await client.channels.fetch(config.watchLogChannelId).catch(() => null);
     if (!ch) return;
     const content = (msg.content || '').trim();
