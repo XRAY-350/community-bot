@@ -5006,6 +5006,22 @@ client.on('messageDelete', async (msg) => {
     const rec = promote.cancelByMessageId(msg.id);
     if (rec) console.log(`[promote] auto-cancelled orphaned vote for ${rec.candidateId} (message ${msg.id} deleted)`);
   } catch (e) { console.error('[promote] messageDelete:', e.message); }
+  // Deleted-message log → #watch-log (owner, 2026-08-07: "start recording deleted messages"). Only for
+  // messages the bot actually had cached (msg.partial → we never saw the content, nothing useful to log),
+  // real non-bot authors, and not the watch-log channel itself (avoid the log logging itself).
+  try {
+    if (msg.partial || !msg.guild || !config.watchLogChannelId || msg.channelId === config.watchLogChannelId) return;
+    if (!msg.author || msg.author.bot) return;
+    const ch = await client.channels.fetch(config.watchLogChannelId).catch(() => null);
+    if (!ch) return;
+    const content = (msg.content || '').trim();
+    const attachments = [...(msg.attachments?.values() || [])].map(a => a.url);
+    const embed = new EmbedBuilder().setColor(0x99AAB5)
+      .setDescription(`🗑️ **Message deleted** by <@${msg.author.id}> in <#${msg.channelId}>` + (content ? `\n\n${content.slice(0, 1500)}` : '\n\n_(no text — attachment/embed only)_'))
+      .setFooter({ text: `${msg.author.tag} · ${msg.author.id}` }).setTimestamp(msg.createdAt || new Date());
+    if (attachments.length) embed.addFields({ name: `📎 Attachment link(s) (${attachments.length})`, value: attachments.slice(0, 5).join('\n').slice(0, 1000) });
+    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+  } catch (e) { console.error('[watchlist] delete-log:', e.message); }
 });
 
 // Button routing (verify panel · corner controls · conflict resolve) + /corner /uncorner below.
