@@ -1865,7 +1865,14 @@ async function beginSealedArena(guild) {
   if (a.kind === 'typed') {
     for (const th of sealed.thronesArr()) {
       const ch = await guild.channels.fetch(th.channelId).catch(() => null);
-      if (ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'sealed arena: typed answers' }).catch(() => {});
+      if (!ch) continue;
+      await ch.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'sealed arena: typed answers' }).catch(() => {});
+      // The throne's own tribe base role carries its OWN explicit SendMessages deny (separate from
+      // @everyone, and more specific — it wins for anyone holding the role), so opening @everyone alone
+      // never actually let regular tribe members type. Found 2026-08-08: "people can't type in their
+      // thrones for the sealed arena."
+      const t = tribes.get(th.tribeKey);
+      if (t?.roleId) await ch.permissionOverwrites.edit(t.roleId, { SendMessages: true }, { reason: 'sealed arena: typed answers' }).catch(() => {});
     }
   }
   sealed.update({ phase: 'live' });
@@ -1914,7 +1921,12 @@ function sealedTryScore(tribeKey, uid, answerTs, correct) {
 async function finishSealedArena(guild) {
   clearSealedTimers();
   const a = sealed.get(); if (!a) return;
-  if (a.kind === 'typed') for (const th of sealed.thronesArr()) { const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (ch) await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'sealed arena over' }).catch(() => {}); }
+  if (a.kind === 'typed') for (const th of sealed.thronesArr()) {
+    const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) continue;
+    await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'sealed arena over' }).catch(() => {});
+    const t = tribes.get(th.tribeKey);
+    if (t?.roleId) await ch.permissionOverwrites.edit(t.roleId, { SendMessages: false }, { reason: 'sealed arena over' }).catch(() => {});
+  }
   const board = sealed.thronesArr().map(th => ({ key: th.tribeKey, score: th.score || 0, correct: th.correct || 0 })).sort((x, y) => y.score - x.score || y.correct - x.correct);
   const winner = board[0] && board[0].score > 0 ? board[0] : null;
   const label = ARENA_LABEL[a.gameType] || 'Sealed Arena';
