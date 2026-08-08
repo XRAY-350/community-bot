@@ -4516,8 +4516,9 @@ async function watchlistAlert(msg, hits, opts = {}) {
     new ButtonBuilder().setCustomId(`wl_strike:${msg.author.id}`).setEmoji('⚠️').setLabel('Strike').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`wl_corner:${msg.author.id}`).setEmoji('⛓️').setLabel('Corner').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`wl_dismiss:${msg.author.id}`).setEmoji('🗑️').setLabel('Dismiss').setStyle(ButtonStyle.Secondary))];
-  const ping = (opts.ping !== false && config.modRoleId) ? `<@&${config.modRoleId}>` : undefined;
-  const mentions = { roles: (opts.ping !== false && config.modRoleId) ? [config.modRoleId] : [] };
+  const pingRoleId = opts.pingRoleId || config.modRoleId;
+  const ping = (opts.ping !== false && pingRoleId) ? `<@&${pingRoleId}>` : undefined;
+  const mentions = { roles: (opts.ping !== false && pingRoleId) ? [pingRoleId] : [] };
   // Send with mirrored files; if a re-upload fails (expired/large), fall back to text-only so the report still lands.
   await ch.send({ content: ping, embeds: [embed], components, files, allowedMentions: mentions })
     .catch(async e => {
@@ -4977,7 +4978,16 @@ client.on('messageCreate', async (msg) => {
     if (watchlist.isWatched(member.id)) {
       const strict = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])];
       const hits = strict.length ? watchlist.matchTerms(msg.content, strict) : [];
-      if (hits.length) { await watchlistAlert(msg, hits, { scope: 'strict' }); return; }   // strict wins - one report per message
+      if (hits.length) {
+        // A watched member who's ALSO staff must never see their own hit — route to the admin-only
+        // channel (MODS excluded) with an admin ping instead of the normal mod-visible one (owner,
+        // 2026-08-08: "I don't want them to know when they're caught").
+        const staffTarget = !!opspanel.memberTier(member);
+        await watchlistAlert(msg, hits, staffTarget
+          ? { scope: 'strict', channelId: config.adminAnnounceChannelId, pingRoleId: config.adminRoleId }
+          : { scope: 'strict' });
+        return;   // strict wins - one report per message
+      }
     }
     // Everyone EXCEPT staff → the day-to-day #watch-log (no ping). WELFARE (support) takes priority over LOOSE.
     if (config.watchLogChannelId && !opspanel.memberTier(member)) {

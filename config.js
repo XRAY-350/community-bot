@@ -112,6 +112,10 @@ const config = {
   modAlertChannelId: opt('MOD_ALERT_CHANNEL_ID', ''), // falls back to verifyChannelId at use
   modAnnounceChannelId: opt('MOD_ANNOUNCE_CHANNEL_ID', '1526926690637578362'), // strict watchlist alerts + ban buttons
   watchLogChannelId: opt('WATCH_LOG_CHANNEL_ID', '1531382379342729428'), // loose day-to-day monitor reports (mod-only, no ping)
+  // Admin-only alert channel — MODS explicitly excluded (owner, 2026-08-08: watched staff members must not
+  // be able to see their own watchlist hits). Strict watchlist alerts route here instead of the normal
+  // mod-visible modAnnounceChannelId whenever the watched member is themselves staff.
+  adminAnnounceChannelId: opt('ADMIN_ANNOUNCE_CHANNEL_ID', '1535453964592488559'),
   // Optional public punishment feeds (Melanin has dedicated channels for these; FUBU leaves them unset → no-op).
   punishmentLogChannelId: opt('PUNISHMENT_LOG_CHANNEL_ID', ''), // public feed of strikes + bans (corner-log already covers corners)
   bannedChannelId: opt('BANNED_CHANNEL_ID', ''),                // a clean announcement each time someone is banned
