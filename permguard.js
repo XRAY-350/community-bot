@@ -5,7 +5,7 @@
 // category's overwrite once a channel has its own) and the mod's base-role Send Messages leaked
 // through. That's a structural risk for ANY channel with a partial role overwrite, not just this one —
 // this sweep catches drift of that shape automatically, on a schedule, instead of waiting for a report.
-const { Routes, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
+const { Routes, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField, AuditLogEvent } = require('discord.js');
 const { statePath } = require('./statepath');
 const fs = require('fs');
 const ownerlog = require('./ownerlog');
@@ -138,15 +138,82 @@ async function sweepPermissions(guild, { notify = true } = {}) {
   return { fixed: corrections.length, corrections, newMemberOverwrites, unmanagedChannels };
 }
 
-function register(client, { intervalMin = 20 } = {}) {
+// ---- auto-adopt trusted (owner) permission changes -------------------------------------------------
+// Discord doesn't push overwrite changes to the bot directly, so this polls the audit log the same way
+// ownerlog.js does. When a channel-overwrite (or brand-new channel) entry's executor is the owner —
+// bot owner by ID, or the live guild owner, or OWNER-role+Admin tier — that channel is immediately
+// re-blessed into the baseline. Nobody else's changes get this treatment; those still show up as drift
+// on the next sweep and get reverted/flagged as before. Note: blessChannel snapshots the channel's
+// FULL current live state, not just the one changed overwrite — if someone else's change landed on the
+// same channel in between, it rides along. Same tradeoff every other blessChannel() call site accepts.
+const AUDIT_STATE_FILE = process.env.FUBU_PERMGUARD_AUDIT_STATE_FILE || statePath('permguard_audit_state.json');
+const OVERWRITE_EVENTS = new Set([
+  AuditLogEvent.ChannelOverwriteCreate, AuditLogEvent.ChannelOverwriteUpdate,
+  AuditLogEvent.ChannelOverwriteDelete, AuditLogEvent.ChannelCreate,
+]);
+
+function loadAuditState() { try { return JSON.parse(fs.readFileSync(AUDIT_STATE_FILE, 'utf8')); } catch { return { lastId: null }; } }
+function saveAuditState(s) { try { fs.writeFileSync(AUDIT_STATE_FILE, JSON.stringify(s)); } catch (e) { console.error('[permguard] audit state save:', e.message); } }
+
+async function isTrustedOwner(guild, userId) {
+  if (!userId) return false;
+  if (userId === opspanel.BOT_OWNER_ID || userId === guild.ownerId) return true;
+  const member = guild.members.cache.get(userId) || await guild.members.fetch(userId).catch(() => null);
+  return !!member && opspanel.memberTier(member) === 'owner';
+}
+
+async function pollOwnerOverwrites(guild) {
+  if (!loadManifest()) return 0;   // no baseline yet — nothing to auto-adopt into
+  try {
+    const st = loadAuditState();
+    const page = await guild.fetchAuditLogs({ limit: 50 }).catch(() => null);
+    if (!page) return 0;
+    const entries = [...page.entries.values()].sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+    if (!st.lastId) {   // first run: seed the watermark to "now", don't rescan server history
+      const newest = entries[entries.length - 1];
+      saveAuditState({ lastId: newest ? newest.id : '0' });
+      return 0;
+    }
+    const fresh = entries.filter(e => BigInt(e.id) > BigInt(st.lastId) && OVERWRITE_EVENTS.has(e.action));
+    if (fresh.length) {
+      const blessed = new Set();
+      for (const e of fresh) {
+        const channelId = e.action === AuditLogEvent.ChannelCreate ? e.targetId : e.target?.id;
+        if (!channelId || blessed.has(channelId)) continue;
+        if (!(await isTrustedOwner(guild, e.executorId))) continue;
+        if (await blessChannel(guild, channelId)) blessed.add(channelId);
+      }
+      if (blessed.size) {
+        console.log(`[permguard] auto-adopted ${blessed.size} owner permission change(s) into the baseline`);
+        await ownerlog.log(guild, {
+          emoji: '🛡️', title: `Permission baseline auto-updated (${blessed.size})`, color: 0x57F287,
+          detail: [...blessed].map(id => `• <#${id}>`).join('\n') + '\n(Adopted automatically — you made these changes directly.)',
+        });
+      }
+    }
+    saveAuditState({ lastId: entries[entries.length - 1].id });
+    return fresh.length;
+  } catch (e) { console.error('[permguard] pollOwnerOverwrites:', e.message); return 0; }
+}
+
+function register(client, { intervalMin = 20, ownerPollMin = 2 } = {}) {
   const run = async () => {
     const guild = client.guilds.cache.first();
     if (!guild) return;
+    // Bless any owner-made changes FIRST so this sweep never reverts something you just changed.
+    try { await pollOwnerOverwrites(guild); } catch (err) { console.error('[permguard] owner-poll (pre-sweep) failed:', err.message); }
     try { await sweepPermissions(guild); } catch (err) { console.error('[permguard] sweep failed:', err.message); }
+  };
+  const runOwnerPoll = async () => {
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
+    try { await pollOwnerOverwrites(guild); } catch (err) { console.error('[permguard] owner-poll failed:', err.message); }
   };
   setTimeout(run, 45 * 1000); // after boot self-heal + ownerlog channel are set up
   setInterval(run, intervalMin * 60 * 1000);
-  console.log(`[permguard] permission-drift sweep every ${intervalMin}min`);
+  setTimeout(runOwnerPoll, 30 * 1000);
+  setInterval(runOwnerPoll, ownerPollMin * 60 * 1000);
+  console.log(`[permguard] permission-drift sweep every ${intervalMin}min, owner-change auto-adopt poll every ${ownerPollMin}min`);
 }
 
 // ---- interactive reconcile ("diff + per-item Keep/Undo + Commit") -------------------------------
@@ -267,7 +334,7 @@ function isReconcileInteraction(i) {
 }
 
 async function handleReconcile(interaction) {
-  if (opspanel.tierOf(interaction) !== 'owner')
+  if (!['owner', 'botowner'].includes(opspanel.tierOf(interaction)))
     return interaction.reply({ content: '🔒 Owner only.', flags: EPH });
   const [action, sid, idxStr] = interaction.customId.split(':');
   const s = sessions.get(sid);
