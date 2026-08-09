@@ -5518,6 +5518,15 @@ client.on('interactionCreate', async (interaction) => {
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply(copy.common.notInServer);
       if (member.id === guild.ownerId) return interaction.editReply('You can’t strike the server owner.');
+      if (cornerMs) {
+        // Same tier hierarchy as every other corner entry point (/corner, "Send to corner", etc.) — this
+        // one was missing it, letting a mod attach a corner to a strike on a higher-tier target. Checked
+        // BEFORE the strike is recorded, so a blocked corner doesn't leave a half-applied strike.
+        const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+        const targetTier = opspanel.memberTier(member);
+        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
+          return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
+      }
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
       if (cornerMs) {
@@ -7125,7 +7134,16 @@ client.on('interactionCreate', async (interaction) => {
       }
       const cornerStr = interaction.options.getString('corner');
       let cornerMs = null;
-      if (cornerStr) { cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return R('Bad corner duration. Use e.g. `30m`, `2h`, `30s`.'); }
+      if (cornerStr) {
+        cornerMs = corner.parseDuration(cornerStr); if (!cornerMs) return R('Bad corner duration. Use e.g. `30m`, `2h`, `30s`.');
+        // Same tier hierarchy as every other corner entry point (/corner, "Send to corner", etc.) — this
+        // one was missing it, letting a mod attach a corner to a strike on a higher-tier target. Checked
+        // BEFORE the strike is recorded, so a blocked corner doesn't leave a half-applied strike.
+        const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+        const targetTier = opspanel.memberTier(member);
+        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
+          return R(`You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
+      }
       const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? `, ${reason}` : ''}` : reason;
       const res = await strikes.addStrike(interaction.guild, member, state, { weight, ruleIndex: ruleN, reason: reasonText, timeoutMs, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
