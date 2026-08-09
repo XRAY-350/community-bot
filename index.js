@@ -2803,15 +2803,23 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
   if (!r.ok) return { ok: false, error: r.error };
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
+  // A deleted-message log entry is BOT-authored (the real source message is gone, so wl_corner points here
+  // instead) — attribute to the cornered MEMBER, not the bot, and strip the log's own "🗑️ Message deleted…"
+  // header line so only the original content shows.
+  const fromLog = target.author?.id === client.user.id;
+  const authorTag = fromLog ? member.user.tag : target.author.tag;
+  const authorAvatar = fromLog ? member.displayAvatarURL() : target.author.displayAvatarURL();
+  const shownContent = fromLog ? (target.content || '').replace(/^🗑️[^\n]*\n\n/, '') : (target.content || '');
+  const channelLabel = fromLog ? 'a deleted-message log entry' : `#${target.channel?.name || '?'}`;
   try {
     const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
     if (cornerCh) {
       await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reason || null, actorId));
       const emb = new EmbedBuilder().setColor(CORNER_RED)
-        .setAuthor({ name: target.author.tag, iconURL: target.author.displayAvatarURL() })
-        .setDescription(target.content?.slice(0, 4000) || '_[no text, see attachment/link]_')
+        .setAuthor({ name: authorTag, iconURL: authorAvatar })
+        .setDescription(shownContent.slice(0, 4000) || '_[no text, see attachment/link]_')
         .addFields({ name: 'Why they’re here', value: `Cornered for this message by <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}` })
-        .setFooter({ text: `originally in #${target.channel?.name || '?'}` }).setTimestamp(target.createdTimestamp);
+        .setFooter({ text: `originally in ${channelLabel}` }).setTimestamp(target.createdTimestamp);
       const files = [...(target.attachments?.values() || [])].slice(0, 5).map(a => a.url);
       await cornerCh.send({ embeds: [emb], content: files.length ? files.join('\n') : undefined, allowedMentions: { parse: [] } });
     }
@@ -5052,9 +5060,21 @@ client.on('messageDelete', async (msg) => {
     if (tribes.all().some(t => t.throneId === msg.channelId)) return;
     const ch = await client.channels.fetch(config.watchLogChannelId).catch(() => null);
     if (!ch) return;
+    // messageDelete carries no executor — MESSAGE_DELETE audit entries don't carry the message id either,
+    // so correlate on author + channel + recency (same best-effort pattern threadDelete's appeal-log uses
+    // above). No matching entry within the last few seconds → Discord never logged one, which only happens
+    // when the author deleted their own message (self-deletes aren't audited).
+    let deleterId = null;
+    try {
+      const logs = await msg.guild.fetchAuditLogs({ type: AuditLogEvent.MessageDelete, limit: 5 }).catch(() => null);
+      const entry = logs && [...logs.entries.values()].find(e =>
+        e.targetId === msg.author.id && e.extra?.channel?.id === msg.channelId && (Date.now() - e.createdTimestamp) < 10000);
+      if (entry?.executor && entry.executor.id !== msg.author.id) deleterId = entry.executor.id;
+    } catch { /* best-effort — falls back to "themselves" below */ }
     const content = (msg.content || '').trim();
     const embed = new EmbedBuilder().setColor(0x99AAB5)
-      .setDescription(`🗑️ **Message deleted** by <@${msg.author.id}> in <#${msg.channelId}>` + (content ? `\n\n${content.slice(0, 1500)}` : '\n\n_(no text — attachment/embed only)_'))
+      .setDescription(`🗑️ **Message deleted** — by <@${msg.author.id}>, in <#${msg.channelId}>, deleted by ${deleterId ? `<@${deleterId}>` : `<@${msg.author.id}> _(themselves)_`}`
+        + (content ? `\n\n${content.slice(0, 1500)}` : '\n\n_(no text — attachment/embed only)_'))
       .setFooter({ text: `${msg.author.tag} · ${msg.author.id}` }).setTimestamp(msg.createdAt || new Date());
     // Re-upload attachments into the log message itself rather than just linking the CDN URL — a deleted
     // message's attachment links tend to go dead within minutes, which made the link-only version useless
@@ -5076,7 +5096,20 @@ client.on('messageDelete', async (msg) => {
       } catch (e) { failedLinks.push(`${a.name || 'file'} (fetch failed: ${e.message}) — ${a.url}`); }
     }
     if (failedLinks.length) embed.addFields({ name: `📎 Couldn't re-upload (${failedLinks.length})`, value: failedLinks.join('\n').slice(0, 1000) });
-    await ch.send({ embeds: [embed], files, allowedMentions: { parse: [] } }).catch(() => {});
+    // Reuse the SAME wl_strike/wl_corner/wl_dismiss buttons + handler the watchlist alerts use, so this
+    // needs no new handler. Both flows locate the source message via a jump link scraped out of the embed
+    // (originalRefFromAlert) — the original message is gone, so point that link at THIS log entry instead
+    // (added below, after sending, once we know its own id). cornerFromMessage already treats a bot-authored
+    // source message as "not the real author" and falls back to the cornered member's own identity/content.
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`wl_strike:${msg.author.id}`).setEmoji('⚠️').setLabel('Strike').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`wl_corner:${msg.author.id}`).setEmoji('⛓️').setLabel('Corner').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`wl_dismiss:${msg.author.id}`).setEmoji('🗑️').setLabel('Dismiss').setStyle(ButtonStyle.Secondary));
+    const sent = await ch.send({ embeds: [embed], components: [row], files, allowedMentions: { parse: [] } }).catch(() => null);
+    if (sent) {
+      embed.addFields({ name: 'Original', value: `[this entry](${sent.url}) — the source message is gone, this log is the record now`, inline: true });
+      await sent.edit({ embeds: [embed] }).catch(() => {});
+    }
   } catch (e) { console.error('[watchlist] delete-log:', e.message); }
 });
 
