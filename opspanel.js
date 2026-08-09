@@ -782,7 +782,15 @@ async function handlePanel(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const member = await interaction.guild.members.fetch(uid).catch(() => null);
     if (!member) return interaction.editReply(copy.common.noMemberInServer);
+    // Same tier hierarchy as /corner and /strike (own tier or lower, never higher) — the dashboard's quick
+    // corner/strike buttons had no check at all, unlike every non-dashboard entry point. Only guards the
+    // ESCALATING actions (corner, strikeup) below; uncorner/verify/strikedown are releases/undos, not
+    // punitive, so they're left alone (ban already has its own admin+ gate a few lines down).
+    const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+    const targetTier = memberTier(member);
+    const outranked = (RANK[targetTier] || 0) > (RANK[tier] || 0);
     if (act === 'corner') {
+      if (outranked) return interaction.editReply(`🔒 You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
       const r = await D.corner.corner(interaction.guild, member, null, D.state, interaction.user.id);
       if (r.ok && D.announceCorner) await D.announceCorner(interaction.guild, uid, null, interaction.user.id, null);
       return interaction.editReply(r.ok ? `⛓️ Cornered <@${uid}> indefinitely, stripped ${r.stripped} role(s). Release from the ⛓️ Corner page when ready.` : `Failed: ${r.error}`);
@@ -810,6 +818,7 @@ async function handlePanel(interaction) {
       if (!D.strike) return interaction.editReply('Strikes aren’t set up.');
       const cap = D.strike.BAN_THRESHOLD;
       if (act === 'strikeup') {
+        if (outranked) return interaction.editReply(`🔒 You can’t strike someone of a higher staff tier than you (they’re **${targetTier}**).`);
         const r = await D.strike.up(interaction.guild, member, interaction.user.tag);
         return interaction.editReply(`⚠️ Gave <@${uid}> a 1-unit strike, now **${D.strike.format(r.totalUnits)}/${cap} units**.${r.crossedBan ? ' 🔨 **Crossed the ban threshold.** Use the Ban button if staff confirms.' : ''}`);
       }
@@ -946,6 +955,11 @@ async function handlePanel(interaction) {
       const uid = id.split(':')[1];
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
       if (!member) return interaction.editReply(copy.common.noMemberInServer);
+      // Same tier hierarchy as every other corner entry point — this dashboard modal had no check at all.
+      const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+      const targetTier = memberTier(member);
+      if ((RANK[targetTier] || 0) > (RANK[tier] || 0))
+        return interaction.editReply(`🔒 You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
       if (dur && !ms) return interaction.editReply(copy.corner.badDuration);

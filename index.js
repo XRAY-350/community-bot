@@ -5551,15 +5551,13 @@ client.on('interactionCreate', async (interaction) => {
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (!member) return interaction.editReply(copy.common.notInServer);
       if (member.id === guild.ownerId) return interaction.editReply('You can’t strike the server owner.');
-      if (cornerMs) {
-        // Same tier hierarchy as every other corner entry point (/corner, "Send to corner", etc.) — this
-        // one was missing it, letting a mod attach a corner to a strike on a higher-tier target. Checked
-        // BEFORE the strike is recorded, so a blocked corner doesn't leave a half-applied strike.
-        const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-        const targetTier = opspanel.memberTier(member);
-        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
-          return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
-      }
+      // Same tier hierarchy as every corner entry point (/corner, "Send to corner", etc.) — this covers the
+      // strike itself now (a mod could strike an admin outright, not just via the attached-corner field),
+      // checked BEFORE the strike is recorded so a block never leaves a half-applied strike.
+      const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+      const targetTier = opspanel.memberTier(member);
+      if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
+        return interaction.editReply(`You can’t strike someone of a higher staff tier than you (they’re **${targetTier}**).`);
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
       if (cornerMs) {
@@ -7146,6 +7144,12 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'add') {
       if (member.id === interaction.guild.ownerId) return R('You can’t strike the server owner.');
+      // Same tier hierarchy as /corner (own tier or lower, never higher) — this was missing entirely, so a
+      // mod could strike an admin even though every corner path already blocks the equivalent.
+      const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+      const targetTier = opspanel.memberTier(member);
+      if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
+        return R(`You can’t strike someone of a higher staff tier than you (they’re **${targetTier}**).`);
       const reason = (interaction.options.getString('reason') || '').trim();
       const ruleN = interaction.options.getString('rule');
       if (!ruleN && !reason) return R('Give a reason: pick **which rule** they broke, type a **custom reason**, or both.');
