@@ -20,12 +20,13 @@ const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
 const COOLDOWN_MS = 60 * 60 * 1000;        // HARD FLOOR: at least 1h between events (owner) — for manual + auto
 const DAILY_CAP = 16;                       // max/UTC day: peak (~14h) + downtime (~8h) both run, so this is raised
 // Auto events don't fire on a fixed cadence: each next auto event is scheduled at a RANDOM time after the last
-// one ends (owner: "at least an hour between, but random"). PEAK gap 1h..2h; DOWNTIME gap is longer (2h..3.5h)
-// so the quiet hours stay sparse. Which range is used depends on the mode passed to recordEnd.
-const AUTO_GAP_MIN_MIN = 60;                // peak: never sooner than 1h after the last event
-const AUTO_GAP_SPREAD_MIN = 60;            // ...plus a random 0..60 min, so the peak gap is 1h..2h
-const AUTO_GAP_NIGHT_MIN = 120;            // downtime: never sooner than 2h
-const AUTO_GAP_NIGHT_SPREAD = 90;          // ...plus a random 0..90 min, so the downtime gap is 2h..3.5h
+// one ends. PEAK gap 1.5h..3h; DOWNTIME gap is longer (3h..5h) so the quiet hours stay sparse. Which range is
+// used depends on the mode passed to recordEnd. (Cut ~1.5x from the original 1h..2h/2h..3.5h, 2026-08-09 —
+// owner: events were firing too often.)
+const AUTO_GAP_MIN_MIN = 90;                // peak: never sooner than 1.5h after the last event
+const AUTO_GAP_SPREAD_MIN = 90;            // ...plus a random 0..90 min, so the peak gap is 1.5h..3h
+const AUTO_GAP_NIGHT_MIN = 180;            // downtime: never sooner than 3h
+const AUTO_GAP_NIGHT_SPREAD = 120;         // ...plus a random 0..120 min, so the downtime gap is 3h..5h
 
 // In-memory cache — get() runs on EVERY message (blitz/scramble hooks), so avoid a sync file read each time.
 // This process is the only writer, so caching is safe; save() refreshes it.
@@ -56,13 +57,33 @@ function winner() { const a = get(); if (!a) return null; let best = null, bs = 
 // Cooldown + daily cap (owner). recordEnd() stamps the end of a challenge and bumps today's count (reset on
 // a new UTC day). startBlocked() returns a reason string if a new one can't start yet, or null if it can.
 function utcDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
-function recordEnd(nowMs, downtime) {
+function recordEnd(nowMs, downtime, type) {
   const s = load(); const now = nowMs || Date.now(); const day = utcDay(now);
   if (s.day !== day) { s.day = day; s.count = 0; }
   s.count = (s.count || 0) + 1; s.lastEndedAt = now;
+  if (type) {
+    s.lastType = type;
+    // Recency history (most-recent first) — the AUTO picker excludes half the pool's worth of the most
+    // recent plays (see excludeRecent below) so a type can't come back around until the "deck" is half
+    // cycled, not just avoid an immediate back-to-back repeat. Capped well above any real pool size.
+    s.history = [type, ...(s.history || [])].slice(0, 20);
+  }
   const [gmin, gspread] = downtime ? [AUTO_GAP_NIGHT_MIN, AUTO_GAP_NIGHT_SPREAD] : [AUTO_GAP_MIN_MIN, AUTO_GAP_SPREAD_MIN];
-  s.nextAutoAt = now + (gmin + randInt(gspread + 1)) * 60000;   // random gap (1h..2h peak, 2h..3.5h downtime)
+  s.nextAutoAt = now + (gmin + randInt(gspread + 1)) * 60000;   // random gap (1.5h..3h peak, 3h..5h downtime)
   save(s);
+}
+function getLastType() { return load().lastType || null; }
+function getHistory() { return load().history || []; }
+// Given a candidate pool, exclude the ceil(pool.length/2) most-recently-played types (from `history`,
+// most-recent first) that appear in it — so a type can't repeat until roughly half the pool has cycled.
+// Falls back to the full pool if that would exclude everything (tiny pools / short history).
+function excludeRecent(pool, history) {
+  if (pool.length <= 1) return pool;
+  const need = Math.ceil(pool.length / 2);
+  const excluded = new Set();
+  for (const t of history) { if (excluded.size >= need) break; if (pool.includes(t)) excluded.add(t); }
+  const remaining = pool.filter(t => !excluded.has(t));
+  return remaining.length ? remaining : pool;
 }
 // Is an AUTO event due? True once we've passed the randomly-scheduled next-auto time (or if none is set yet).
 function autoStartDue(nowMs) { const s = load(); return !s.nextAutoAt || (nowMs || Date.now()) >= s.nextAutoAt; }
@@ -430,7 +451,7 @@ module.exports = {
   STATE_FILE, BANK_FILE, WIN_TREASURY, WIN_GLORY, RACE_TARGET, TRIVIA_QUESTIONS, SCRAMBLE_ROUNDS, COOLDOWN_MS, DAILY_CAP,
   TYPED_TYPES, BUTTON_TYPES, TF_QUESTIONS, PATTERN_QUESTIONS, TRIVIA_CATEGORY,
   get, isActive, set, clear, update, addScore, addMemberScore, topMemberScorer, pushNewAch, getNewAch, markOnce, resetBucket, winner,
-  recordEnd, startBlocked, autoStartDue, getNextAutoAt,
+  recordEnd, startBlocked, autoStartDue, getNextAutoAt, getLastType, getHistory, excludeRecent,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
   nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,
   freshenQuestions, loadCachedWords, fetchWordBank,

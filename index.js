@@ -1438,7 +1438,10 @@ async function maybeAutoStartArena(guild) {
   if (arena.startBlocked()) return;        // already running/lobby, under the 1h floor, or daily cap reached
   if (!arena.autoStartDue(Date.now())) return;   // the randomly-scheduled next-auto time hasn't arrived yet
   const downtime = mode === 'downtime';
-  const pool = downtime ? DOWNTIME_TYPES : ARENA_ALL_TYPES;
+  const fullPool = downtime ? DOWNTIME_TYPES : ARENA_ALL_TYPES;
+  // A type can't come back around until roughly half the pool has cycled through (not just avoiding an
+  // immediate back-to-back repeat) — owner: "shouldn't repeat until half the games have been done."
+  const pool = arena.excludeRecent(fullPool, arena.getHistory());
   const type = pool[Math.floor(Math.random() * pool.length)];
   try { await startArenaCountdown(guild, type, ARENA_DEFAULTS[type] || 5, client.user.id, downtime); console.log(`[arena] auto-started ${type}${downtime ? ' (downtime)' : ''}`); }
   catch (e) { console.error('[arena] auto-start:', e.message); }
@@ -1743,7 +1746,7 @@ async function finalizeArena(guild, win, note = '') {
     const mentions = { roles: roleIds }; if (users.length) mentions.users = users;
     await ch.send({ content: `${resultText}${mvpLine}${achLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: mentions }).catch(() => {});
   }
-  arena.recordEnd(Date.now(), dt);   // stamp end + schedule the next auto (longer gap if downtime)
+  arena.recordEnd(Date.now(), dt, a.type);   // stamp end + schedule the next auto (longer gap if downtime)
   arena.clear();
 }
 // Called on boot: an active challenge from before a restart is ended immediately (a restart ends it early)
@@ -1796,8 +1799,8 @@ const SEALED_ROUND_MS = 20000;          // time per question (shared across all 
 const SEALED_FAST_MS = 2000;            // answer within this (relative to the throne's prompt) = full speed points
 const SEALED_CORRECT_PTS = 100;         // flat points for a correct answer
 const SEALED_SPEED_MAX = 100;           // max speed bonus, decaying linearly FAST_MS..ROUND_MS
-const SEALED_DAILY_CAP = 3;
-const SEALED_MIN_GAP_MS = 3 * 3600000;  // at least 3h between sealed arenas
+const SEALED_DAILY_CAP = 2;             // was 3 (owner, 2026-08-09: events were firing too often)
+const SEALED_MIN_GAP_MS = 4.5 * 3600000;  // at least 4.5h between sealed arenas (was 3h)
 const SEALED_LOBBY_MS = 5 * 60000;      // "gather in your throne" countdown before the first round (matches the arena)
 const _sealedTimers = { start: null, round: null };
 function clearSealedTimers() { for (const k of ['start', 'round']) if (_sealedTimers[k]) { clearTimeout(_sealedTimers[k]); _sealedTimers[k] = null; } }
@@ -1835,7 +1838,11 @@ async function startSealedArena(guild, { type, startedById } = {}) {
   if (sealed.isActive()) return { ok: false, error: 'A Sealed Arena is already running.' };
   if (arena.isActive()) return { ok: false, error: 'Wait for the current Arena to finish first.' };
   const pool = sealedGamePool();
-  const gameType = type && pool.includes(type) ? type : pool[Math.floor(Math.random() * pool.length)];
+  // Auto-picks (no explicit type) exclude roughly half the pool's worth of most-recently-played games, so
+  // a type can't repeat until the "deck" is half cycled — not just avoiding an immediate repeat. An
+  // explicit type (manual /sealedarena start) is always honored as requested.
+  const autoPool = arena.excludeRecent(pool, sealed.gameHistory());
+  const gameType = type && pool.includes(type) ? type : autoPool[Math.floor(Math.random() * autoPool.length)];
   const withThrone = tribes.all().filter(t => t.throneId);
   if (withThrone.length < 2) return { ok: false, error: 'Need at least two tribes with thrones.' };
   const set = await buildSealedQuestions(gameType);
@@ -1850,7 +1857,7 @@ async function startSealedArena(guild, { type, startedById } = {}) {
   if (Object.keys(thrones).length < 2) return { ok: false, error: 'Could not reach enough thrones.' };
   const startsAt = Date.now() + SEALED_LOBBY_MS;   // LOBBY: rally now, the first round drops after the countdown
   sealed.set({ mode: 'sealed', gameType, kind: set.kind, items: set.items, startedAt: Date.now(), startsAt, phase: 'lobby', thrones, startedById: startedById || null });
-  sealed.bumpDaily(Date.now());   // count the launch immediately (daily cap + min-gap start from now)
+  sealed.bumpDaily(Date.now(), gameType);   // count the launch immediately (daily cap + min-gap start from now)
   await Promise.all(Object.keys(thrones).map(async (k) => {
     const th = thrones[k]; const ch = await guild.channels.fetch(th.channelId).catch(() => null); const t = tribes.get(k);
     if (ch) await ch.send({ content: `# 🚪 Sealed Arena begins <t:${Math.floor(startsAt / 1000)}:R>!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather here now — in about **${Math.round(SEALED_LOBBY_MS / 60000)} minutes** it's ${SEALED_QUESTIONS} rounds, blind against every other tribe. Answer fast. Results are revealed to everyone at the end.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});

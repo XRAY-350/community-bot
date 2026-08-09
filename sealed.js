@@ -48,10 +48,24 @@ function thronesArr() { const a = get(); return a && a.thrones ? Object.entries(
 // ---- daily cap + last-run tracking (root of the file, independent of the active event) ----
 function dayKey(nowMs) { const d = new Date(nowMs); return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`; }
 function dailyCount(nowMs) { const s = load(); return s.dayKey === dayKey(nowMs || Date.now()) ? (s.count || 0) : 0; }
-function bumpDaily(nowMs) { const s = load(); const k = dayKey(nowMs || Date.now()); if (s.dayKey !== k) { s.dayKey = k; s.count = 0; } s.count = (s.count || 0) + 1; s.lastRunAt = nowMs || Date.now(); save(s); }
+function bumpDaily(nowMs, gameType) {
+  const s = load(); const k = dayKey(nowMs || Date.now());
+  if (s.dayKey !== k) { s.dayKey = k; s.count = 0; }
+  s.count = (s.count || 0) + 1; s.lastRunAt = nowMs || Date.now();
+  if (gameType) {
+    s.lastGameType = gameType;
+    // Recency history (most-recent first) — see arena.js's excludeRecent: the AUTO picker excludes
+    // roughly half the pool's worth of the most recent plays, not just the immediately-previous one.
+    s.gameHistory = [gameType, ...(s.gameHistory || [])].slice(0, 20);
+  }
+  save(s);
+}
 function lastRunAt() { return load().lastRunAt || 0; }
+// Last game type played (any mode).
+function lastGameType() { return load().lastGameType || null; }
+function gameHistory() { return load().gameHistory || []; }
 // scheduled-Trial once-a-day marker (separate from the sealed cap)
 function trialDoneToday(nowMs) { const s = load(); return s.lastTrialDay === dayKey(nowMs || Date.now()); }
 function markTrialDay(nowMs) { const s = load(); s.lastTrialDay = dayKey(nowMs || Date.now()); save(s); }
 
-module.exports = { FILE, load, save, get, isActive, set, clear, update, throne, throneByChannel, updateThrone, scoreThrone, allThronesDone, thronesArr, dailyCount, bumpDaily, lastRunAt, trialDoneToday, markTrialDay };
+module.exports = { FILE, load, save, get, isActive, set, clear, update, throne, throneByChannel, updateThrone, scoreThrone, allThronesDone, thronesArr, dailyCount, bumpDaily, lastRunAt, lastGameType, gameHistory, trialDoneToday, markTrialDay };
