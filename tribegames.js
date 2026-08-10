@@ -1,0 +1,58 @@
+// tribegames.js — state for Tribe Games: staff-recorded tribe-vs-tribe events using external games the bot
+// can't referee (Among Us, Roblox titles, ...). One active event at a time, mirrors sealed.js's shape.
+// Each catalog entry declares its own result FORMAT because several of these games have hidden/asymmetric
+// roles (Among Us's imposter/crewmate, MM2's murderer/sheriff/hero/innocent) rather than a simple ranked
+// or single-winner outcome — the format drives both how /tribe panel's Report Result modal is built and how
+// rewards are computed. See index.js's tribe-games block for the actual Discord-facing logic; this module
+// only owns state + the catalog.
+const fs = require('fs');
+const { statePath } = require('./statepath');
+const FILE = process.env.FUBU_TRIBEGAMES_FILE || statePath('tribegames.json');
+
+// format: 'versus' (single winner, no hidden roles) | 'roleOutcome2' (2 asymmetric sides) |
+// 'roleOutcome3' (MM2's own case: 4 role labels, 3 reward tiers — see index.js's TRIBEGAME_ROLE3_MULT).
+const GAME_CATALOG = {
+  amongus_classic: { label: 'Among Us — Classic (killing)', format: 'roleOutcome2', roles: ['imposter', 'crewmate'] },
+  amongus_hs:      { label: 'Among Us — Hide & Seek',       format: 'roleOutcome2', roles: ['imposter', 'crewmate'] },
+  ftf:              { label: 'Flee the Facility',           format: 'roleOutcome2', roles: ['beast', 'guard'] },
+  mm2:              { label: 'Murder Mystery 2',            format: 'roleOutcome3', roles: ['murderer', 'sheriff', 'hero', 'innocent'] },
+  aba:              { label: 'Anime Battle Arena',          format: 'versus' },
+  other:            { label: 'Other',                       format: 'versus' },
+  // minecraft: intentionally not added yet — pending MCFleet coordination (see PROGRESS_LOG/agentmsg thread
+  // 'tribe-games-minecraft'). Add it here once scoped; nothing else needs to change to support a new entry.
+};
+
+let _cache = null;
+function load() { if (_cache) return _cache; try { _cache = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { _cache = {}; } return _cache; }
+function save(s) { _cache = s; try { fs.writeFileSync(FILE, JSON.stringify(s)); } catch (e) { console.error('[tribegames] save:', e.message); } }
+
+function get() { return load().active || null; }
+function isActive() { return !!get(); }
+function set(ev) { const s = load(); s.active = ev; save(s); }
+function clear() { const s = load(); delete s.active; save(s); }
+function update(patch) { const a = get(); if (!a) return null; const n = { ...a, ...patch }; set(n); return n; }
+
+// Per-tribe entrant helpers — active.entrants: { [tribeKey]: { repIds: [userId,...], role: null|string } }
+function setEntrant(tribeKey, repIds) {
+  const a = get(); if (!a) return null;
+  a.entrants = a.entrants || {};
+  a.entrants[tribeKey] = { repIds, role: (a.entrants[tribeKey] || {}).role || null };
+  set(a); return a.entrants[tribeKey];
+}
+function setEntrantRole(tribeKey, role) {
+  const a = get(); if (!a || !a.entrants || !a.entrants[tribeKey]) return null;
+  a.entrants[tribeKey].role = role; set(a); return a.entrants[tribeKey];
+}
+function entrantTribeKeys() { const a = get(); return a && a.entrants ? Object.keys(a.entrants) : []; }
+
+// Root-level (not part of the transient `active` event) — cached Discord role id for the rotating
+// "Tribe Games winner" role, created once on first award and reused thereafter.
+function getChampionRoleId() { return load().championRoleId || null; }
+function setChampionRoleId(id) { const s = load(); s.championRoleId = id; save(s); }
+
+module.exports = {
+  FILE, GAME_CATALOG,
+  get, isActive, set, clear, update,
+  setEntrant, setEntrantRole, entrantTribeKeys,
+  getChampionRoleId, setChampionRoleId,
+};

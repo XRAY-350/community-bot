@@ -98,12 +98,28 @@ const RANK_LADDER = [
 const DEFAULT_LEADER_TITLE = 'Chief';
 
 // ---- Tides (activity points) + tenure ----
-function addTides(key, userId, n = 1) {
+// `category` (optional) is one of PATH_CATEGORY's values ('combat'|'social'|'collective') — when it matches
+// the credited member's CHOSEN evolution path, their personal path attribute scales this specific award (see
+// pathAttribute below). Uncategorized calls (the vast majority — donations, staff grants, etc.) are untouched.
+function addTides(key, userId, n = 1, category = null) {
   const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return 0;
   if (!t.tides) t.tides = {};
-  t.tides[userId] = (t.tides[userId] || 0) + n;
+  let credited = n;
+  if (category) {
+    const path = memberPath(key, userId);
+    if (path && PATH_CATEGORY[path] === category) {
+      const mult = 1 + pathAttribute(key, userId) * BONUS_PER_ATTR_POINT;
+      credited = Math.round(n * mult);
+      if (!t.pathStats) t.pathStats = {};
+      if (!t.pathStats[userId]) t.pathStats[userId] = { tidesOnPath: 0, bonusHits: 0 };
+      t.pathStats[userId].tidesOnPath += credited;
+      t.pathStats[userId].bonusHits += 1;
+    }
+  }
+  t.tides[userId] = (t.tides[userId] || 0) + credited;
   save(s); return t.tides[userId];
 }
+function pathStats(key, userId) { const t = get(key); return ((t && t.pathStats) || {})[userId] || { tidesOnPath: 0, bonusHits: 0 }; }
 function getTides(key, userId) { const t = get(key); return ((t && t.tides) || {})[userId] || 0; }
 
 // ---- Prestige (Phase 7 depth): a capped-out member resets their Tides climb for a permanent honour + a lasting
@@ -169,17 +185,35 @@ function recordJoin(key, userId) {
   if (!t.joinedAt[userId]) { t.joinedAt[userId] = Date.now(); save(s); }
 }
 function tenureDays(tribe, userId) { const at = (tribe.joinedAt || {})[userId]; return at ? (Date.now() - at) / 86400000 : 0; }
-// Highest rank index a member has EARNED (days AND tides both met). Rank 0 always qualifies.
+// A tribe is in "path mode" once Edit Lore has replaced its flat 4-rank ladder with the 12-entry, pathKey-
+// tagged one (see setLore below). Every tribe stays in plain flat-ladder mode — today's exact behavior —
+// until its leader-or-staff opts in; nothing here changes for a tribe that hasn't touched lore/paths.
+function isPathMode(tribe) { return (tribe.ranks || []).some(r => r.pathKey); }
+// Highest rank index a member has EARNED (days AND tides both met). Rank 0 always qualifies — EXCEPT in path
+// mode with no path chosen yet, where a member has earned nothing until they pick one (returns -1).
 function earnedRankIndex(tribe, userId) {
   const ranks = tribe.ranks || []; const days = tenureDays(tribe, userId); const tides = (tribe.tides || {})[userId] || 0;
-  let idx = 0;
-  for (let i = 0; i < ranks.length; i++) if (days >= (ranks[i].days || 0) && tides >= (ranks[i].tides || 0)) idx = i;
+  if (!isPathMode(tribe)) {
+    let idx = 0;
+    for (let i = 0; i < ranks.length; i++) if (days >= (ranks[i].days || 0) && tides >= (ranks[i].tides || 0)) idx = i;
+    return idx;
+  }
+  const path = memberPath(tribe.key, userId);
+  if (!path) return -1;
+  let idx = -1;
+  ranks.forEach((r, i) => { if (r.pathKey === path && days >= (r.days || 0) && tides >= (r.tides || 0)) idx = i; });
   return idx;
 }
-// The rank index a member CURRENTLY holds (by which rank role they have), or -1 if none.
+// The rank index a member CURRENTLY holds (by which rank role they have), or -1 if none. Path mode only
+// looks at the member's own chosen path's 4 role slots — the other 8 don't apply to them.
 function currentRankIndex(member, tribe) {
   const ranks = tribe.ranks || [];
-  for (let i = ranks.length - 1; i >= 0; i--) if (ranks[i].roleId && member.roles.cache.has(ranks[i].roleId)) return i;
+  const path = isPathMode(tribe) ? memberPath(tribe.key, member.id) : null;
+  if (isPathMode(tribe) && !path) return -1;
+  for (let i = ranks.length - 1; i >= 0; i--) {
+    if (path && ranks[i].pathKey !== path) continue;
+    if (ranks[i].roleId && member.roles.cache.has(ranks[i].roleId)) return i;
+  }
   return -1;
 }
 
@@ -211,6 +245,76 @@ function setRankNames(key, names) {
   const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !Array.isArray(t.ranks)) return null;
   t.ranks.forEach((r, i) => { if (names[i] && String(names[i]).trim()) r.name = String(names[i]).trim().slice(0, 40); });
   save(s); return t.ranks;
+}
+
+// ---- Tribe Lore + Evolution Paths (Phase 8: owner, 2026-08-10 — "I don't want it to just be cosmetic") ----
+// Every tribe gets exactly 3 mechanical path SLOTS (path0/path1/path2), each mapped to a fixed activity
+// category so the bonus-hook code in index.js never needs to know a tribe's own path NAMES, only its slot.
+// A tribe's tribe.ranks array grows from the flat 4-rank RANK_LADDER to 12 entries (3 paths x 4 ranks),
+// each tagged with pathKey — see isPathMode() above for how the rank functions detect + branch on this.
+const PATH_SLOTS = ['path0', 'path1', 'path2'];
+const PATH_CATEGORY = { path0: 'combat', path1: 'social', path2: 'collective' };
+const ATTR_BASE = 1, ATTR_PER_RANK = 2;          // rank 0 -> attribute 1, rank 3 (maxed) -> attribute 7
+const BONUS_PER_ATTR_POINT = 0.05;               // attribute 1 -> +5%, attribute 7 -> +35%
+const ALLY_LORE_MULT = 1.2;                      // flat, tribe-level (not individual) — see simulateWar/simulateWarMatch
+
+// NOTE for future editors: index.js already has `const lore = require('./lore')` (the separate append-only
+// world-chronicle module) — this `tribe.lore` object is just a field on a tribe record and doesn't collide
+// in JS terms, but never destructure a bare `lore` local out of a tribe object; it would shadow that import.
+function setLore(key, { title, myth, pathNames, attributeNames, rankTitles }) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return null;
+  t.lore = {
+    title: String(title || '').slice(0, 100),
+    myth: String(myth || '').slice(0, 4000),
+    pathNames: PATH_SLOTS.map((_, i) => (pathNames && pathNames[i] && String(pathNames[i]).trim().slice(0, 40)) || `Path ${i + 1}`),
+    attributeNames: PATH_SLOTS.map((_, i) => (attributeNames && attributeNames[i] && String(attributeNames[i]).trim().slice(0, 40)) || 'Attribute'),
+  };
+  // Rebuild tribe.ranks as the 12-entry path-tagged ladder. roleId is preserved when a matching rank already
+  // exists (re-editing lore shouldn't orphan already-created Discord roles); index.js's Edit-Lore handler is
+  // responsible for actually creating any still-missing roles afterward (it has the live guild, this doesn't).
+  const titles = (rankTitles || []).slice(0, 12);
+  const oldByKey = new Map((t.ranks || []).map(r => [r.key, r]));
+  const newRanks = [];
+  PATH_SLOTS.forEach((pathKey, pi) => {
+    RANK_LADDER.forEach((base, ri) => {
+      const idx = pi * 4 + ri;
+      const rkey = `${pathKey}_${base.key}`;
+      const existing = oldByKey.get(rkey);
+      newRanks.push({
+        key: rkey, pathKey,
+        name: (titles[idx] && String(titles[idx]).trim().slice(0, 40)) || base.name,
+        days: base.days, tides: base.tides,
+        roleId: existing ? existing.roleId : null,
+      });
+    });
+  });
+  t.ranks = newRanks;
+  save(s); return t.lore;
+}
+function getLore(key) { return (get(key) || {}).lore || null; }
+// "Has lore" for the alliance/rivalry bonus below — at least one member has actually picked a path, not just
+// that Edit Lore was run once. An unpicked lore setup shouldn't grant a tribe-wide combat bonus by itself.
+function hasLoreEngagement(key) { const t = get(key); return !!(t && t.memberPaths && Object.keys(t.memberPaths).length > 0); }
+
+function memberPath(key, userId) { const t = get(key); return (t && t.memberPaths && t.memberPaths[userId] && t.memberPaths[userId].path) || null; }
+// Switching paths starts the NEW path at rank 0 — no progress carries over (owner's call). The member simply
+// stops holding any old-path rank role next time maybePromoteTribeRank/applyTribeRank run in index.js, since
+// currentRankIndex/earnedRankIndex now only look at the new path's 4 slots.
+function setMemberPath(key, userId, pathSlot) {
+  const s = load(); const t = s.tribes && s.tribes[key]; if (!t || !PATH_SLOTS.includes(pathSlot)) return null;
+  if (!t.memberPaths) t.memberPaths = {};
+  t.memberPaths[userId] = { path: pathSlot, since: Date.now() };
+  save(s); return t.memberPaths[userId];
+}
+// A member's personal attribute value for their chosen path — grows with THEIR rank within that path, not a
+// flat per-tribe number. 0 if they haven't picked a path (or haven't earned that path's rank 0 yet, which
+// shouldn't normally happen since rank 0's thresholds are always met once a path is picked).
+function pathAttribute(key, userId) {
+  const t = get(key); if (!t) return 0;
+  const path = memberPath(key, userId); if (!path) return 0;
+  const idx = earnedRankIndex(t, userId); if (idx < 0) return 0;
+  const withinPath = idx - PATH_SLOTS.indexOf(path) * 4;
+  return withinPath < 0 ? 0 : ATTR_BASE + withinPath * ATTR_PER_RANK;
 }
 
 // Nominations: a THIRD route into a tribe alongside self-join and a leader's direct /tribe invite. Any
@@ -292,6 +396,11 @@ function markWeeklyCrownDone(nowMs) { const s = load(); s.lastGloryResetWeek = w
 // captures it. Separate marker so it's independent of the crown's.
 function dueForChronicle(nowMs) { const s = load(); return !s.lastChronicleWeek || s.lastChronicleWeek < weekStartMs(nowMs); }
 function markChronicleDone(nowMs) { const s = load(); s.lastChronicleWeek = weekStartMs(nowMs); save(s); }
+// Daily marker for the Propaganda forum's reaction sweep (Phase 8) — same shape as the weekly crown/chronicle
+// markers above, just UTC-day-boundary instead of UTC-week-boundary.
+function dayStartMs(nowMs) { const d = new Date(nowMs); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0); }
+function dueForPropagandaDay(nowMs) { const s = load(); return !s.lastPropagandaDay || s.lastPropagandaDay < dayStartMs(nowMs); }
+function markPropagandaDayDone(nowMs) { const s = load(); s.lastPropagandaDay = dayStartMs(nowMs); save(s); }
 
 // ---- Seasons (owner build-out: the long-term competitive container ON TOP of the weekly crown). A season
 // spans several weeks; every weekly Crown also banks a "season crown" (see resetWeeklyGlory). At season end
@@ -557,10 +666,14 @@ function resolveWarRecord(id, patch) {
 // defense doesn't cost the ally anything directly, it just reinforces).
 function simulateWar(guild, attacker, defender) {
   const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
+  // An ally that's ALSO lore-engaged (both sides have at least one member on a chosen path) fights harder —
+  // "a sworn, storied alliance" vs. a purely transactional one (owner: lore should have a mechanical effect
+  // on alliances, not just flavor).
+  const allyPower = t => { const ally = allyOf(t); if (!ally) return 0; const p = warPower(guild, ally); return (hasLoreEngagement(t.key) && hasLoreEngagement(ally.key)) ? p * ALLY_LORE_MULT : p; };
   // Stronghold walls multiply the DEFENDER's total defensive power (attackers can't carry walls into a fight).
   const wall = 1 + STRONGHOLD_DEF_PER_TIER * (defender.strongholdTier || 0);
-  const powerA = warPower(guild, attacker) + (allyOf(attacker) ? warPower(guild, allyOf(attacker)) : 0);
-  const powerB = (warPower(guild, defender) + (allyOf(defender) ? warPower(guild, allyOf(defender)) : 0)) * wall;
+  const powerA = warPower(guild, attacker) + allyPower(attacker);
+  const powerB = (warPower(guild, defender) + allyPower(defender)) * wall;
   const attackerWinChance = powerA / (powerA + powerB || 1);
   const attackerWins = Math.random() < attackerWinChance;
   const winner = attackerWins ? attacker : defender;
@@ -586,9 +699,10 @@ function simulateWar(guild, attacker, defender) {
 const WAR_WIN_ROUNDS = 4;   // first tribe to this many skirmish wins takes the war (best-of-7)
 function simulateWarMatch(guild, attacker, defender) {
   const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
+  const allyPower = t => { const ally = allyOf(t); if (!ally) return 0; const p = warPower(guild, ally); return (hasLoreEngagement(t.key) && hasLoreEngagement(ally.key)) ? p * ALLY_LORE_MULT : p; };
   const wall = 1 + STRONGHOLD_DEF_PER_TIER * (defender.strongholdTier || 0);
-  const powerA = warPower(guild, attacker) + (allyOf(attacker) ? warPower(guild, allyOf(attacker)) : 0);
-  const powerB = (warPower(guild, defender) + (allyOf(defender) ? warPower(guild, allyOf(defender)) : 0)) * wall;
+  const powerA = warPower(guild, attacker) + allyPower(attacker);
+  const powerB = (warPower(guild, defender) + allyPower(defender)) * wall;
   const pA = powerA / (powerA + powerB || 1);
   const rosterOf = t => { const r = guild.roles.cache.get(t.roleId); return r ? [...r.members.values()].map(m => m.id) : []; };
   const aRoster = rosterOf(attacker), dRoster = rosterOf(defender);
@@ -695,13 +809,16 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, inAnyT
   grantFreeRetheme, hasFreeRetheme, consumeFreeRetheme,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
-  addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex,
+  addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex, isPathMode,
+  setLore, getLore, hasLoreEngagement, memberPath, setMemberPath, pathAttribute, pathStats,
+  PATH_SLOTS, PATH_CATEGORY, ATTR_BASE, ATTR_PER_RANK, BONUS_PER_ATTR_POINT, ALLY_LORE_MULT,
   getPrestige, resetMemberTides, addPrestige, prestigeLog,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
   startLeaveRequest, getLeaveRequest, clearLeaveRequest, getHubInfo, setHubInfo, getAnnounceInfo, setAnnounceInfo, getArenaInfo, setArenaInfo,
   addTreasury, getTreasury, spendTreasury, addGlory, getGlory, resetWeeklyGlory,
   dueForWeeklyCrown, markWeeklyCrownDone, dueForChronicle, markChronicleDone, weekStartMs,
+  dueForPropagandaDay, markPropagandaDayDone,
   SEASON_LEN_MS, ensureSeason, getSeason, addSeasonCrown, seasonStandings, dueForSeasonEnd, seasonHistory, currentChampionKey, endSeasonAndRotate,
   recordArenaPlay, getArenaStreak,
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,

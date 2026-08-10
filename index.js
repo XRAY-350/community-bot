@@ -46,6 +46,7 @@ const recruitment = require('./recruitment');
 const lore = require('./lore');
 const quests = require('./quests');
 const sealed = require('./sealed');
+const tribegames = require('./tribegames');
 const proving = require('./proving');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
@@ -170,7 +171,7 @@ async function sweepRecruitment(guild) {
     const tribe = tribes.get(p.tribeKey);
     const stillIn = tribe && !!guild.roles.cache.get(tribe.roleId)?.members.has(p.inviteeId);
     if (tribe && stillIn && recruitment.creditRecruit(p.recruiterId, p.inviteeId)) {
-      tribes.addTides(tribe.key, p.recruiterId, recruitment.RECRUITER_TIDES);
+      tribes.addTides(tribe.key, p.recruiterId, recruitment.RECRUITER_TIDES, 'collective');
       tribes.addTreasury(tribe.key, recruitment.RECRUITER_TREASURY);
       const hall = tribe.hallId && await guild.channels.fetch(tribe.hallId).catch(() => null);
       if (hall) await hall.send({ content: `🎉 <@${p.recruiterId}> recruited <@${p.inviteeId}> into **${tribe.shortName || tribe.name}**, and they stuck around! +${recruitment.RECRUITER_TIDES} ${tribe.pointsName || 'points'} for the recruiter, +${recruitment.RECRUITER_TREASURY} treasury for the tribe.`, allowedMentions: { users: [p.recruiterId] } }).catch(() => {});
@@ -1194,10 +1195,15 @@ async function executeWar(guild, war, note = '') {
   await ensureMembers(guild).catch(() => {});
   const sim = tribes.simulateWarMatch(guild, attacker, defender);
   const winner = tribes.get(sim.winnerKey), loser = tribes.get(sim.loserKey);
+  // Storied Rivalry (Phase 8): a war between two tribes who've both actually engaged with their lore (at
+  // least one member on a chosen path each) hits harder — no separate "declare a rival" mechanic needed,
+  // every fight between two lore-active tribes just counts for more.
+  const rivalryMult = (tribes.hasLoreEngagement(attacker.key) && tribes.hasLoreEngagement(defender.key)) ? tribes.ALLY_LORE_MULT : 1;
+  const raidAmount = Math.round(sim.raidAmount * rivalryMult), gloryBonus = Math.round(tribes.WAR_GLORY_BONUS * rivalryMult);
   // Consequences apply IMMEDIATELY (so a restart mid-broadcast never loses them; the live show is theater).
-  tribes.addTreasury(sim.winnerKey, sim.raidAmount);
-  tribes.addTreasury(sim.loserKey, -sim.raidAmount);
-  tribes.addGlory(sim.winnerKey, tribes.WAR_GLORY_BONUS);
+  tribes.addTreasury(sim.winnerKey, raidAmount);
+  tribes.addTreasury(sim.loserKey, -raidAmount);
+  tribes.addGlory(sim.winnerKey, gloryBonus);
   const now = Date.now();
   tribes.update(attacker.key, { lastOutboundWarAt: now });   // separate cooldowns (owner 2026-08-05): the aggressor cools on ATTACKING
   tribes.update(defender.key, { lastInboundWarAt: now });    // ...the target cools on BEING attacked — independently
@@ -1206,7 +1212,7 @@ async function executeWar(guild, war, note = '') {
     if (m) await captureMemberInto(guild, winner, m, `Captured in war: ${loser.shortName || loser.name} → ${winner.shortName || winner.name}`).catch(() => {});
   }
   const warName = makeWarName();   // every war is named (Phase 7)
-  tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount: sim.raidAmount, capturedIds: sim.capturedIds, warName });
+  tribes.resolveWarRecord(war.id, { status: 'resolved', resolvedAt: now, winnerKey: sim.winnerKey, loserKey: sim.loserKey, raidAmount, capturedIds: sim.capturedIds, warName });
   const attackerWon = sim.winnerKey === attacker.key;
   const wScore = attackerWon ? sim.scoreA : sim.scoreD, lScore = attackerWon ? sim.scoreD : sim.scoreA;
   lore.record({ type: 'war', title: `${warName}: ${winner.shortName || winner.name} beat ${loser.shortName || loser.name} ${wScore}-${lScore}`, detail: `decided in ${sim.rounds.length} skirmishes`, tribes: [attacker.key, defender.key], winner: winner.key, warName });
@@ -1230,7 +1236,8 @@ async function executeWar(guild, war, note = '') {
   const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
   const relicRaidLine = stolenRelic ? `\n🏺 **${winner.shortName || winner.name} seized ${stolenRelic.name}** from ${loser.shortName || loser.name} as a war trophy.` : '';
   // Concise record posted to both thrones.
-  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} win ${wScore}-${lScore}!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${sim.raidAmount} treasury raided, +${tribes.WAR_GLORY_BONUS} glory to ${winner.shortName || winner.name}.\n> ${captureLine}${wallLine}${relicRaidLine}${honorsLine}`;
+  const rivalryNote = rivalryMult > 1 ? ` (⚡ storied rivalry: both tribes' lore is active, rewards boosted ${Math.round((rivalryMult - 1) * 100)}%)` : '';
+  const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} win ${wScore}-${lScore}!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${raidAmount} treasury raided, +${gloryBonus} glory to ${winner.shortName || winner.name}.${rivalryNote}\n> ${captureLine}${wallLine}${relicRaidLine}${honorsLine}`;
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;
     const throne = await guild.channels.fetch(t.throneId).catch(() => null);
@@ -1285,7 +1292,7 @@ async function broadcastWarSpectacle(guild, attacker, defender, winner, loser, s
   let mvpId = null, mvpN = 0; const wRole = guild.roles.cache.get(winner.roleId);
   for (const [id, n] of Object.entries(tally)) if (wRole?.members.has(id) && n > mvpN) { mvpN = n; mvpId = id; }
   let mvpLine = '';
-  if (mvpId) { tribes.addTides(winner.key, mvpId, WAR_MVP_TIDES); mvpLine = `\n-# 🎖️ Battle MVP: <@${mvpId}> won ${mvpN} skirmish${mvpN === 1 ? '' : 'es'}. +${WAR_MVP_TIDES} Tides.`; }
+  if (mvpId) { tribes.addTides(winner.key, mvpId, WAR_MVP_TIDES, 'combat'); mvpLine = `\n-# 🎖️ Battle MVP: <@${mvpId}> won ${mvpN} skirmish${mvpN === 1 ? '' : 'es'}. +${WAR_MVP_TIDES} Tides.`; }
   if (scoreMsg) await scoreMsg.edit({ content: `# 🏆 ${wEmoji} ${wName} WIN!   ${meta.wScore}-${meta.lScore}\n${aEmoji} ${aName}  vs  ${dEmoji} ${dName}\n${warMomentumBar(sA, sD, target)}` }).catch(() => {});
   await warSleep(1500);
   const cap = sim.capturedIds.length ? `Captured **${sim.capturedIds.length}**: ${sim.capturedIds.map(id => `<@${id}>`).join(', ')}.` : 'No captures.';
@@ -1331,6 +1338,46 @@ async function sweepStuckWars(guild) {
     console.log(`[tribe war] consent timed out for ${war.id} (${war.attackerKey}->${war.defenderKey}) — coin flip`);
     await resolveWarByChance(guild, war, `${tribes.get(war.defenderKey)?.shortName || 'The defender'} never answered in 24h;`).catch(e => console.error('[tribe war] stuck resolve:', e.message));
   }
+}
+// ---- Propaganda (Phase 8): a shared forum, one native Discord tag per tribe, daily reaction sweep pays ----
+// EVERY tribe that posted proportional to their reactions that day (not winner-take-all — matches how
+// roleOutcome* Tribe Games already pay every qualifying tribe, not just the top one).
+const PROPAGANDA_TIDES_PER_REACTION = 2;   // -> tribe-wide Treasury, tunable
+// Forum tags were created by name only (no id stored anywhere) — match each tag to a tribe by fuzzy name
+// comparison against shortName/name, stripping the leading emoji first.
+function propagandaTagTribeMap(tags) {
+  const map = {};
+  for (const tag of (tags || [])) {
+    const clean = (tag.name || '').replace(/\p{Extended_Pictographic}/gu, '').trim().toLowerCase();
+    if (!clean) continue;
+    const t = tribes.all().find(tr => { const sn = (tr.shortName || tr.name || '').toLowerCase(); return sn && (sn.includes(clean) || clean.includes(sn)); });
+    if (t) map[tag.id] = t.key;
+  }
+  return map;
+}
+async function propagandaDailyIfDue(guild) {
+  if (!tribes.dueForPropagandaDay(Date.now()) || !config.propagandaForumId) return;
+  const ch = await guild.channels.fetch(config.propagandaForumId).catch(() => null);
+  if (!ch) { tribes.markPropagandaDayDone(Date.now()); return; }
+  const tagMap = propagandaTagTribeMap(ch.availableTags);
+  const since = Date.now() - 24 * 3600000;
+  const active = await ch.threads.fetchActive().catch(() => null);
+  const archived = await ch.threads.fetchArchived().catch(() => null);
+  const threads = [...(active?.threads.values() || []), ...(archived?.threads.values() || [])].filter(t => t.createdTimestamp >= since);
+  const totals = {};
+  for (const thread of threads) {
+    const tagId = (thread.appliedTags || []).find(id => tagMap[id]); if (!tagId) continue;
+    const key = tagMap[tagId];
+    const starter = await thread.fetchStarterMessage().catch(() => null);
+    const reactions = starter ? [...starter.reactions.cache.values()].reduce((s, r) => s + r.count, 0) : 0;
+    if (reactions > 0) totals[key] = (totals[key] || 0) + reactions;
+  }
+  tribes.markPropagandaDayDone(Date.now());
+  const entries = Object.entries(totals);
+  if (!entries.length) return;
+  const lines = entries.map(([key, count]) => { const treas = count * PROPAGANDA_TIDES_PER_REACTION; tribes.addTreasury(key, treas); return `${tribeName(key)}: **${count}** reaction${count === 1 ? '' : 's'} → +${treas} Treasury`; });
+  const ann = await getSpectacleChannel(guild).catch(() => null);
+  if (ann) await ann.send({ content: `# 📢 Propaganda payout\n${lines.join('\n')}`, allowedMentions: { parse: [] } }).catch(() => {});
 }
 async function postAllianceVote(guild, vote, proposer, target) {
   // Post in the THRONE, not the hall (owner, 2026-08-04) — low-traffic, so the vote isn't buried by chat.
@@ -1404,9 +1451,9 @@ function scoreArena(tribeKey, userId, points = 1) {
   const total = arena.addScore(tribeKey, points);
   if (userId) {
     arena.addMemberScore(userId, points);
-    tribes.addTides(tribeKey, userId, TIDES_PER_ARENA_POINT * points);
+    tribes.addTides(tribeKey, userId, TIDES_PER_ARENA_POINT * points, 'combat');
     const daily = tribes.recordArenaPlay(userId, Date.now());
-    if (daily.firstToday) tribes.addTides(tribeKey, userId, ARENA_DAILY_BONUS_TIDES);
+    if (daily.firstToday) tribes.addTides(tribeKey, userId, ARENA_DAILY_BONUS_TIDES, 'combat');
     if (features.enabled('achievements')) {   // dark until flipped on
       if (daily.firstToday) for (const a of achievements.checkValue(userId, 'streak', daily.streak)) arena.pushNewAch(userId, a.id);
       for (const a of achievements.checkValue(userId, 'tides', tribes.getTides(tribeKey, userId))) arena.pushNewAch(userId, a.id);
@@ -1640,9 +1687,9 @@ async function endArena(guild) {
     const ms = {};
     for (const [uid, info] of Object.entries(memberCounts)) {
       ms[uid] = info.n;
-      tribes.addTides(info.key, uid, TIDES_PER_ARENA_POINT * info.n);
+      tribes.addTides(info.key, uid, TIDES_PER_ARENA_POINT * info.n, 'combat');
       const daily = tribes.recordArenaPlay(uid, Date.now());
-      if (daily.firstToday) tribes.addTides(info.key, uid, ARENA_DAILY_BONUS_TIDES);
+      if (daily.firstToday) tribes.addTides(info.key, uid, ARENA_DAILY_BONUS_TIDES, 'combat');
     }
     arena.update({ scores, memberScores: ms }); a = arena.get();
   }
@@ -1725,7 +1772,7 @@ async function finalizeArena(guild, win, note = '') {
     mvpId = mvp.userId;
     const mvpMember = await guild.members.fetch(mvp.userId).catch(() => null);
     const mvpTribe = mvpMember && tribes.memberTribe(mvpMember);
-    if (mvpTribe) tribes.addTides(mvpTribe.key, mvp.userId, ARENA_MVP_BONUS_TIDES);
+    if (mvpTribe) tribes.addTides(mvpTribe.key, mvp.userId, ARENA_MVP_BONUS_TIDES, 'combat');
     if (features.enabled('achievements')) for (const a of achievements.bumpAndCheck(mvp.userId, 'mvp')) arena.pushNewAch(mvp.userId, a.id);
     const streak = tribes.getArenaStreak(mvp.userId);
     mvpLine = `\n-# 🥇 MVP: <@${mvp.userId}> with **${mvp.score}** point${mvp.score === 1 ? '' : 's'} (+${ARENA_MVP_BONUS_TIDES} Tides)${streak > 1 ? `, on a ${streak}-day streak 🔥` : ''}. Every scorer banked Tides toward their rank.`;
@@ -1803,6 +1850,9 @@ const SEALED_DAILY_CAP = 2;             // was 3 (owner, 2026-08-09: events were
 const SEALED_MIN_GAP_MS = 4.5 * 3600000;  // at least 4.5h between sealed arenas (was 3h)
 const SEALED_LOBBY_MS = 5 * 60000;      // "gather in your throne" countdown before the first round (matches the arena)
 const _sealedTimers = { start: null, round: null };
+// Bridges /tribe panel's Edit Lore modal 1 -> modal 2 (a modal submit can't directly showModal() a second
+// one — Discord requires a button/select interaction in between). Keyed by `${userId}:${tribeKey}`, short-lived.
+const _loreStash = new Map();
 function clearSealedTimers() { for (const k of ['start', 'round']) if (_sealedTimers[k]) { clearTimeout(_sealedTimers[k]); _sealedTimers[k] = null; } }
 // The 13 timing-precise types (button + typed); reaction + blitz excluded (no precise tap-time / not a race).
 function sealedGamePool() { return [...arena.BUTTON_TYPES, ...arena.TYPED_TYPES]; }
@@ -1986,6 +2036,149 @@ async function sealedAutoTick(guild) {
   if (!sealedPeakHour()) return;
   const r = await startSealedArena(guild, {}).catch(e => { console.error('[sealed] auto start:', e.message); return null; });
   if (r && r.ok) console.log(`[sealed] auto-started (${r.gameType})`);
+}
+
+// ==== TRIBE GAMES (Phase 8) — staff-recorded tribe-vs-tribe events using external games the bot can't =====
+// referee (Among Us, Roblox titles, ...). Entirely panel-initiated (/tribe panel), no auto-scheduling, no
+// per-tribe slot options — every tribe's Hall gets the lobby announcement and a tribe only actually competes
+// once its leader-or-staff sets a rep via the panel during the lobby window. See tribegames.js for the state
+// module + GAME_CATALOG (the per-game result format).
+const TRIBEGAME_LOBBY_MS = 5 * 60000;   // same 5-min lobby as Arena/Sealed
+const _tribeGameTimers = { start: null };
+function clearTribeGameTimers() { if (_tribeGameTimers.start) { clearTimeout(_tribeGameTimers.start); _tribeGameTimers.start = null; } }
+
+async function startTribeGame(guild, { gameId, startedById }) {
+  if (tribegames.isActive()) return { ok: false, error: 'A Tribe Game is already running.' };
+  const catalog = tribegames.GAME_CATALOG[gameId];
+  if (!catalog) return { ok: false, error: 'Unknown game.' };
+  const startsAt = Date.now() + TRIBEGAME_LOBBY_MS;
+  tribegames.set({ gameId, format: catalog.format, startedAt: Date.now(), startsAt, phase: 'lobby', entrants: {}, startedById });
+  const withThrone = tribes.all().filter(t => t.throneId || t.hallId);
+  await Promise.all(withThrone.map(async (t) => {
+    const chId = t.hallId || t.throneId;
+    const ch = await guild.channels.fetch(chId).catch(() => null); if (!ch) return;
+    await ch.send({
+      content: `# 🎮 Tribe Games: ${catalog.label}!\n${t.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, want in? Your ${tribes.leaderTitle(t)} (or staff) has **${Math.round(TRIBEGAME_LOBBY_MS / 60000)} minutes** to set your rep via \`/tribe panel\` before it locks in.`,
+      allowedMentions: { roles: t.roleId ? [t.roleId] : [] },
+    }).catch(() => {});
+  }));
+  clearTribeGameTimers();
+  _tribeGameTimers.start = setTimeout(() => beginTribeGame(guild).catch(e => console.error('[tribegames] begin:', e.message)), TRIBEGAME_LOBBY_MS);
+  return { ok: true };
+}
+async function beginTribeGame(guild) {
+  const a = tribegames.get(); if (!a || a.phase !== 'lobby') return;
+  const keys = tribegames.entrantTribeKeys();
+  if (keys.length < 2) {
+    tribegames.clear();
+    const ch = await getSpectacleChannel(guild).catch(() => null);
+    if (ch) await ch.send({ content: `🎮 Tribe Games (${tribegames.GAME_CATALOG[a.gameId]?.label || a.gameId}) called off — fewer than 2 tribes set a rep in time.`, allowedMentions: { parse: [] } }).catch(() => {});
+    return;
+  }
+  tribegames.update({ phase: 'live' });
+  const names = keys.map(k => tribeName(k)).join(' vs ');
+  const ch = await getSpectacleChannel(guild).catch(() => null);
+  if (ch) await ch.send({ content: `# 🎮 Tribe Games: ${tribegames.GAME_CATALOG[a.gameId]?.label} is LIVE!\n${names}. Go play — staff will record the result with \`/tribe panel\` once it's done.`, allowedMentions: { parse: [] } }).catch(() => {});
+}
+// Boot-resume: same shape as reconcileSealed above.
+async function reconcileTribeGames(guild) {
+  const a = tribegames.get(); if (!a) return;
+  if (a.phase === 'lobby') {
+    const untilStart = (a.startsAt || 0) - Date.now();
+    clearTribeGameTimers();
+    if (untilStart <= 0) { console.log('[tribegames] lobby elapsed during downtime, beginning now'); return beginTribeGame(guild).catch(() => {}); }
+    console.log(`[tribegames] resuming lobby (${Math.round(untilStart / 1000)}s until start)`);
+    _tribeGameTimers.start = setTimeout(() => beginTribeGame(guild).catch(e => console.error('[tribegames] begin:', e.message)), untilStart);
+  }
+  // phase === 'live': nothing to resume — staff hasn't reported a result yet, no timer was pending.
+}
+
+// The rotating individual reward role for a Tribe Game's winning rep(s) — same create-once/strip-then-grant
+// shape as ensureSeasonChampionRole above, but scoped to 1-2 people instead of a whole tribe roster.
+async function ensureTribeGameChampionRole(guild) {
+  const cached = tribegames.getChampionRoleId();
+  if (cached) { const r = guild.roles.cache.get(cached) || await guild.roles.fetch(cached).catch(() => null); if (r) return r; }
+  const role = await guild.roles.create({ name: '🎮 Tribe Games Champion', colors: { primaryColor: 0x57F287 }, hoist: false, mentionable: false, reason: 'Tribe Games rotating MVP role' }).catch(() => null);
+  if (role) tribegames.setChampionRoleId(role.id);
+  return role;
+}
+async function awardTribeGameRepRole(guild, repIds) {
+  const role = await ensureTribeGameChampionRole(guild); if (!role) return;
+  for (const m of [...role.members.values()]) await m.roles.remove(role.id, 'Tribe Games rotates').catch(() => {});
+  for (const id of (repIds || [])) { const m = await guild.members.fetch(id).catch(() => null); if (m) await m.roles.add(role.id, 'Tribe Games winner').catch(() => {}); }
+}
+
+const TRIBEGAME_VERSUS_MULT = 1.5;
+const TRIBEGAME_ROLE2_MULT = { rare: 2.0, common: 1.0 };                          // rare = imposter/beast side
+const TRIBEGAME_ROLE3_MULT = { murderer: 2.0, decisive: 1.3, survivor: 1.0 };     // decisive = sheriff OR hero
+// Pay a tribe for a Tribe Games result and log it to the world chronicle. mult is which reward tier applies
+// (see TRIBEGAME_*_MULT above); roleLabel (optional) carries flavor into the lore entry, e.g. "as Hero".
+function payTribeGameWin(guild, tribeKey, gameId, mult, roleLabel) {
+  const treas = Math.round(arena.WIN_TREASURY * mult), glory = Math.round(arena.WIN_GLORY * mult);
+  tribes.addTreasury(tribeKey, treas); tribes.addGlory(tribeKey, glory);
+  const t = tribes.get(tribeKey);
+  lore.record({ type: 'tribegame', title: `${t?.shortName || t?.name || tribeKey} won a Tribe Game of ${tribegames.GAME_CATALOG[gameId]?.label || gameId}${roleLabel ? ` (${roleLabel})` : ''}`, tribes: [tribeKey], game: gameId });
+  return { treas, glory };
+}
+// Accepts a full role name or any unique prefix (e.g. 'imp' -> 'imposter', 'm' -> 'murderer') so staff can
+// type fast without memorizing exact spelling.
+function normalizeRoleCode(input, roles) {
+  const s = String(input || '').trim().toLowerCase();
+  return roles.find(r => r === s) || roles.find(r => r.startsWith(s)) || null;
+}
+function buildTribeGameResultModal(active) {
+  const keys = tribegames.entrantTribeKeys();
+  const catalog = tribegames.GAME_CATALOG[active.gameId];
+  const outcomeInput = new TextInputBuilder().setCustomId('outcome').setLabel(`Winning side (${catalog.roles.join('/')})`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20);
+  if (keys.length <= 4) {
+    const rows = keys.map(k => new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId(`role:${k}`).setLabel(`${tribeName(k)} — role (${catalog.roles.join('/')})`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20)));
+    rows.push(new ActionRowBuilder().addComponents(outcomeInput));
+    return new ModalBuilder().setCustomId('tp_result_modal_std').setTitle('Report Result').addComponents(...rows);
+  }
+  // >4 entrant tribes (rare) — one modal still, bulk text instead of one field per tribe (modals cap at 5 fields).
+  const bulk = new TextInputBuilder().setCustomId('bulk').setLabel('One "tribekey: role" per line').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)
+    .setPlaceholder(keys.map(k => `${k}: ${catalog.roles[0]}`).join('\n'));
+  return new ModalBuilder().setCustomId('tp_result_modal_bulk').setTitle('Report Result').addComponents(new ActionRowBuilder().addComponents(bulk), new ActionRowBuilder().addComponents(outcomeInput));
+}
+// Reward-role recipients are the reps of whichever paid tribe(s) hit the HIGHEST multiplier this round (the
+// decisive contributors), matching the plan: rare-role/murderer/decisive-role wins are the standout plays.
+async function finishTribeGameRoleOutcome(guild, roleByTribe, outcomeCode) {
+  const active = tribegames.get(); if (!active) return { ok: false, error: 'No active Tribe Game.' };
+  const catalog = tribegames.GAME_CATALOG[active.gameId];
+  const payouts = [];
+  if (catalog.format === 'roleOutcome2') {
+    const [rareRole, commonRole] = catalog.roles;
+    for (const [k, role] of Object.entries(roleByTribe)) {
+      if (role !== outcomeCode) continue;
+      const mult = role === rareRole ? TRIBEGAME_ROLE2_MULT.rare : TRIBEGAME_ROLE2_MULT.common;
+      payouts.push({ tribeKey: k, mult, ...payTribeGameWin(guild, k, active.gameId, mult, role) });
+    }
+  } else if (catalog.format === 'roleOutcome3') {
+    if (outcomeCode === 'murderer') {
+      for (const [k, role] of Object.entries(roleByTribe)) if (role === 'murderer') payouts.push({ tribeKey: k, mult: TRIBEGAME_ROLE3_MULT.murderer, ...payTribeGameWin(guild, k, active.gameId, TRIBEGAME_ROLE3_MULT.murderer, 'Murderer') });
+    } else {
+      for (const [k, role] of Object.entries(roleByTribe)) {
+        if (role === 'sheriff' || role === 'hero') { const mult = TRIBEGAME_ROLE3_MULT.decisive; payouts.push({ tribeKey: k, mult, ...payTribeGameWin(guild, k, active.gameId, mult, role === 'hero' ? 'Hero' : 'Sheriff') }); }
+        else if (role === 'innocent') { const mult = TRIBEGAME_ROLE3_MULT.survivor; payouts.push({ tribeKey: k, mult, ...payTribeGameWin(guild, k, active.gameId, mult, 'Innocent') }); }
+      }
+    }
+  }
+  if (payouts.length) {
+    const topMult = Math.max(...payouts.map(p => p.mult));
+    const repIds = payouts.filter(p => p.mult === topMult).flatMap(p => (active.entrants[p.tribeKey] || {}).repIds || []);
+    if (repIds.length) await awardTribeGameRepRole(guild, repIds);
+  }
+  tribegames.clear();
+  return { ok: true, payouts };
+}
+async function finishTribeGameVersus(guild, winnerKey) {
+  const active = tribegames.get(); if (!active) return { ok: false, error: 'No active Tribe Game.' };
+  const result = payTribeGameWin(guild, winnerKey, active.gameId, TRIBEGAME_VERSUS_MULT, null);
+  const repIds = (active.entrants[winnerKey] || {}).repIds || [];
+  if (repIds.length) await awardTribeGameRepRole(guild, repIds);
+  tribegames.clear();
+  return { ok: true, winnerKey, ...result };
 }
 
 // ==== THE TRIALS (spec: THE_TRIALS_SPEC.md) — collaborative sealed mode, evolution of the Muster ========
@@ -3645,6 +3838,7 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('rank').setDescription('Set a member’s rank by hand (leaders only)')
           .addUserOption(o => o.setName('user').setDescription('Member to rank').setRequired(true))
           .addStringOption(o => o.setName('rank').setDescription('Which rank').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('panel').setDescription('One panel, right where you are: Tribe Games, your tribe\'s lore/path tools, or staff controls'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('tribe-admin').setDescription('Create or register tribes (admin)')
         .addSubcommand(s => s.setName('create').setDescription('Found a brand-new tribe: opens a guided setup (identity, colours, land)')
@@ -3922,6 +4116,9 @@ client.once('ready', async () => {
   // Auto-resolve wars stuck ≥24h awaiting the defender's Accept/Decline (boot + hourly).
   if (dguild) await sweepStuckWars(dguild).catch(e => console.error(`[tribe war] stuck sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStuckWars(g)).catch(() => {}), 3600000);
+  // Propaganda (Phase 8): hourly tick, own once-a-day marker inside (dueForPropagandaDay).
+  if (dguild) await propagandaDailyIfDue(dguild).catch(e => console.error(`[propaganda] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => propagandaDailyIfDue(g)).catch(() => {}), 3600000);
   if (dguild) await sweepExpiredAllianceVotes(dguild).catch(e => console.error(`[tribe alliance] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepExpiredAllianceVotes(g)).catch(() => {}), 5 * 60 * 1000);
   // #roles self-heal: drop any toggle button whose role was deleted outside the bot's control (boot + hourly).
@@ -3949,6 +4146,8 @@ client.once('ready', async () => {
   // hourly auto-tick (peak hours, daily cap + min-gap gate inside).
   if (dguild) await reconcileSealed(dguild).catch(e => console.error(`[sealed] boot reconcile: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sealedAutoTick(g)).catch(() => {}), 3600000);
+  // Tribe Games (Phase 8): entirely panel-initiated, so just resume an in-flight lobby countdown on boot.
+  if (dguild) await reconcileTribeGames(dguild).catch(e => console.error(`[tribegames] boot reconcile: ${e.message}`));
   // The Trials (dark until enabled): RESUME an in-flight Trial on boot (long VC event), then an hourly tick that
   // fires the daily scheduled Trial at peak (own once-a-day marker).
   if (dguild) await reconcileTrial(dguild).catch(e => console.error(`[trial] boot reconcile: ${e.message}`));
@@ -4492,6 +4691,119 @@ function canManageTribe(interaction, tribe) {
   return !!(tier && interaction.member?.roles?.cache?.has(tribe.roleId));    // in-tribe staff
 }
 const canVerify = (i) => canBan(i) || isTrialMod(i);
+
+// ==== /tribe panel (Phase 8) — one ephemeral, role-aware command replacing what would've been several ======
+// narrow staff/leader/member commands (owner: minimize command SPRAWL, not commands as such — one panel
+// reachable from wherever you are beats navigating to a separate dashboard mid-event). Sections appear only
+// for who should see them: Tribe Games controls for staff, this-tribe controls for its leader-or-staff,
+// lore/path controls for any member of a tribe.
+function tribeGameEntrantLines() {
+  return tribegames.entrantTribeKeys().map(k => tribeName(k)).join(', ') || '_none yet_';
+}
+async function buildTribePanelView(interaction) {
+  const member = interaction.member;
+  const isStaff = !!opspanel.tierOf(interaction);
+  const myTribe = tribes.leaderTribe(member) || tribes.memberTribe(member);
+  const canManage = myTribe && canManageTribe(interaction, myTribe);
+  const active = tribegames.isActive() ? tribegames.get() : null;
+  const lines = ['## 🏛️ Tribe Panel'];
+  const rows = [];
+
+  if (isStaff) {
+    if (!active) {
+      lines.push('**🎮 Tribe Games** — nothing running.');
+      const opts = Object.entries(tribegames.GAME_CATALOG).map(([id, g]) => ({ label: g.label, value: id }));
+      rows.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('tp_start_game').setPlaceholder('Start a Tribe Game…').addOptions(opts)));
+    } else if (active.phase === 'lobby') {
+      lines.push(`**🎮 Tribe Games** — ${tribegames.GAME_CATALOG[active.gameId]?.label} lobby open, locks in <t:${Math.floor(active.startsAt / 1000)}:R>. Entrants: ${tribeGameEntrantLines()}.`);
+    } else if (active.phase === 'live') {
+      const catalog = tribegames.GAME_CATALOG[active.gameId];
+      lines.push(`**🎮 Tribe Games** — ${catalog?.label} is LIVE (${tribeGameEntrantLines()}). Report the result when it's done.`);
+      if (catalog.format === 'versus') {
+        const opts = tribegames.entrantTribeKeys().map(k => ({ label: tribeName(k), value: k }));
+        rows.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('tp_result_versus').setPlaceholder('Who won?').addOptions(opts)));
+      } else {
+        rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tp_result_open').setLabel('Report Result').setEmoji('📝').setStyle(ButtonStyle.Primary)));
+      }
+    }
+  }
+
+  if (canManage && myTribe) {
+    if (active && active.phase === 'lobby') {
+      rows.push(new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder().setCustomId(`tp_setrep:${myTribe.key}`).setPlaceholder(`Set ${myTribe.shortName || myTribe.name}'s rep(s)`).setMinValues(1).setMaxValues(2)));
+    }
+    rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tp_editlore:${myTribe.key}`).setLabel('Edit Lore').setEmoji('✍️').setStyle(ButtonStyle.Secondary)));
+  }
+
+  if (myTribe) {
+    const loreData = tribes.getLore(myTribe.key);
+    lines.push(`\n**${myTribe.emoji || '🏴'} ${myTribe.shortName || myTribe.name}**`);
+    if (!loreData) {
+      lines.push('_No lore set yet for this tribe._' + (canManage ? ' Use **Edit Lore** below to start one.' : ''));
+    } else {
+      lines.push(`*${loreData.title}*`);
+      const path = tribes.memberPath(myTribe.key, member.id);
+      if (!path) {
+        lines.push("You haven't chosen a path yet.");
+      } else {
+        const pi = tribes.PATH_SLOTS.indexOf(path);
+        const attr = tribes.pathAttribute(myTribe.key, member.id);
+        const bonusPct = Math.round(attr * tribes.BONUS_PER_ATTR_POINT * 100);
+        const rankIdx = tribes.earnedRankIndex(myTribe, member.id);
+        const rank = rankIdx >= 0 ? myTribe.ranks[rankIdx] : null;
+        const stats = tribes.pathStats(myTribe.key, member.id);
+        lines.push(`**Path:** ${loreData.pathNames[pi]} · **${loreData.attributeNames[pi]}:** ${attr} (+${bonusPct}% on matching activity)`);
+        lines.push(`**Rank:** ${rank ? rank.name : 'Unranked'}`);
+        lines.push(`-# Lifetime on this path: **${stats.tidesOnPath}** Tides earned, bonus applied **${stats.bonusHits}** time${stats.bonusHits === 1 ? '' : 's'}.`);
+      }
+      const opts = tribes.PATH_SLOTS.map((slot, i) => ({ label: loreData.pathNames[i] || `Path ${i + 1}`, value: slot, default: slot === path }));
+      rows.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`tp_choosepath:${myTribe.key}`).setPlaceholder(path ? 'Switch path…' : 'Choose your path…').addOptions(opts)));
+    }
+  } else if (!isStaff) {
+    lines.push("\nYou're not in a tribe yet.");
+  }
+
+  return { content: lines.join('\n').slice(0, 3900), components: rows.slice(0, 5), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } };
+}
+
+// ---- Edit Lore: a 2-modal chain (title/paths/attrs, then rank-titles/myth) reached via a panel button ----
+function loreModal1(tribeKey) {
+  const rows = [
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('title').setLabel('Lore title').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('path0').setLabel('Path 1 name (e.g. Warrior)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('path1').setLabel('Path 2 name (e.g. Dancer)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('path2').setLabel('Path 3 name (e.g. Craftsman)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('attrs').setLabel('Attribute names, comma-separated (3)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(150).setPlaceholder('Might, Guile, Wisdom')),
+  ];
+  return new ModalBuilder().setCustomId(`tp_lore1:${tribeKey}`).setTitle('Tribe Lore — 1/2').addComponents(...rows);
+}
+function loreModal2(tribeKey, pathNames) {
+  const rows = [
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('ranks0').setLabel(`${pathNames[0]} ranks, low→high (4, comma-sep)`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(200)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('ranks1').setLabel(`${pathNames[1]} ranks, low→high (4, comma-sep)`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(200)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('ranks2').setLabel(`${pathNames[2]} ranks, low→high (4, comma-sep)`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(200)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('myth').setLabel('Founding myth / lore text').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000)),
+  ];
+  return new ModalBuilder().setCustomId(`tp_lore2:${tribeKey}`).setTitle('Tribe Lore — 2/2').addComponents(...rows);
+}
+// After setLore() rebuilds tribe.ranks with pathKey tags, any rank missing a Discord role gets one created,
+// and every rank role gets (re)named to match — same rename step /tribe ranks already does (index.js ~7958).
+async function syncTribeRankRoles(guild, tribeKey) {
+  const t = tribes.get(tribeKey); if (!t) return;
+  const fresh = tribes.get(tribeKey);
+  for (const r of fresh.ranks) {
+    if (!r.roleId) {
+      const role = await guild.roles.create({ name: `${fresh.emoji || '🏴'} ${toSmallCaps(r.name)}`, hoist: false, mentionable: false, reason: `Tribe Lore path rank: ${tribeKey}/${r.key}` }).catch(() => null);
+      if (role) r.roleId = role.id;
+      continue;
+    }
+    const role = guild.roles.cache.get(r.roleId);
+    const want = `${fresh.emoji || '🏴'} ${toSmallCaps(r.name)}`;
+    if (role && role.name !== want) await role.setName(want, 'tribe lore rank rename').catch(() => {});
+  }
+  tribes.update(tribeKey, { ranks: fresh.ranks });
+}
 // A language mini-mod may use Send-to-corner + Report-to-watchlist, but ONLY on messages in THEIR OWN
 // language's channels (per-language roles now — French Mini-Mod acts only in French chat/VC, etc.), and
 // only when the 'langMiniMod' feature is on. Dormant if no languages are configured.
@@ -4987,7 +5299,7 @@ client.on('messageCreate', async (msg) => {
         if (!(_tideCooldown.get(ck) > now - (homeTribe.tideCooldownMs || 60000))) {
           _tideCooldown.set(ck, now);
           tribes.recordJoin(homeTribe.key, member.id);
-          tribes.addTides(homeTribe.key, member.id, 1);
+          tribes.addTides(homeTribe.key, member.id, 1, 'social');
           await maybePromoteTribeRank(msg.guild, homeTribe.key, member);
         }
       }
@@ -6179,6 +6491,123 @@ client.on('interactionCreate', async (interaction) => {
       const modal = new ModalBuilder().setCustomId(`tribethrone_allygift_modal:${tribeKey}`).setTitle('Gift treasury to ally').addComponents(new ActionRowBuilder().addComponents(amountInput));
       return safeShowModal(interaction, modal);
     }
+  }
+  // ==== /tribe panel interaction handlers (Phase 8) ============================================
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_start_game') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can start a Tribe Game.', flags: MessageFlags.Ephemeral });
+    await interaction.deferUpdate();
+    const r = await startTribeGame(interaction.guild, { gameId: interaction.values[0], startedById: interaction.user.id });
+    if (!r.ok) return interaction.editReply({ content: `Failed: ${r.error}`, components: [] });
+    return interaction.editReply(await buildTribePanelView(interaction));
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_result_versus') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can report a result.', flags: MessageFlags.Ephemeral });
+    await interaction.deferUpdate();
+    const r = await finishTribeGameVersus(interaction.guild, interaction.values[0]);
+    if (!r.ok) return interaction.editReply({ content: `Failed: ${r.error}`, components: [] });
+    const winner = tribes.get(r.winnerKey);
+    await interaction.editReply({ content: `🏆 **${winner?.shortName || r.winnerKey}** wins! +${r.treas} Treasury, +${r.glory} Glory.`, components: [] });
+    return;
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tp_result_open') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can report a result.', flags: MessageFlags.Ephemeral });
+    const active = tribegames.get();
+    if (!active || active.phase !== 'live') return interaction.reply({ content: 'No live Tribe Game to report.', flags: MessageFlags.Ephemeral });
+    return safeShowModal(interaction, buildTribeGameResultModal(active));
+  }
+  if (interaction.isModalSubmit?.() && (interaction.customId === 'tp_result_modal_std' || interaction.customId === 'tp_result_modal_bulk')) {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can report a result.', flags: MessageFlags.Ephemeral });
+    const active = tribegames.get();
+    if (!active || active.phase !== 'live') return interaction.reply({ content: 'No live Tribe Game to report.', flags: MessageFlags.Ephemeral });
+    const catalog = tribegames.GAME_CATALOG[active.gameId];
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const roleByTribe = {}; const bad = [];
+    if (interaction.customId === 'tp_result_modal_std') {
+      for (const k of tribegames.entrantTribeKeys()) {
+        const raw = interaction.fields.getTextInputValue(`role:${k}`);
+        const code = normalizeRoleCode(raw, catalog.roles);
+        if (!code) bad.push(`${tribeName(k)}: "${raw}"`); else roleByTribe[k] = code;
+      }
+    } else {
+      const bulk = interaction.fields.getTextInputValue('bulk');
+      for (const line of bulk.split('\n')) {
+        const [kRaw, roleRaw] = line.split(':');
+        const k = (kRaw || '').trim().toLowerCase();
+        if (!k || !tribegames.entrantTribeKeys().includes(k)) continue;
+        const code = normalizeRoleCode(roleRaw, catalog.roles);
+        if (!code) bad.push(`${tribeName(k)}: "${(roleRaw || '').trim()}"`); else roleByTribe[k] = code;
+      }
+      for (const k of tribegames.entrantTribeKeys()) if (!roleByTribe[k] && !bad.some(b => b.startsWith(tribeName(k)))) bad.push(`${tribeName(k)}: (missing)`);
+    }
+    const outcomeCode = normalizeRoleCode(interaction.fields.getTextInputValue('outcome'), catalog.roles);
+    if (!outcomeCode) bad.push(`outcome: "${interaction.fields.getTextInputValue('outcome')}"`);
+    if (bad.length) return interaction.editReply(`❌ Couldn't parse: ${bad.join(', ')}. Valid roles: ${catalog.roles.join(', ')}.`);
+    const r = await finishTribeGameRoleOutcome(interaction.guild, roleByTribe, outcomeCode);
+    if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
+    const lines = r.payouts.map(p => `**${tribes.get(p.tribeKey)?.shortName || p.tribeKey}** (${p.tribeKey in roleByTribe ? roleByTribe[p.tribeKey] : ''}) — +${p.treas} Treasury, +${p.glory} Glory`);
+    return interaction.editReply(lines.length ? `🎮 Result recorded:\n${lines.join('\n')}` : '🎮 Result recorded — nobody qualified for a payout this round.');
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tp_setrep:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe || {})} or staff can set your tribe's rep.`, flags: MessageFlags.Ephemeral });
+    if (!tribegames.isActive() || tribegames.get().phase !== 'lobby') return interaction.reply({ content: 'No open Tribe Games lobby right now.', flags: MessageFlags.Ephemeral });
+    tribegames.setEntrant(tribeKey, interaction.values);
+    await interaction.deferUpdate();
+    return interaction.editReply(await buildTribePanelView(interaction));
+  }
+  if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('tp_choosepath:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !tribes.isMember(interaction.member, tribe)) return interaction.reply({ content: 'You need to be in this tribe to pick a path.', flags: MessageFlags.Ephemeral });
+    tribes.setMemberPath(tribeKey, interaction.user.id, interaction.values[0]);
+    await interaction.deferUpdate();
+    return interaction.editReply(await buildTribePanelView(interaction));
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tp_editlore:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe || {})} or staff can edit this tribe's lore.`, flags: MessageFlags.Ephemeral });
+    return safeShowModal(interaction, loreModal1(tribeKey));
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tp_lore1:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !canManageTribe(interaction, tribe)) return interaction.reply({ content: 'Not authorized.', flags: MessageFlags.Ephemeral });
+    const title = interaction.fields.getTextInputValue('title');
+    const pathNames = [interaction.fields.getTextInputValue('path0'), interaction.fields.getTextInputValue('path1'), interaction.fields.getTextInputValue('path2')];
+    const attributeNames = interaction.fields.getTextInputValue('attrs').split(',').map(s => s.trim()).slice(0, 3);
+    _loreStash.set(`${interaction.user.id}:${tribeKey}`, { title, pathNames, attributeNames, at: Date.now() });
+    // Modals can't chain directly — a modal submit can only reply/showModal, and a second showModal from a
+    // modal-submit interaction isn't allowed by Discord. Bridge with a button the leader clicks right after.
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tp_lore2_open:${tribeKey}`).setLabel('Continue: ranks + myth').setEmoji('➡️').setStyle(ButtonStyle.Primary));
+    return interaction.reply({ content: `Got it — **${title}**, paths: ${pathNames.join(', ')}. One more step for the rank titles and the myth text.`, components: [row], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tp_lore2_open:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const stash = _loreStash.get(`${interaction.user.id}:${tribeKey}`);
+    if (!stash) return interaction.reply({ content: 'That session expired — start over with Edit Lore.', flags: MessageFlags.Ephemeral });
+    return safeShowModal(interaction, loreModal2(tribeKey, stash.pathNames));
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tp_lore2:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !canManageTribe(interaction, tribe)) return interaction.reply({ content: 'Not authorized.', flags: MessageFlags.Ephemeral });
+    const stash = _loreStash.get(`${interaction.user.id}:${tribeKey}`);
+    if (!stash) return interaction.reply({ content: 'That session expired — start over with Edit Lore.', flags: MessageFlags.Ephemeral });
+    _loreStash.delete(`${interaction.user.id}:${tribeKey}`);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const rankTitles = [0, 1, 2].flatMap(i => interaction.fields.getTextInputValue(`ranks${i}`).split(',').map(s => s.trim()).slice(0, 4));
+    const myth = interaction.fields.getTextInputValue('myth');
+    tribes.setLore(tribeKey, { title: stash.title, myth, pathNames: stash.pathNames, attributeNames: stash.attributeNames, rankTitles });
+    await syncTribeRankRoles(interaction.guild, tribeKey);
+    const fresh = tribes.get(tribeKey);
+    const hallId = fresh.hallId || fresh.throneId;
+    if (hallId) {
+      const ch = await interaction.guild.channels.fetch(hallId).catch(() => null);
+      if (ch) await ch.send({ content: `# 📖 ${fresh.lore.title}\n${myth.slice(0, 1800)}\n\n**Paths:** ${fresh.lore.pathNames.join(' · ')}`, allowedMentions: { parse: [] } }).catch(() => {});
+    }
+    return interaction.editReply(`📖 Lore set for **${fresh.shortName || fresh.name}**. Paths: ${fresh.lore.pathNames.join(', ')}. Rank roles created/renamed to match.`);
   }
   if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tribethrone_invite_pick:')) {
     const tribeKey = interaction.customId.split(':')[1];
@@ -7571,6 +8000,9 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'tribe') {
     const sub = interaction.options.getSubcommand();
+    // ---- Panel: needs to work for staff with no tribe at all (Tribe Games is cross-tribe), so it's handled
+    // BEFORE the myTribe(actor) resolution below, same reasoning as found/banish. ----
+    if (sub === 'panel') return interaction.reply(await buildTribePanelView(interaction));
     // ---- Member-founded tribe: a regular member rallies 9 cosigns to found one (dark until enabled). Handled
     // BEFORE the tribe-resolution below, because a founder isn't in a tribe yet. ----
     if (sub === 'found') {

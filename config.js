@@ -112,6 +112,7 @@ const config = {
   modAlertChannelId: opt('MOD_ALERT_CHANNEL_ID', ''), // falls back to verifyChannelId at use
   modAnnounceChannelId: opt('MOD_ANNOUNCE_CHANNEL_ID', '1526926690637578362'), // strict watchlist alerts + ban buttons
   watchLogChannelId: opt('WATCH_LOG_CHANNEL_ID', '1531382379342729428'), // loose day-to-day monitor reports (mod-only, no ping)
+  propagandaForumId: opt('PROPAGANDA_FORUM_ID', '1536421958449893477'), // per-tribe forum tags; propagandaDailyIfDue reads reactions from here
   // Admin-only alert channel — MODS explicitly excluded (owner, 2026-08-08: watched staff members must not
   // be able to see their own watchlist hits). Strict watchlist alerts route here instead of the normal
   // mod-visible modAnnounceChannelId whenever the watched member is themselves staff.
