@@ -1356,6 +1356,7 @@ function propagandaTagTribeMap(tags) {
   return map;
 }
 async function propagandaDailyIfDue(guild) {
+  if (!features.enabled('tribePanel')) return;   // dark until /tribe panel itself is flipped on (owner, 2026-08-10)
   if (!tribes.dueForPropagandaDay(Date.now()) || !config.propagandaForumId) return;
   const ch = await guild.channels.fetch(config.propagandaForumId).catch(() => null);
   if (!ch) { tribes.markPropagandaDayDone(Date.now()); return; }
@@ -8002,7 +8003,10 @@ client.on('interactionCreate', async (interaction) => {
     const sub = interaction.options.getSubcommand();
     // ---- Panel: needs to work for staff with no tribe at all (Tribe Games is cross-tribe), so it's handled
     // BEFORE the myTribe(actor) resolution below, same reasoning as found/banish. ----
-    if (sub === 'panel') return interaction.reply(await buildTribePanelView(interaction));
+    if (sub === 'panel') {
+      if (!features.enabled('tribePanel')) return interaction.reply({ content: '🌒 Tribe Panel isn’t live yet — coming soon.', flags: MessageFlags.Ephemeral });
+      return interaction.reply(await buildTribePanelView(interaction));
+    }
     // ---- Member-founded tribe: a regular member rallies 9 cosigns to found one (dark until enabled). Handled
     // BEFORE the tribe-resolution below, because a founder isn't in a tribe yet. ----
     if (sub === 'found') {

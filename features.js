@@ -88,6 +88,12 @@ const REGISTRY = [
   { key: 'memberCorner', audience: 'core',   built: false }, // FUBU-only: a VERIFIED member may corner one non-staff member (≤5m, 3/day cap, NO rule/reason so it never feeds corner→strike conversion). Off elsewhere. Registration-affecting: flips /corner + "Send to corner" visibility.
   { key: 'amongUs',      audience: 'member', built: false, commands: ['amongus'], // VC "Among Us mode": staff /amongus starts a game for their VC; a panel toggles mute phases (Lobby/Play/Discussion) + dead tracking. Anyone in the VC drives it. Registration-affecting.
     help: { name: '🔴 Among Us mode', value: 'Playing Among Us in a voice channel? A mod runs `/amongus` to start a game, then anyone in the VC uses the panel to mute for the round and unmute for discussion (dead players stay muted).' } },
+  // Tribe Games (staff-recorded external-game events) + Tribe Lore evolution paths + Propaganda's daily
+  // reaction payout, all reached via /tribe panel (a subcommand of the always-on 'tribes' feature, so gating
+  // visibility means gating the HANDLER, not command registration). Built 2026-08-10, kept DARK on purpose
+  // (owner: "let's keep it dark for now, I need details first") — /tribe panel replies "not live yet" while off.
+  { key: 'tribePanel',   audience: 'member', built: false,
+    help: { name: '🏛️ Tribe Panel', value: '`/tribe panel` — one place for Tribe Games (staff), your tribe\'s lore/evolution paths, and rep-setting.' } },
 ];
 // Retired (superseded by the weighted-strike model in strikes.js — always on now, not flag-gated):
 // 'strikeReason' (weight+reason are core to every strike now) and 'fiveStrikes' (replaced by the
