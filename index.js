@@ -1195,10 +1195,12 @@ async function executeWar(guild, war, note = '') {
   await ensureMembers(guild).catch(() => {});
   const sim = tribes.simulateWarMatch(guild, attacker, defender);
   const winner = tribes.get(sim.winnerKey), loser = tribes.get(sim.loserKey);
-  // Storied Rivalry (Phase 8): a war between two tribes who've both actually engaged with their lore (at
-  // least one member on a chosen path each) hits harder — no separate "declare a rival" mechanic needed,
-  // every fight between two lore-active tribes just counts for more.
-  const rivalryMult = (tribes.hasLoreEngagement(attacker.key) && tribes.hasLoreEngagement(defender.key)) ? tribes.ALLY_LORE_MULT : 1;
+  // Storied Rivalry (Phase 8b): a war between two tribes with a CURATED relation (see tribes.setRelation —
+  // owner + Claude judge each tribe's lore against tribes already known, not a formula) hits differently —
+  // a clash relation is a real grudge match (bigger swing), a synergy relation dampens it (fighting a
+  // thematic kin feels less charged). Unrated pairs (the default) are unaffected, same as before curation.
+  const warRelation = tribes.getRelation(attacker.key, defender.key);
+  const rivalryMult = tribes.RELATION_MULT[warRelation];
   const raidAmount = Math.round(sim.raidAmount * rivalryMult), gloryBonus = Math.round(tribes.WAR_GLORY_BONUS * rivalryMult);
   // Consequences apply IMMEDIATELY (so a restart mid-broadcast never loses them; the live show is theater).
   tribes.addTreasury(sim.winnerKey, raidAmount);
@@ -1236,7 +1238,8 @@ async function executeWar(guild, war, note = '') {
   const wallLine = sim.defWallTiers ? `\n-# 🏰 ${defender.shortName || defender.name}'s Tier-${sim.defWallTiers} stronghold softened the blow: raid held to ${Math.round(sim.raidPct * 100)}%${Math.floor(sim.defWallTiers / 2) ? `, ${Math.floor(sim.defWallTiers / 2)} fewer captured` : ''}.` : '';
   const relicRaidLine = stolenRelic ? `\n🏺 **${winner.shortName || winner.name} seized ${stolenRelic.name}** from ${loser.shortName || loser.name} as a war trophy.` : '';
   // Concise record posted to both thrones.
-  const rivalryNote = rivalryMult > 1 ? ` (⚡ storied rivalry: both tribes' lore is active, rewards boosted ${Math.round((rivalryMult - 1) * 100)}%)` : '';
+  const rivalryNote = warRelation === 'clash' ? ` (⚡ a grudge match — their lore clashes, rewards boosted ${Math.round((rivalryMult - 1) * 100)}%)`
+    : warRelation === 'synergy' ? ` (their lore is thematically close — a less charged fight, rewards eased ${Math.round((1 - rivalryMult) * 100)}%)` : '';
   const summary = `${note}## ⚔️ War resolved: ${winner.emoji || '🏴'} ${winner.shortName || winner.name} win ${wScore}-${lScore}!\n${attacker.emoji || '🏴'} **${attacker.shortName || attacker.name}** vs ${defender.emoji || '🏴'} **${defender.shortName || defender.name}**\n> +${raidAmount} treasury raided, +${gloryBonus} glory to ${winner.shortName || winner.name}.${rivalryNote}\n> ${captureLine}${wallLine}${relicRaidLine}${honorsLine}`;
   for (const t of [attacker, defender]) {
     if (!t.throneId) continue;

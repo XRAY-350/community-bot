@@ -256,7 +256,22 @@ const PATH_SLOTS = ['path0', 'path1', 'path2'];
 const PATH_CATEGORY = { path0: 'combat', path1: 'social', path2: 'collective' };
 const ATTR_BASE = 1, ATTR_PER_RANK = 2;          // rank 0 -> attribute 1, rank 3 (maxed) -> attribute 7
 const BONUS_PER_ATTR_POINT = 0.05;               // attribute 1 -> +5%, attribute 7 -> +35%
-const ALLY_LORE_MULT = 1.2;                      // flat, tribe-level (not individual) — see simulateWar/simulateWarMatch
+// ---- Tribe-pair relations (Phase 8b, owner correction 2026-08-10: "not elements at all... I'll feed you
+// the lore when it's created and you determine the attribute and its relation to others") — deliberately
+// NOT a category/formula system. Each pairwise relation is a CURATED judgment call (owner + Claude read a
+// tribe's actual lore against tribes already known and decide synergy/clash/neutral), stored once decided.
+// Unset pairs default to 'neutral' (no effect) — so nothing changes for any tribe until its relations are
+// actually curated, there's no automatic blanket bonus for merely having lore.
+const RELATION_MULT = { synergy: 1.3, clash: 0.7, neutral: 1.0 };
+function relKey(a, b) { return [a, b].sort().join('|'); }
+function setRelation(keyA, keyB, relation) {
+  const s = load(); if (!s.relations) s.relations = {};
+  if (!RELATION_MULT[relation] || relation === 'neutral') delete s.relations[relKey(keyA, keyB)];
+  else s.relations[relKey(keyA, keyB)] = relation;
+  save(s); return relation;
+}
+function getRelation(keyA, keyB) { return (load().relations || {})[relKey(keyA, keyB)] || 'neutral'; }
+function allRelations() { return load().relations || {}; }
 
 // NOTE for future editors: index.js already has `const lore = require('./lore')` (the separate append-only
 // world-chronicle module) — this `tribe.lore` object is just a field on a tribe record and doesn't collide
@@ -292,9 +307,6 @@ function setLore(key, { title, myth, pathNames, attributeNames, rankTitles }) {
   save(s); return t.lore;
 }
 function getLore(key) { return (get(key) || {}).lore || null; }
-// "Has lore" for the alliance/rivalry bonus below — at least one member has actually picked a path, not just
-// that Edit Lore was run once. An unpicked lore setup shouldn't grant a tribe-wide combat bonus by itself.
-function hasLoreEngagement(key) { const t = get(key); return !!(t && t.memberPaths && Object.keys(t.memberPaths).length > 0); }
 
 function memberPath(key, userId) { const t = get(key); return (t && t.memberPaths && t.memberPaths[userId] && t.memberPaths[userId].path) || null; }
 // Switching paths starts the NEW path at rank 0 — no progress carries over (owner's call). The member simply
@@ -666,10 +678,10 @@ function resolveWarRecord(id, patch) {
 // defense doesn't cost the ally anything directly, it just reinforces).
 function simulateWar(guild, attacker, defender) {
   const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
-  // An ally that's ALSO lore-engaged (both sides have at least one member on a chosen path) fights harder —
-  // "a sworn, storied alliance" vs. a purely transactional one (owner: lore should have a mechanical effect
-  // on alliances, not just flavor).
-  const allyPower = t => { const ally = allyOf(t); if (!ally) return 0; const p = warPower(guild, ally); return (hasLoreEngagement(t.key) && hasLoreEngagement(ally.key)) ? p * ALLY_LORE_MULT : p; };
+  // A curated tribe-pair relation (see setRelation/getRelation above) scales the ally's contributed power —
+  // a synergy alliance fights harder, a clash alliance (allied on paper but thematically opposed) actually
+  // fights WORSE together. Unrated pairs are neutral (1.0x, no change from before curation happens).
+  const allyPower = t => { const ally = allyOf(t); if (!ally) return 0; return warPower(guild, ally) * RELATION_MULT[getRelation(t.key, ally.key)]; };
   // Stronghold walls multiply the DEFENDER's total defensive power (attackers can't carry walls into a fight).
   const wall = 1 + STRONGHOLD_DEF_PER_TIER * (defender.strongholdTier || 0);
   const powerA = warPower(guild, attacker) + allyPower(attacker);
@@ -699,7 +711,7 @@ function simulateWar(guild, attacker, defender) {
 const WAR_WIN_ROUNDS = 4;   // first tribe to this many skirmish wins takes the war (best-of-7)
 function simulateWarMatch(guild, attacker, defender) {
   const allyOf = t => (t.allyKey && get(t.allyKey)) || null;
-  const allyPower = t => { const ally = allyOf(t); if (!ally) return 0; const p = warPower(guild, ally); return (hasLoreEngagement(t.key) && hasLoreEngagement(ally.key)) ? p * ALLY_LORE_MULT : p; };
+  const allyPower = t => { const ally = allyOf(t); if (!ally) return 0; return warPower(guild, ally) * RELATION_MULT[getRelation(t.key, ally.key)]; };
   const wall = 1 + STRONGHOLD_DEF_PER_TIER * (defender.strongholdTier || 0);
   const powerA = warPower(guild, attacker) + allyPower(attacker);
   const powerB = (warPower(guild, defender) + allyPower(defender)) * wall;
@@ -810,8 +822,9 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, inAnyT
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex, isPathMode,
-  setLore, getLore, hasLoreEngagement, memberPath, setMemberPath, pathAttribute, pathStats,
-  PATH_SLOTS, PATH_CATEGORY, ATTR_BASE, ATTR_PER_RANK, BONUS_PER_ATTR_POINT, ALLY_LORE_MULT,
+  setLore, getLore, memberPath, setMemberPath, pathAttribute, pathStats,
+  PATH_SLOTS, PATH_CATEGORY, ATTR_BASE, ATTR_PER_RANK, BONUS_PER_ATTR_POINT,
+  setRelation, getRelation, allRelations, RELATION_MULT,
   getPrestige, resetMemberTides, addPrestige, prestigeLog,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,
   createNomination, getNomination, updateNomination, clearNomination, createDirectInvite,
