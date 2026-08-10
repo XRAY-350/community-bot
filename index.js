@@ -3813,17 +3813,8 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
         .addSubcommand(s => s.setName('found').setDescription('Rally members to found a brand-new tribe (needs 9 cosigns)'))
-        .addSubcommand(s => s.setName('motto').setDescription('Set your tribe’s motto (leaders only)')
-          .addStringOption(o => o.setName('text').setDescription('The motto').setRequired(true)))
         .addSubcommand(s => s.setName('banner').setDescription('Set your tribe’s banner image (leaders; members make the art)')
           .addAttachmentOption(o => o.setName('image').setDescription('A banner image (PNG/JPG). Leave blank to clear it.').setRequired(false)))
-        .addSubcommand(s => s.setName('invite').setDescription('Add a member to your tribe (leaders only)')
-          .addUserOption(o => o.setName('user').setDescription('Who to bring into the tribe').setRequired(true)))
-        .addSubcommand(s => s.setName('nominate').setDescription('Propose a member to join YOUR tribe (any member can; head/staff approve, they accept)')
-          .addUserOption(o => o.setName('user').setDescription('Who to nominate').setRequired(true)))
-        .addSubcommand(s => s.setName('offer').setDescription('Convert your OWN activity points into your tribe’s treasury (1:1, never demotes you)')
-          .addIntegerOption(o => o.setName('amount').setDescription('How many to offer').setRequired(true).setMinValue(1)))
-        .addSubcommand(s => s.setName('muster').setDescription('Call a roll-call: members who answer earn the tribe treasury + glory (leaders only)'))
         .addSubcommand(s => s.setName('retheme').setDescription('Recolour and/or rename your tribe (needs the Re-theme unlock; leaders only)')
           .addStringOption(o => o.setName('color').setDescription('Primary colour hex, e.g. #2A426A').setRequired(true))
           .addStringOption(o => o.setName('color2').setDescription('Second hex for a gradient (optional)').setRequired(false))
@@ -3832,16 +3823,10 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('icon').setDescription('Set an emoji OR image icon on your tribe role (needs the Tribe Icon unlock; leaders only)')
           .addStringOption(o => o.setName('emoji').setDescription('An emoji for the icon (or "none" to clear)').setRequired(false).setMaxLength(60))
           .addAttachmentOption(o => o.setName('image').setDescription('A square image (PNG/JPG, under 256KB) to use as the icon').setRequired(false)))
-        .addSubcommand(s => s.setName('banish').setDescription('Remove a member from a tribe (leaders from their own; staff from any tribe)')
-          .addUserOption(o => o.setName('user').setDescription('Who to remove from the tribe').setRequired(true)))
-        .addSubcommand(s => s.setName('announce').setDescription('Post to your throne and rally the tribe (leaders only)')
-          .addStringOption(o => o.setName('message').setDescription('The announcement').setRequired(true)))
-        .addSubcommand(s => s.setName('note').setDescription('Jot or read a private note on a member (leaders only)')
-          .addUserOption(o => o.setName('user').setDescription('Which member').setRequired(true))
-          .addStringOption(o => o.setName('text').setDescription('The note, leave blank to read existing notes').setRequired(false)))
-        .addSubcommand(s => s.setName('rank').setDescription('Set a member’s rank by hand (leaders only)')
-          .addUserOption(o => o.setName('user').setDescription('Member to rank').setRequired(true))
-          .addStringOption(o => o.setName('rank').setDescription('Which rank').setRequired(true).setAutocomplete(true)))
+        // motto/banish/invite/nominate/offer/muster/announce/note/rank retired 2026-08-10 — all folded into
+        // /tribe panel (Invite/Banish/Note/Set Rank/Muster/Announce/Motto/Tithe/Nominate buttons), which
+        // reuses the SAME underlying tribethrone_*/submitInvite/submitBanish/createNomination logic these
+        // commands called, just reached from one contextual panel instead of nine separate commands.
         .addSubcommand(s => s.setName('panel').setDescription('One panel, right where you are: Tribe Games, your tribe\'s lore/path tools, or staff controls'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('tribe-admin').setDescription('Create or register tribes (admin)')
@@ -3858,34 +3843,16 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('leader_role').setDescription('The leader role (optional)').setRequired(false))
           .addChannelOption(o => o.setName('hall').setDescription('Main tribe channel (optional)').setRequired(false))
           .addStringOption(o => o.setName('emoji').setDescription('Tribe emoji (optional)').setRequired(false)))
-        .addSubcommand(s => s.setName('arena').setDescription('Launch an interactive cross-tribe challenge in this channel (winner banks Glory + Treasury)')
-          .addStringOption(o => o.setName('type').setDescription('Which challenge').setRequired(true)
-            .addChoices({ name: '🏁 Reaction Race', value: 'race' }, { name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '⚡ Activity Blitz', value: 'blitz' },
-              { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' }, { name: '✅ True or False', value: 'truefalse' }, { name: '🎯 Reaction Rush', value: 'reaction' }, { name: '🔢 Number Pattern', value: 'pattern' },
-              { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' }))
-          .addIntegerOption(o => o.setName('minutes').setDescription('How long (default varies by type)').setRequired(false).setMinValue(1).setMaxValue(120)))
-        .addSubcommand(s => s.setName('sealed-arena').setDescription('Launch a Sealed Arena: every tribe races the same challenge blind in its own throne')
-          .addStringOption(o => o.setName('type').setDescription('Which challenge (blank = random)').setRequired(false)
-            .addChoices({ name: '❓ Trivia Sprint', value: 'trivia' }, { name: '🔤 Word Scramble', value: 'scramble' }, { name: '➗ Math Sprint', value: 'math' }, { name: '⌨️ Fast Fingers', value: 'typing' },
-              { name: '✅ True or False', value: 'truefalse' }, { name: '🔢 Number Pattern', value: 'pattern' },
-              { name: '🌍 Geography Quiz', value: 'geoquiz' }, { name: '🔬 Science Quiz', value: 'sciquiz' }, { name: '📜 History Quiz', value: 'histquiz' }, { name: '🦁 Animal Quiz', value: 'animalquiz' }, { name: '🔁 Reverse Word', value: 'reverse' })))
-        .addSubcommand(s => s.setName('trial').setDescription('Launch a Trial: all tribes rally in voice and answer together, breadth + voice scored')
-          .addBooleanOption(o => o.setName('muster').setDescription('Make it a high-reward grand Muster (double rewards)').setRequired(false))
-          .addStringOption(o => o.setName('game').setDescription('Which game (default: rotates daily)').setRequired(false)
-            .addChoices({ name: 'The Assembly (collaborative quiz)', value: 'assembly' }, { name: 'The Relay (rotation chain)', value: 'relay' }, { name: 'The Mosaic (parallel tiles → phrase)', value: 'mosaic' })))
         .addSubcommand(s => s.setName('set-leader').setDescription('Add or replace a tribe leader (restructure a tribe that lost one)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
           .addUserOption(o => o.setName('replacing').setDescription('Optional: an existing leader to step down at the same time').setRequired(false)))
-        .addSubcommand(s => s.setName('points').setDescription('Set what a tribe calls its activity points, e.g. Tides')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
-          .addStringOption(o => o.setName('name').setDescription('The name for its points, e.g. Tides').setRequired(true).setMaxLength(20)))
-        .addSubcommand(s => s.setName('title').setDescription('Set what a tribe calls its head, e.g. Warden')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
-          .addStringOption(o => o.setName('name').setDescription('The head title, e.g. Warden').setRequired(true).setMaxLength(40)))
-        .addSubcommand(s => s.setName('staffrank-set').setDescription('Set what a tribe calls staff who join as members, e.g. General (default: General)')
-          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
-          .addStringOption(o => o.setName('name').setDescription('The staff-rank title, e.g. General').setRequired(true).setMaxLength(40)))
+        // arena/sealed-arena/trial/points/title/staffrank-set retired 2026-08-10 — folded into /tribe panel
+        // (the "Launch an event" select for the first three; the Settings modal for the last three, though
+        // Settings is scoped to the CALLER'S OWN tribe via canManageTribe, narrower than these commands' old
+        // any-tribe-by-autocomplete reach — an owner still has full reach via the owner-tier override in
+        // canManageTribe, but a non-owner admin configuring a tribe they aren't a member of has no path
+        // anymore. Flagged, not silently dropped.)
         .addSubcommand(s => s.setName('ranks').setDescription('Rename a tribe’s four rank rungs, lowest to highest')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addStringOption(o => o.setName('rank1').setDescription('Lowest rank name').setRequired(true).setMaxLength(40))
@@ -4713,14 +4680,20 @@ async function buildTribePanelView(interaction) {
   const lines = ['## 🏛️ Tribe Panel'];
   const rows = [];
 
-  if (isStaff) {
+  // Arena/Sealed Arena/Trial ("classic" events, pre-dating Tribe Games) get folded into the SAME select as
+  // the Tribe Games catalog rather than their own row — Discord caps a message at 5 rows, and their access
+  // rule is wider (any tribe leader, not just staff) than Tribe Games' own (mod+ only), so the select's
+  // option list is built per-viewer.
+  const canLaunchClassic = canWLAdmin(interaction) || !!tribes.leaderTribe(member);
+  if (isStaff || canLaunchClassic) {
     if (!active) {
-      lines.push('**🎮 Tribe Games** — nothing running.');
-      const opts = Object.entries(tribegames.GAME_CATALOG).map(([id, g]) => ({ label: g.label, value: id }));
-      rows.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('tp_start_game').setPlaceholder('Start a Tribe Game…').addOptions(opts)));
-    } else if (active.phase === 'lobby') {
+      const opts = isStaff ? Object.entries(tribegames.GAME_CATALOG).map(([id, g]) => ({ label: g.label, value: id })) : [];
+      if (canLaunchClassic) opts.push({ label: '🎪 Classic: Arena (random type)', value: 'classic_arena' }, { label: '🚪 Classic: Sealed Arena (random type)', value: 'classic_sealed' }, { label: '⚔️ Classic: Trial (today\'s rotation)', value: 'classic_trial' });
+      lines.push(isStaff ? '**🎮 Tribe Games** — nothing running.' : '**🎪 Launch an event**');
+      rows.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('tp_start_game').setPlaceholder('Start an event…').addOptions(opts.slice(0, 25))));
+    } else if (isStaff && active.phase === 'lobby') {
       lines.push(`**🎮 Tribe Games** — ${tribegames.GAME_CATALOG[active.gameId]?.label} lobby open, locks in <t:${Math.floor(active.startsAt / 1000)}:R>. Entrants: ${tribeGameEntrantLines()}.`);
-    } else if (active.phase === 'live') {
+    } else if (isStaff && active.phase === 'live') {
       const catalog = tribegames.GAME_CATALOG[active.gameId];
       lines.push(`**🎮 Tribe Games** — ${catalog?.label} is LIVE (${tribeGameEntrantLines()}). Report the result when it's done.`);
       if (catalog.format === 'versus') {
@@ -4737,7 +4710,29 @@ async function buildTribePanelView(interaction) {
       rows.push(new ActionRowBuilder().addComponents(
         new UserSelectMenuBuilder().setCustomId(`tp_setrep:${myTribe.key}`).setPlaceholder(`Set ${myTribe.shortName || myTribe.name}'s rep(s)`).setMinValues(1).setMaxValues(2)));
     }
-    rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tp_editlore:${myTribe.key}`).setLabel('Edit Lore').setEmoji('✍️').setStyle(ButtonStyle.Secondary)));
+    const k = myTribe.key;
+    // Rows A/B reuse the EXACT customIds the Throne panel's own buttons already use (tribethrone_*) — that
+    // router only looks at tribeKey + canManageTribe, not which message the click came from, so these work
+    // identically here with zero new handler code.
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tribethrone_invite:${k}`).setEmoji('👥').setLabel('Invite').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`tribethrone_banish:${k}`).setEmoji('⛔').setLabel('Banish').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`tribethrone_note:${k}`).setEmoji('📝').setLabel('Note').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`tribethrone_rank:${k}`).setEmoji('🎖️').setLabel('Set Rank').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`tribethrone_muster:${k}`).setEmoji('🪖').setLabel('Muster').setStyle(ButtonStyle.Primary)));
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tribethrone_announce:${k}`).setEmoji('📣').setLabel('Announce').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`tribethrone_motto:${k}`).setEmoji('✍️').setLabel('Motto').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`tp_settings:${k}`).setEmoji('⚙️').setLabel('Settings').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`tp_editlore:${k}`).setEmoji('📖').setLabel('Edit Lore').setStyle(ButtonStyle.Secondary)));
+  }
+
+  if (myTribe && !canManage) {
+    // Any member of the tribe (not already covered by the leader-tool rows above): Tithe (existing
+    // tribethrone_tithe flow) + Nominate (new — the one member-facing action with no Throne-panel button yet).
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tribethrone_tithe:${myTribe.key}`).setEmoji('🪙').setLabel('Tithe').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`tp_nominate:${myTribe.key}`).setEmoji('🪶').setLabel('Nominate').setStyle(ButtonStyle.Secondary)));
   }
 
   if (myTribe) {
@@ -6498,9 +6493,36 @@ client.on('interactionCreate', async (interaction) => {
   }
   // ==== /tribe panel interaction handlers (Phase 8) ============================================
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_start_game') {
-    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can start a Tribe Game.', flags: MessageFlags.Ephemeral });
+    const picked = interaction.values[0];
+    const isClassic = picked.startsWith('classic_');
+    // Classic events (Arena/Sealed Arena/Trial) keep their own wider access rule (any tribe leader, or
+    // admin) — Tribe Games itself stays mod+ only.
+    if (!isClassic && !canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can start a Tribe Game.', flags: MessageFlags.Ephemeral });
+    if (isClassic && !canWLAdmin(interaction) && !tribes.leaderTribe(interaction.member)) return interaction.reply({ content: 'Only a tribe leader or an admin can launch that.', flags: MessageFlags.Ephemeral });
+    if (isClassic) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (picked === 'classic_arena') {
+        const blocked = arena.startBlocked(); if (blocked) return interaction.editReply(blocked);
+        const type = ARENA_ALL_TYPES[Math.floor(Math.random() * ARENA_ALL_TYPES.length)];
+        const minutes = ARENA_DEFAULTS[type] || 5;
+        try { await startArenaCountdown(interaction.guild, type, minutes, interaction.user.id); }
+        catch (e) { return interaction.editReply(`Couldn't launch it: ${e.message}`); }
+        return interaction.editReply(`🎪 Announced **${ARENA_LABEL[type] || type}** — begins in 5 minutes, runs ${minutes} min.`);
+      }
+      if (picked === 'classic_sealed') {
+        if (!features.enabled('sealedArena')) return interaction.editReply('The Sealed Arena isn’t enabled yet.');
+        const r = await startSealedArena(interaction.guild, { startedById: interaction.user.id });
+        return interaction.editReply(r.ok ? `🚪 Sealed Arena launched (${ARENA_LABEL[r.gameType] || r.gameType}).` : `Couldn't launch it: ${r.error}`);
+      }
+      if (picked === 'classic_trial') {
+        if (!features.enabled('theTrials')) return interaction.editReply('The Trials aren’t enabled yet.');
+        const game = TRIAL_GAMES[Math.floor(Date.now() / 86400000) % TRIAL_GAMES.length];
+        const r = await startTrial(interaction.guild, { startedById: interaction.user.id, game, muster: false });
+        return interaction.editReply(r.ok ? `⚔️ ${TRIAL_GAME_LABEL[r.game] || 'Trial'} launched (all tribes).` : `Couldn't launch it: ${r.error}`);
+      }
+    }
     await interaction.deferUpdate();
-    const r = await startTribeGame(interaction.guild, { gameId: interaction.values[0], startedById: interaction.user.id });
+    const r = await startTribeGame(interaction.guild, { gameId: picked, startedById: interaction.user.id });
     if (!r.ok) return interaction.editReply({ content: `Failed: ${r.error}`, components: [] });
     return interaction.editReply(await buildTribePanelView(interaction));
   }
@@ -6567,6 +6589,73 @@ client.on('interactionCreate', async (interaction) => {
     tribes.setMemberPath(tribeKey, interaction.user.id, interaction.values[0]);
     await interaction.deferUpdate();
     return interaction.editReply(await buildTribePanelView(interaction));
+  }
+  // Settings: folds /tribe-admin points/title/staffrank-set into one modal, scoped to the caller's OWN
+  // tribe (canManageTribe) rather than the old commands' any-tribe-by-autocomplete reach — a deliberate
+  // narrowing that matches how the rest of the panel is tribe-scoped; an admin wanting to configure a tribe
+  // they aren't in/leading still needs the raw command path (kept, not retired, for that edge case).
+  if (interaction.isButton?.() && interaction.customId.startsWith('tp_settings:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !canManageTribe(interaction, tribe)) return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe || {})} or staff can change this tribe's settings.`, flags: MessageFlags.Ephemeral });
+    const rows = [
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('points').setLabel('Activity points name (e.g. Tides)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(20).setValue(tribe.pointsName || '')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('title').setLabel(`Head's title (e.g. ${tribes.DEFAULT_LEADER_TITLE})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40).setValue(tribe.leaderTitle || '')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('staffrank').setLabel(`Staff-rank title (e.g. ${tribes.DEFAULT_STAFF_RANK_TITLE})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(40).setValue(tribe.staffRankTitle || '')),
+    ];
+    return safeShowModal(interaction, new ModalBuilder().setCustomId(`tp_settings_modal:${tribeKey}`).setTitle('Tribe Settings').addComponents(...rows));
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('tp_settings_modal:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !canManageTribe(interaction, tribe)) return interaction.reply({ content: 'Not authorized.', flags: MessageFlags.Ephemeral });
+    const points = interaction.fields.getTextInputValue('points').trim();
+    const title = interaction.fields.getTextInputValue('title').trim();
+    const staffrank = interaction.fields.getTextInputValue('staffrank').trim();
+    const patch = {};
+    if (points) patch.pointsName = points.slice(0, 20);
+    if (title) patch.leaderTitle = title.slice(0, 40);
+    if (staffrank) patch.staffRankTitle = staffrank.slice(0, 40);
+    if (Object.keys(patch).length) tribes.update(tribeKey, patch);
+    if (staffrank && tribe.staffRankRoleId) {
+      const role = interaction.guild.roles.cache.get(tribe.staffRankRoleId);
+      if (role) await role.setName(`${tribe.emoji || '🏴'} ${toSmallCaps(staffrank.slice(0, 40))}`, 'tribe staff-rank rename').catch(() => {});
+    }
+    const fresh = tribes.get(tribeKey);
+    const changed = [points && `points → **${fresh.pointsName}**`, title && `head's title → **${fresh.leaderTitle}**`, staffrank && `staff rank → **${fresh.staffRankTitle}**`].filter(Boolean);
+    return interaction.reply({ content: changed.length ? `⚙️ Updated: ${changed.join(', ')}.` : 'Nothing changed (all fields left blank).', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  }
+  // Nominate: any member of the tribe proposes someone to join — approval routes through the throne, same
+  // machinery /tribe nominate used (tribes.createNomination + the tribenom_approve/deny buttons already wired).
+  if (interaction.isButton?.() && interaction.customId.startsWith('tp_nominate:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !tribes.isMember(interaction.member, tribe)) return interaction.reply({ content: 'You need to be in this tribe to nominate someone.', flags: MessageFlags.Ephemeral });
+    const menu = new UserSelectMenuBuilder().setCustomId(`tp_nominate_pick:${tribeKey}`).setPlaceholder('Who to nominate?');
+    return interaction.reply({ content: '🪶 Pick who to nominate.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('tp_nominate_pick:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const tribe = tribes.get(tribeKey);
+    if (!tribe || !tribes.isMember(interaction.member, tribe)) return interaction.reply({ content: 'You need to be in this tribe to nominate someone.', flags: MessageFlags.Ephemeral });
+    const targetId = interaction.values[0];
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target || target.user.bot) return interaction.update({ content: 'Couldn’t find that member.', components: [] });
+    if (targetId === interaction.user.id) return interaction.update({ content: 'You can’t nominate yourself.', components: [] });
+    if (target.roles.cache.has(tribe.roleId)) return interaction.update({ content: `<@${targetId}> is already in **${tribe.shortName || tribe.name}**.`, components: [], allowedMentions: { parse: [] } });
+    const other = tribes.memberTribe(target);
+    if (other) return interaction.update({ content: `<@${targetId}> is already in **${other.shortName || other.name}**.`, components: [], allowedMentions: { parse: [] } });
+    const existing = tribes.getNomination(targetId);
+    if (existing && ['pending_approval', 'pending_accept'].includes(existing.status)) return interaction.update({ content: `<@${targetId}> already has a pending nomination.`, components: [], allowedMentions: { parse: [] } });
+    if (!tribe.throneId) return interaction.update({ content: 'This tribe has no throne channel to route the approval through.', components: [] });
+    const throne = await interaction.guild.channels.fetch(tribe.throneId).catch(() => null);
+    if (!throne) return interaction.update({ content: 'Couldn’t find the throne channel.', components: [] });
+    tribes.createNomination(tribe.key, interaction.user.id, targetId);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tribenom_approve:${targetId}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`tribenom_deny:${targetId}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger));
+    await throneSend(throne, { content: `## 🪶 Nomination\n-# proposed by <@${interaction.user.id}>\n> <@${interaction.user.id}> nominates <@${targetId}> to join **${tribe.shortName || tribe.name}**.\n-# ${tribes.leaderTitle(tribe)} or staff: approve to send them an invite to accept.`, components: [row], allowedMentions: { users: [targetId] } }).catch(() => {});
+    return interaction.update({ content: `🪶 Sent to <#${tribe.throneId}> for approval. If ${tribes.leaderTitle(tribe)} or staff approve, ${target.displayName} will get an invite to accept.`, components: [], allowedMentions: { parse: [] } });
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tp_editlore:')) {
     const tribeKey = interaction.customId.split(':')[1];
