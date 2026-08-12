@@ -249,8 +249,15 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   // Persist BEFORE mutating roles so a mid-way failure is still recoverable via /uncorner.
   state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now });
   try {
-    if (strip.length) await member.roles.remove(strip, 'Sent to the corner');
-    await member.roles.add(config.cornerRoleId, 'Sent to the corner');
+    // ONE atomic role.set() instead of a separate remove() then add() (owner-reported, 2026-08-12: "cornered
+    // people are still getting tribe roles back"). Two separate calls fired two separate guildMemberUpdate
+    // events — in the gap between them (roles stripped, corner role not yet added), enforceTribeMembership's
+    // guildMemberUpdate handler saw no corner role, treated the tribe-role strip as unauthorized tampering,
+    // and immediately re-added it, moments before the corner role itself landed. A single set() has only one
+    // resulting state, with the corner role already present in it — no gap for that race to land in.
+    const stripSet = new Set(strip);
+    const keptIds = member.roles.cache.filter(r => r.id !== guild.id && !stripSet.has(r.id)).map(r => r.id);
+    await member.roles.set([...keptIds, config.cornerRoleId], 'Sent to the corner');
   } catch (err) {
     await restoreTimeout();
     state.clearCornered(member.id); // don't leave a stale "cornered" record on a failed corner
