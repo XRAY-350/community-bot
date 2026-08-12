@@ -144,6 +144,12 @@ async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe �
   const ok = await member.roles.add(tribe.roleId, reason).then(() => true).catch(() => false);
   if (!ok) { tribes.setMembership(tribe.key, member.id, false); return { ok: false }; }
   await syncStaffRank(guild, member, tribe);
+  // Path-mode tribes have no rank at all until a path is chosen (earnedRankIndex returns -1 without one) —
+  // no join flow ever assigned one, so a brand-new member just sat unranked until they found Choose Your
+  // Path themselves. Default to Collective (owner's call) so they're never rankless, and immediately apply
+  // whatever they've already earned (rank 0, day one) instead of waiting for the next activity tick.
+  if (tribes.isPathMode(tribe) && !tribes.memberPath(tribe.key, member.id)) tribes.setMemberPath(tribe.key, member.id, 'path2');
+  await maybePromoteTribeRank(guild, tribe.key, member).catch(() => {});
   if (tribe.hallId) { const hall = await guild.channels.fetch(tribe.hallId).catch(() => null); if (hall) hall.send({ content: `## ${tribe.emoji || '🌊'} A new pledge to ${tribe.shortName || tribe.name}\n> <@${member.id}> has sworn their allegiance.`, allowedMentions: { users: [member.id] } }).catch(() => {}); }
   return { ok: true, content: `${tribe.emoji || '🌊'} You’ve pledged to **${tribe.shortName || tribe.name}**. Welcome. This is your allegiance now; its ${tribes.leaderTitle(tribe)} must release you before you could ever join another.` };
 }
@@ -4364,6 +4370,7 @@ client.once('ready', async () => {
   if (dguild) await awardsResultsIfDue(dguild).catch(e => console.error(`[awards] boot results check: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(async g => { await awardsReminderIfDue(g); await awardsResultsIfDue(g); }).catch(() => {}), 3600000);
   if (dguild) await reconcileTribeRoles(dguild).catch(e => console.error(`[tribe reconcile] boot sweep: ${e.message}`));
+  if (dguild) await backfillDefaultPaths(dguild).catch(e => console.error(`[tribe-paths] boot backfill: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => reconcileTribeRoles(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
   if (dguild) await sweepLeaderRequirement(dguild).catch(e => console.error(`[leader-req] boot sweep: ${e.message}`));
@@ -5471,6 +5478,29 @@ async function maybePromoteTribeRank(guild, tribeKey, member) {
   const earned = tribes.earnedRankIndex(tribe, member.id);
   const current = tribes.currentRankIndex(member, tribe);
   if (earned > current) await applyTribeRank(guild, tribe, member, earned, 'auto — tenure + points', earned >= 1);
+}
+// Backfill for existing members of a tribe that's already in path-mode when it converts (or was converted
+// before this default-path fix existed) — every rank-and-file member without a chosen path defaults to
+// Collective, same as joinTribeSelfServe now does for new joins, then gets whatever rank they've already
+// earned applied immediately. Safe to run repeatedly (no-ops once everyone has a path); boot + on-demand
+// after Edit Lore converts a tribe to path-mode.
+async function backfillDefaultPaths(guild) {
+  await ensureMembers(guild);
+  let assigned = 0;
+  for (const tribe of tribes.all()) {
+    if (!tribe.roleId || !tribes.isPathMode(tribe)) continue;
+    const role = guild.roles.cache.get(tribe.roleId);
+    if (!role) continue;
+    for (const member of role.members.values()) {
+      if (tribes.isLeader(member, tribe) || ['admin', 'mod'].includes(opspanel.memberTier(member))) continue;
+      if (tribes.memberPath(tribe.key, member.id)) continue;
+      tribes.setMemberPath(tribe.key, member.id, 'path2');
+      await maybePromoteTribeRank(guild, tribe.key, member).catch(() => {});
+      assigned++;
+    }
+  }
+  if (assigned) console.log(`[tribe-paths] backfilled ${assigned} existing member(s) onto the default Collective path`);
+  return assigned;
 }
 
 client.on('messageCreate', async (msg) => {
@@ -6997,6 +7027,7 @@ client.on('interactionCreate', async (interaction) => {
     const myth = interaction.fields.getTextInputValue('myth');
     tribes.setLore(tribeKey, { title: stash.title, myth, pathNames: stash.pathNames, attributeNames: stash.attributeNames, rankTitles });
     await syncTribeRankRoles(interaction.guild, tribeKey);
+    await backfillDefaultPaths(interaction.guild).catch(() => {});   // existing members shouldn't sit rankless until next boot
     const fresh = tribes.get(tribeKey);
     const hallId = fresh.hallId || fresh.throneId;
     if (hallId) {
