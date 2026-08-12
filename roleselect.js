@@ -114,6 +114,11 @@ function ageSelectRow() {
     new StringSelectMenuBuilder().setCustomId('roleselect_age').setPlaceholder('Pick your age bracket…')
       .addOptions(AGE.map(([label, roleId]) => ({ label, value: roleId }))));
 }
+// Right below the age bracket picker — same idea (age-adjacent), opens the same modal /birthday set drives.
+function birthdayButtonRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('roleselect_birthday_open').setLabel('Set Birthday').setEmoji('🎉').setStyle(ButtonStyle.Secondary));
+}
 
 function dividerAttachment() {
   return fs.existsSync(DIVIDER_IMAGE) ? [new AttachmentBuilder(DIVIDER_IMAGE, { name: 'divider.png' })] : [];
@@ -153,7 +158,7 @@ function tribeBlock(guild) {
 function buildBlocks(guild) {
   return [
     { content: copy.roleselect.header },
-    { content: copy.roleselect.ageHeading, components: [ageSelectRow()] },
+    { content: copy.roleselect.ageHeading, components: [ageSelectRow(), birthdayButtonRow()] },
     { files: dividerAttachment() },
     { content: copy.roleselect.mdniHeading, components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', '1519408206370308197']])] },
     { files: dividerAttachment() },

@@ -953,6 +953,21 @@ async function sweepBirthdays(guild) {
   }
   birthday.setLastRunHour(hourKey);
 }
+const BIRTHDAY_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// Shared validate+save for a birthday input, used by both /birthday set and the #roles "Set Birthday"
+// button's modal — one place for the validation rules instead of two copies drifting apart.
+function saveBirthdayInput(userId, month, day, offsetInput, year) {
+  const offsetMin = birthday.parseOffset(offsetInput);
+  if (offsetMin == null) return { ok: false, error: `"${offsetInput}" isn't a valid UTC offset. Use something like \`-5\`, \`+5:30\`, or \`UTC-8\`.` };
+  const daysInMonth = new Date(Date.UTC(2000, month, 0)).getUTCDate();   // 2000 is a leap year, so Feb 29 is allowed
+  if (day > daysInMonth) return { ok: false, error: `That month only has ${daysInMonth} days.` };
+  if (year != null && (year < 1900 || year > new Date().getUTCFullYear())) return { ok: false, error: 'That birth year doesn\'t look right.' };
+  birthday.set(userId, month, day, offsetMin, year || null);
+  return { ok: true, month, day, offsetMin, year: year || null };
+}
+function birthdaySavedMsg(r) {
+  return `🎉 Saved — **${BIRTHDAY_MONTH_NAMES[r.month]} ${r.day}**${r.year ? ` ${r.year}` : ''} (${birthday.formatOffset(r.offsetMin)}). You'll get a Birthday role that day — in your own timezone, above your other roles.`;
+}
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
   const s = tribes.load();
@@ -3871,7 +3886,8 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('set').setDescription('Set (or update) your birthday and UTC offset')
           .addIntegerOption(o => o.setName('month').setDescription('Month (1-12)').setRequired(true).setMinValue(1).setMaxValue(12))
           .addIntegerOption(o => o.setName('day').setDescription('Day (1-31)').setRequired(true).setMinValue(1).setMaxValue(31))
-          .addStringOption(o => o.setName('utc_offset').setDescription('Your UTC offset, e.g. -5, +5:30, or UTC-8 — required, so it\'s YOUR day, not the server\'s').setRequired(true)))
+          .addStringOption(o => o.setName('utc_offset').setDescription('Your UTC offset, e.g. -5, +5:30, or UTC-8 — required, so it\'s YOUR day, not the server\'s').setRequired(true))
+          .addIntegerOption(o => o.setName('year').setDescription('Birth year (optional)').setRequired(false).setMinValue(1900).setMaxValue(2100)))
         .addSubcommand(s => s.setName('view').setDescription('See your saved birthday'))
         .addSubcommand(s => s.setName('clear').setDescription('Remove your saved birthday')),
 
@@ -5835,6 +5851,31 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferUpdate();
     const r = await joinTribeSelfServe(interaction.guild, tribe, member);
     return interaction.editReply({ content: r.ok ? r.content : 'Couldn’t add the tribe role. Tell an admin.', components: [] });
+  }
+  if (interaction.isButton?.() && interaction.customId === 'roleselect_birthday_open') {
+    const existing = birthday.get(interaction.user.id);
+    const rows = [
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('month').setLabel('Month (1-12)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2).setValue(existing ? String(existing.month) : '')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('day').setLabel('Day (1-31)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2).setValue(existing ? String(existing.day) : '')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('utc_offset').setLabel('Your UTC offset, e.g. -5 or +5:30').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10).setValue(existing ? birthday.formatOffset(existing.utcOffsetMin).replace('UTC', '') : '')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('year').setLabel('Birth year (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setValue(existing?.year ? String(existing.year) : '')),
+    ];
+    return interaction.showModal(new ModalBuilder().setCustomId('roleselect_birthday_modal').setTitle('Set Your Birthday').addComponents(...rows));
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId === 'roleselect_birthday_modal') {
+    const monthRaw = interaction.fields.getTextInputValue('month');
+    const dayRaw = interaction.fields.getTextInputValue('day');
+    const offsetInput = interaction.fields.getTextInputValue('utc_offset');
+    const yearRaw = interaction.fields.getTextInputValue('year');
+    const month = parseInt(monthRaw, 10);
+    const day = parseInt(dayRaw, 10);
+    const year = yearRaw ? parseInt(yearRaw, 10) : null;
+    if (!Number.isInteger(month) || month < 1 || month > 12) return interaction.reply({ content: `"${monthRaw}" isn't a valid month (1-12).`, flags: MessageFlags.Ephemeral });
+    if (!Number.isInteger(day) || day < 1 || day > 31) return interaction.reply({ content: `"${dayRaw}" isn't a valid day (1-31).`, flags: MessageFlags.Ephemeral });
+    if (yearRaw && !Number.isInteger(year)) return interaction.reply({ content: `"${yearRaw}" isn't a valid year.`, flags: MessageFlags.Ephemeral });
+    const r = saveBirthdayInput(interaction.user.id, month, day, offsetInput, year);
+    if (!r.ok) return interaction.reply({ content: r.error, flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: birthdaySavedMsg(r), flags: MessageFlags.Ephemeral });
   }
   if (interaction.isStringSelectMenu?.() && (interaction.customId === 'roleselect_age' || interaction.customId === 'roleselect_color')) {
     const isAge = interaction.customId === 'roleselect_age';
@@ -8679,16 +8720,14 @@ client.on('interactionCreate', async (interaction) => {
       const month = interaction.options.getInteger('month');
       const day = interaction.options.getInteger('day');
       const offsetInput = interaction.options.getString('utc_offset');
-      const offsetMin = birthday.parseOffset(offsetInput);
-      if (offsetMin == null) return interaction.reply({ content: `"${offsetInput}" isn't a valid UTC offset. Use something like \`-5\`, \`+5:30\`, or \`UTC-8\`.`, flags: MessageFlags.Ephemeral });
-      const daysInMonth = new Date(Date.UTC(2000, month, 0)).getUTCDate();   // 2000 is a leap year, so Feb 29 is allowed
-      if (day > daysInMonth) return interaction.reply({ content: `That month only has ${daysInMonth} days.`, flags: MessageFlags.Ephemeral });
-      birthday.set(interaction.user.id, month, day, offsetMin);
-      return interaction.reply({ content: `🎉 Saved — **${MONTH_NAMES[month]} ${day}** (${birthday.formatOffset(offsetMin)}). You'll get a Birthday role that day — in your own timezone, above your other roles.`, flags: MessageFlags.Ephemeral });
+      const year = interaction.options.getInteger('year');
+      const r = saveBirthdayInput(interaction.user.id, month, day, offsetInput, year);
+      if (!r.ok) return interaction.reply({ content: r.error, flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: birthdaySavedMsg(r), flags: MessageFlags.Ephemeral });
     }
     if (sub === 'view') {
       const b = birthday.get(interaction.user.id);
-      return interaction.reply({ content: b ? `🎉 **${MONTH_NAMES[b.month]} ${b.day}** (${birthday.formatOffset(b.utcOffsetMin)})` : "You haven't set a birthday yet — \`/birthday set\`.", flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: b ? `🎉 **${MONTH_NAMES[b.month]} ${b.day}**${b.year ? ` ${b.year}` : ''} (${birthday.formatOffset(b.utcOffsetMin)})` : "You haven't set a birthday yet — \`/birthday set\`.", flags: MessageFlags.Ephemeral });
     }
     if (sub === 'clear') {
       birthday.clear(interaction.user.id);

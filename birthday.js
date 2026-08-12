@@ -13,10 +13,11 @@ function load() { if (_cache) return _cache; try { _cache = JSON.parse(fs.readFi
 function save(s) { _cache = s; try { fs.writeFileSync(FILE, JSON.stringify(s)); } catch (e) { console.error('[birthday] save:', e.message); } }
 
 // utcOffsetMin: whole minutes offset from UTC (e.g. -300 for UTC-5, 330 for UTC+5:30). Always required —
-// there's no "default UTC" here, the caller must always pass a value.
-function set(userId, month, day, utcOffsetMin) {
+// there's no "default UTC" here, the caller must always pass a value. year is optional (birth year, not
+// used for the role logic at all — month/day + offset alone decide that — just stored for reference/age).
+function set(userId, month, day, utcOffsetMin, year) {
   const s = load(); s.dates = s.dates || {};
-  s.dates[userId] = { month, day, utcOffsetMin };
+  s.dates[userId] = { month, day, utcOffsetMin, year: year || null };
   save(s);
 }
 function get(userId) { return (load().dates || {})[userId] || null; }
