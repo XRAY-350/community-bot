@@ -565,7 +565,8 @@ function tribeThronePanel(tribe) {
     ally
       ? new ButtonBuilder().setCustomId(`tribethrone_allybreak:${k}`).setEmoji('💔').setLabel('Break Alliance').setStyle(ButtonStyle.Secondary)
       : new ButtonBuilder().setCustomId(`tribethrone_alliance:${k}`).setEmoji('🤝').setLabel('Propose Alliance').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`tribethrone_allygift:${k}`).setEmoji('🎁').setLabel('Gift Treasury to Ally').setStyle(ButtonStyle.Secondary).setDisabled(!ally));
+    new ButtonBuilder().setCustomId(`tribethrone_allygift:${k}`).setEmoji('🎁').setLabel('Gift Treasury to Ally').setStyle(ButtonStyle.Secondary).setDisabled(!ally),
+    new ButtonBuilder().setCustomId(`tribethrone_clearthrone:${k}`).setEmoji('🧹').setLabel('Clear Throne').setStyle(ButtonStyle.Secondary));
   // Recognition + depth row (member-facing) — each button gated by its own feature flag. Discord caps a message
   // at 5 rows and a row at 5 buttons; Trophies, Hall of Fame, Quests, Relics, Prestige is exactly 5 when all on.
   const rows = [memberRow, leaderRow1, leaderRow2, leaderRow3];
@@ -2202,18 +2203,28 @@ function sealedTryScore(tribeKey, uid, answerTs, correct) {
 // non-pinned mess a few minutes after the event actually ends instead of waiting a full day, so the throne's
 // pinned Panel + Paths reference are the only thing left standing shortly after. bulkDelete silently skips
 // anything older than 14 days, which never applies here (always run within minutes of the messages posting).
+// Clears every non-pinned message in a channel (paginated — bulkDelete caps at 100/call), leaving the
+// pinned Panel + Paths reference untouched. Used both by the timed post-event cleanup below and the
+// leader-facing Clear Throne button (tribethrone_clearthrone). Returns how many messages were removed.
+async function clearThroneMessages(guild, channelId) {
+  const ch = await guild.channels.fetch(channelId).catch(() => null);
+  if (!ch || !ch.bulkDelete) return 0;
+  let cleared = 0;
+  for (let i = 0; i < 10; i++) {
+    const msgs = await ch.messages.fetch({ limit: 100 }).catch(() => null);
+    if (!msgs || !msgs.size) break;
+    const toDelete = [...msgs.values()].filter(m => !m.pinned);
+    if (toDelete.length) {
+      await ch.bulkDelete(toDelete, true).catch(e => console.error(`[throne-cleanup] ${channelId}:`, e.message));
+      cleared += toDelete.length;
+    }
+    if (msgs.size < 100) break;
+  }
+  return cleared;
+}
 function scheduleThroneMessageCleanup(guild, channelIds, delayMs = 5 * 60000) {
   const ids = [...new Set(channelIds.filter(Boolean))];
-  setTimeout(async () => {
-    for (const chId of ids) {
-      const ch = await guild.channels.fetch(chId).catch(() => null);
-      if (!ch || !ch.bulkDelete) continue;
-      const msgs = await ch.messages.fetch({ limit: 100 }).catch(() => null);
-      if (!msgs) continue;
-      const toDelete = [...msgs.values()].filter(m => !m.pinned);
-      if (toDelete.length) await ch.bulkDelete(toDelete, true).catch(e => console.error(`[throne-cleanup] ${chId}:`, e.message));
-    }
-  }, delayMs);
+  setTimeout(async () => { for (const chId of ids) await clearThroneMessages(guild, chId); }, delayMs);
 }
 async function finishSealedArena(guild) {
   clearSealedTimers();
@@ -4405,6 +4416,11 @@ client.once('ready', async () => {
       if (!msg) {
         await postThroneGuide(dguild, t).catch(e => console.error(`[tribe] repost throne panel ${t.key}: ${e.message}`));
         console.log(`[tribe] reposted missing throne panel for ${t.key}`);
+      } else {
+        // Panel exists — refresh its CONTENT too (buttons/text change with code deploys; a repost only
+        // triggers if the message is gone entirely, which would otherwise leave every tribe's panel stuck
+        // on whatever was live the day it was first posted).
+        await msg.edit(tribeThronePanel(t)).catch(() => {});
       }
     }
   }
@@ -6683,12 +6699,17 @@ client.on('interactionCreate', async (interaction) => {
     const tribe = tribes.get(tribeKey);
     if (!tribe) return interaction.reply({ content: 'That tribe no longer exists.', flags: MessageFlags.Ephemeral });
     const act = action.slice('tribethrone_'.length);
-    const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster', 'war', 'alliance', 'allybreak', 'allygift'].includes(act);
+    const isLeaderTool = ['invite', 'banish', 'note', 'rank', 'retheme', 'announce', 'motto', 'muster', 'war', 'alliance', 'allybreak', 'allygift', 'clearthrone'].includes(act);
     if (isLeaderTool && !canManageTribe(interaction, tribe))
       return interaction.reply({ content: `Only ${tribes.leaderTitle(tribe)} or staff can do that.`, flags: MessageFlags.Ephemeral });
     // Frozen perks (mod-tribe short on leaders): war/alliances/shop are locked until it's back to 3 leaders.
     if (['war', 'alliance', 'allybreak', 'allygift', 'shop'].includes(act) && tribes.isFrozen(tribe))
       return interaction.reply({ content: `🧊 **${tribe.shortName || tribe.name}**’s perks are frozen — it’s short on leaders. An admin can restore them with \`/tribe-admin set-leader\`.`, flags: MessageFlags.Ephemeral });
+    if (act === 'clearthrone') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const n = await clearThroneMessages(interaction.guild, tribe.throneId);
+      return interaction.editReply(`🧹 Cleared **${n}** message(s) from the throne. The pinned panel + 📖 Paths & Attributes reference stay put.`);
+    }
     if (act === 'roster') {
       const members = tribes.roster(interaction.guild, tribe);
       const showTitle = features.enabled('achievements');
