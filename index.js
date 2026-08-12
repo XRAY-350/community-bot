@@ -5586,7 +5586,11 @@ client.on('messageCreate', async (msg) => {
     // its own explicit authorization rather than a guild-wide carve-out.
     // Checked BEFORE the bot-author early-return below — a webhook post has msg.author.bot === true, so it
     // would otherwise be silently skipped by that return.
-    if (msg.guild && msg.webhookId && !raidguard.isAuthorized(msg.guild.id, msg.webhookId)) {
+    // BUG FIX (owner-reported, 2026-08-12): Discord delivers slash-command interaction replies through a
+    // webhook whose id is the bot's OWN application id (msg.webhookId === client.user.id), NOT null — so
+    // every public (non-ephemeral) command reply was getting caught by this block and deleted on sight.
+    // Excluding the bot's own id fixes that without weakening the check against real external webhooks.
+    if (msg.guild && msg.webhookId && msg.webhookId !== client.user.id && !raidguard.isAuthorized(msg.guild.id, msg.webhookId)) {
       await msg.delete().catch(() => {});
       return;
     }
