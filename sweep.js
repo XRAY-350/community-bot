@@ -161,12 +161,12 @@ async function sweep(client, state, ctx) {
         }
       } else if (!st.warnedAt) {
         // First sweep past the warn threshold → warn and record when (never kick unwarned).
-        await warnMember(m, own, ctx);
+        await warnMember(m, own, ctx, state);
         state.setMember(m.id, { warnedAt: now });
         warned += 1;
       } else if (now - st.warnedAt >= GRACE_MS && dueKick) {
         // Warned at least the grace ago AND past the kick day → kick + delete their thread(s).
-        if (await reapMember(guild, m, own, state)) kicked += 1;
+        if (await reapMember(guild, m, own, state, alertChannel)) kicked += 1;
       }
     }
     if (config.dryRun && wouldAssign > MAX_LOG) console.log(`[dry-run] ASSIGN: …and ${wouldAssign - MAX_LOG} more with neither role`);
@@ -305,9 +305,12 @@ async function sweep(client, state, ctx) {
   console.log(`[sweep] done — ${config.dryRun ? `would-assign:${wouldAssign}, would-kick:${wouldKick}, would-warn:${wouldWarn}` : `assigned:${assigned}, kicked:${kicked}, warned:${warned}, conflicts-resolved:${conflictsResolved}`}, orphans:${orphans}, verified-cleanup:${verifiedCleaned}, unverified-chat-purge:${warnPurged}, conflicts-remaining:${conflictsRemaining} (verify: ${active.length} open + ${archived.length} archived)${config.dryRun ? ' [DRY_RUN]' : ''}`);
 }
 
-// Pre-kick warning that @mentions the member. In their thread if they have one, else the
-// unverified-chat channel.
-async function warnMember(member, ownThreads, ctx) {
+// Pre-kick warning that @mentions the member. In their thread if they have one (auto-cleaned when the
+// thread is later deleted — verified or kicked, either way), else a standalone post in the unverified-chat
+// channel. The standalone case has no thread to ride along with, so its message id is tracked on the
+// member's state and explicitly deleted by reapMember/onVerified — otherwise it's a stray ping to a member
+// who's since been kicked or verified, sitting in the channel forever.
+async function warnMember(member, ownThreads, ctx, state) {
   const graceDays = config.kickDays - config.warnDays;
   const consequence = config.staleKick
     ? `you'll be removed (kicked) from the server`
@@ -319,19 +322,29 @@ async function warnMember(member, ownThreads, ctx) {
     + `<@${member.id}> (**${member.user.tag}** · \`${member.id}\`). You still aren't verified. `
     + `If you're not verified within **${graceDays} day${graceDays === 1 ? '' : 's'}**, ${consequence}. `
     + `Please complete verification, or ping a moderator if you need help.`;
-  const target = ownThreads.length ? ownThreads[0] : ctx.getWarnChannel();
+  const inThread = ownThreads.length > 0;
+  const target = inThread ? ownThreads[0] : ctx.getWarnChannel();
   if (!target) {
     console.error(`[warn] no channel to warn member ${member.id}`);
     return;
   }
-  await target.send({ content: text, allowedMentions: { users: [member.id] } })
-    .catch(err => console.error(`[warn] failed for ${member.id}: ${err.message}`));
+  const msg = await target.send({ content: text, allowedMentions: { users: [member.id] } })
+    .catch(err => { console.error(`[warn] failed for ${member.id}: ${err.message}`); return null; });
+  if (msg && !inThread) state.setMember(member.id, { warnMsgId: msg.id, warnMsgChannelId: target.id });
+}
+// Delete a standalone (non-thread) warn ping tracked on the member's state, if one exists. No-op otherwise
+// (the common case: the member had a thread, so their warn message died with it).
+async function cleanupWarnMsg(guild, member, state) {
+  const st = state.member(member.id);
+  if (!st.warnMsgId || !st.warnMsgChannelId) return;
+  const ch = await guild.channels.fetch(st.warnMsgChannelId).catch(() => null);
+  if (ch) await ch.messages.delete(st.warnMsgId).catch(() => {});
 }
 
 // Live-only: warning grace elapsed and still unverified → kick (if enabled), then delete their
 // thread(s). If a required kick fails (e.g. missing permission), we DON'T delete — leaving state
 // so it retries and the permission problem stays visible. Returns true if the member was kicked.
-async function reapMember(guild, member, ownThreads, state) {
+async function reapMember(guild, member, ownThreads, state, alertChannel) {
   const reason = `Unverified ${config.kickDays}d after joining`;
   if (config.staleKick) {
     const ok = await kickMember(guild, member.id, reason, { dryRun: false });
@@ -344,6 +357,7 @@ async function reapMember(guild, member, ownThreads, state) {
     const r = await deleteThread(t, { reason, dryRun: false, state, alertChannel });
     if (r.ok) state.forgetThread(t.id);
   }
+  await cleanupWarnMsg(guild, member, state);
   state.forgetMember(member.id);
   return true;
 }
@@ -371,4 +385,4 @@ async function postNudge(alertChannel, threads, now, members, state) {
   }
 }
 
-module.exports = { register, runOnce: sweep };
+module.exports = { register, runOnce: sweep, cleanupWarnMsg };

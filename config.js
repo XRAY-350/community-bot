@@ -255,7 +255,11 @@ const config = {
   stateFile: opt('STATE_FILE', statePath('verify_state.json')),
 };
 
-config.alertChannelId = config.modAlertChannelId || config.verifyChannelId;
+// Verification nudges ping mods about a pending thread — that's staff business, not something to post in
+// the public verify channel itself (the bug: no MOD_ALERT_CHANNEL_ID was ever set, so this fell all the way
+// back to verifyChannelId). Default to the existing mod-only alerts channel instead; verifyChannelId is only
+// a last resort if even that isn't configured.
+config.alertChannelId = config.modAlertChannelId || config.modAnnounceChannelId || config.verifyChannelId;
 config.warnChannelId = config.unverifiedChatChannelId || config.verifyChannelId;
 
 // Runtime overrides written by the ops dashboard (Settings/Danger toggles + timings). They persist

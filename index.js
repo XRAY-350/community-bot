@@ -1003,6 +1003,36 @@ async function alertModTribe(guild, content, pingRoleId) {
   if (!ch) return;
   await ch.send({ content, allowedMentions: { roles: pingRoleId ? [pingRoleId] : [] } }).catch(e => console.error('[leader-req] alert:', e.message));
 }
+// Inverse of stripNonStaffLeaders: a member-founded tribe stays member-only (staffBlockedFromMemberTribe
+// blocks staff from JOINING one, but does nothing for someone already inside who gets promoted afterward).
+// Mirrors the mod-founded side — promoted to mod+ ⟹ stripped, instantly on the promotion and swept hourly
+// as a backstop, leader role first (if held) then the base tribe role, with an alert + throne post so the
+// tribe knows to pick a replacement leader instead of a staff member silently overriding it.
+async function removePromotedFromMemberTribe(guild, member, tribe) {
+  if (!tribes.isMemberFounded(tribe) || !opspanel.memberTier(member)) return null;
+  const wasLeader = tribes.isLeader(member, tribe);
+  if (wasLeader && tribe.leaderRoleId) await member.roles.remove(tribe.leaderRoleId, 'Member-founded tribe: promoted to staff, no longer eligible to lead it').catch(() => {});
+  const hadRole = !!(tribe.roleId && member.roles.cache.has(tribe.roleId));
+  if (hadRole) {
+    await member.roles.remove(tribe.roleId, 'Member-founded tribe: promoted to staff, tribe stays member-only').catch(() => {});
+    tribes.setMembership(tribe.key, member.id, false);
+  }
+  if (!hadRole && !wasLeader) return null;   // nothing actually changed (e.g. re-fired on an unrelated role update)
+  const name = `${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}**`;
+  await alertModTribe(guild, `👤 <@${member.id}> was promoted to staff and removed from ${name} — member-founded tribes stay member-only.${wasLeader ? ` They were its ${tribes.leaderTitle(tribe)}.` : ''}`, tribe.leaderRoleId);
+  const freshTribe = tribes.get(tribe.key);
+  const stillLed = freshTribe?.leaderRoleId && (guild.roles.cache.get(freshTribe.leaderRoleId)?.members.size || 0) > 0;
+  if (wasLeader && !stillLed) await alertModTribe(guild, `⚠️ ${name} has **no leader left**. An admin (or a remaining co-leader) should appoint one with \`/tribe-admin set-leader\`.`, config.adminRoleId);
+  if (tribe.throneId) {
+    const throne = await guild.channels.fetch(tribe.throneId).catch(() => null);
+    if (throne) await throneSend(throne, {
+      content: `## 👤 <@${member.id}> left — promoted to staff\nMember-founded tribes stay member-only, so they've been removed automatically.` + (wasLeader ? ` The tribe needs a new ${tribes.leaderTitle(tribe)}${stillLed ? '' : ' — none left right now'}.` : ''),
+      allowedMentions: { users: [member.id] },
+    }).catch(() => {});
+  }
+  await refreshThronePanel(guild, freshTribe).catch(() => {});
+  return { wasLeader, stillLed };
+}
 // Enforce the mod-tribe 3-leader requirement (owner: "not a suggestion"). Escalation ladder, driven boot +
 // hourly: ok → grace (alert) → frozen (perks blocked) → disband_pending (staff-confirmed dissolution). Any
 // return to full strength clears it instantly. Only touches tribes flagged foundedByMod.
@@ -1021,6 +1051,12 @@ async function sweepLeaderRequirement(guild) {
     // then sees the corrected roster). Applies to every tribe.
     const demoted = await stripNonStaffLeaders(guild, tribe);
     if (demoted.length) await alertModTribe(guild, `👑 Removed the leader role from ${demoted.map(m => `<@${m.id}>`).join(', ')} in ${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}** — a tribe leader must be a mod or admin.`, tribe.leaderRoleId);
+    // Backstop for the inverse case (member-founded, promoted INTO staff) — guildMemberUpdate handles this
+    // instantly on the actual promotion; this catches anything missed (bot downtime, a stale partial member).
+    if (tribes.isMemberFounded(tribe) && tribe.roleId) {
+      const role = guild.roles.cache.get(tribe.roleId);
+      if (role) for (const m of [...role.members.values()]) if (opspanel.memberTier(m)) await removePromotedFromMemberTribe(guild, m, tribe).catch(() => {});
+    }
     const leaderRole = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
     const holderCount = leaderRole ? leaderRole.members.size : 0;
     if (!tribes.isModFounded(tribe) && !tribes.isMemberFounded(tribe) && typeof tribe.lastLeaderCount === 'number' && holderCount < tribe.lastLeaderCount) {
@@ -4119,6 +4155,20 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sealedAutoTick(g)).catch(() => {}), 3600000);
   // Tribe Games (Phase 8): entirely panel-initiated, so just resume an in-flight lobby countdown on boot.
   if (dguild) await reconcileTribeGames(dguild).catch(e => console.error(`[tribegames] boot reconcile: ${e.message}`));
+  // Self-heal: if a tribe's pinned throne panel got deleted (manually, or a pin-cap eviction), repost it —
+  // otherwise that tribe silently loses Invite/Banish/Muster/etc. until someone notices.
+  if (dguild) {
+    for (const t of tribes.all()) {
+      if (!t.throneId) continue;
+      const throne = await dguild.channels.fetch(t.throneId).catch(() => null);
+      if (!throne) continue;
+      const msg = t.panelMessageId ? await throne.messages.fetch(t.panelMessageId).catch(() => null) : null;
+      if (!msg) {
+        await postThroneGuide(dguild, t).catch(e => console.error(`[tribe] repost throne panel ${t.key}: ${e.message}`));
+        console.log(`[tribe] reposted missing throne panel for ${t.key}`);
+      }
+    }
+  }
   // The Trials (dark until enabled): RESUME an in-flight Trial on boot (long VC event), then an hourly tick that
   // fires the daily scheduled Trial at peak (own once-a-day marker).
   if (dguild) await reconcileTrial(dguild).catch(e => console.error(`[trial] boot reconcile: ${e.message}`));
@@ -4450,6 +4500,12 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
       const n = await modapps.removeDemotedFromReviewThreads(newMember.guild, newMember.id).catch(() => 0);
       if (n) console.log(`[modapps] demoted ${newMember.user.tag} removed from ${n} review thread(s)`);
     }
+    // PROMOTION: wasn't mod+, now is → member-founded tribes stay member-only (staffBlockedFromMemberTribe
+    // blocks staff from JOINING one; this is the mirror for someone already inside who gets promoted).
+    if (oldMember && !oldMember.partial && !opspanel.memberTier(oldMember) && opspanel.memberTier(newMember)) {
+      const tribe = tribes.myTribe(newMember);
+      if (tribe) await removePromotedFromMemberTribe(newMember.guild, newMember, tribe).catch(e => console.error('[tribe-staff-promote]', e.message));
+    }
     await enforceMdni(newMember).catch(() => {});   // keep MDNI ⟹ adult on every role change
     await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));   // block minor STAFF from the 18+ channel
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
@@ -4662,6 +4718,11 @@ function canManageTribe(interaction, tribe) {
   return !!(tier && interaction.member?.roles?.cache?.has(tribe.roleId));    // in-tribe staff
 }
 const canVerify = (i) => canBan(i) || isTrialMod(i);
+// General member-facing gates ("you must hold Verified to use this") shouldn't block staff who were
+// promoted without ever separately holding the Verified role themselves (e.g. an admin-added mod) — their
+// tier already vouches for them. Doesn't apply to the couple of gates that are member-only BY DESIGN
+// (member-founded-tribe cosign/found), which already exclude staff on the very next check regardless.
+const isVerifiedOrStaff = (i) => !config.verifiedRoleId || !!i.member?.roles?.cache?.has(config.verifiedRoleId) || canVerify(i);
 
 // ==== /tribe panel (Phase 8) — one ephemeral, role-aware command replacing what would've been several ======
 // narrow staff/leader/member commands (owner: minimize command SPRAWL, not commands as such — one panel
@@ -4671,14 +4732,28 @@ const canVerify = (i) => canBan(i) || isTrialMod(i);
 function tribeGameEntrantLines() {
   return tribegames.entrantTribeKeys().map(k => tribeName(k)).join(', ') || '_none yet_';
 }
-async function buildTribePanelView(interaction) {
+async function buildTribePanelView(interaction, forcedTribeKey = null) {
   const member = interaction.member;
-  const isStaff = !!opspanel.tierOf(interaction);
-  const myTribe = tribes.leaderTribe(member) || tribes.memberTribe(member);
+  const tier = opspanel.tierOf(interaction);
+  const isStaff = !!tier;
+  const isAdminTier = tier === 'owner' || tier === 'botowner';
+  const ownTribe = tribes.leaderTribe(member) || tribes.memberTribe(member);
+  const myTribe = forcedTribeKey ? tribes.get(forcedTribeKey) : ownTribe;
   const canManage = myTribe && canManageTribe(interaction, myTribe);
   const active = tribegames.isActive() ? tribegames.get() : null;
   const lines = ['## 🏛️ Tribe Panel'];
   const rows = [];
+
+  // Owner/bot-owner aren't necessarily in any tribe themselves — give them a picker so they can reach
+  // any tribe's leader tools (canManageTribe already grants them the override; this is what actually
+  // surfaces it in the panel instead of silently doing nothing when ownTribe is null).
+  if (isAdminTier) {
+    const opts = tribes.all().map(t => ({ label: t.shortName || t.name, value: t.key, default: myTribe && t.key === myTribe.key }));
+    if (opts.length) {
+      rows.push(new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId('tp_admin_pick').setPlaceholder(myTribe ? `Managing: ${myTribe.shortName || myTribe.name}` : 'Manage a tribe…').addOptions(opts.slice(0, 25))));
+    }
+  }
 
   // Arena/Sealed Arena/Trial ("classic" events, pre-dating Tribe Games) get folded into the SAME select as
   // the Tribe Games catalog rather than their own row — Discord caps a message at 5 rows, and their access
@@ -4706,11 +4781,11 @@ async function buildTribePanelView(interaction) {
   }
 
   if (canManage && myTribe) {
+    const k = myTribe.key;
     if (active && active.phase === 'lobby') {
       rows.push(new ActionRowBuilder().addComponents(
-        new UserSelectMenuBuilder().setCustomId(`tp_setrep:${myTribe.key}`).setPlaceholder(`Set ${myTribe.shortName || myTribe.name}'s rep(s)`).setMinValues(1).setMaxValues(2)));
+        new UserSelectMenuBuilder().setCustomId(`tp_setrep:${k}`).setPlaceholder(`Set ${myTribe.shortName || myTribe.name}'s rep(s)`).setMinValues(1).setMaxValues(2)));
     }
-    const k = myTribe.key;
     // Rows A/B reuse the EXACT customIds the Throne panel's own buttons already use (tribethrone_*) — that
     // router only looks at tribeKey + canManageTribe, not which message the click came from, so these work
     // identically here with zero new handler code.
@@ -5973,7 +6048,7 @@ client.on('interactionCreate', async (interaction) => {
     const req = tribes.getMemberFounding();
     if (!req) return interaction.reply({ content: 'This founding petition is no longer active.', flags: MessageFlags.Ephemeral });
     if (interaction.user.id === req.founderId) return interaction.reply({ content: 'You can’t cosign your own founding petition.', flags: MessageFlags.Ephemeral });
-    if (config.verifiedRoleId && !interaction.member.roles.cache.has(config.verifiedRoleId)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
+    if (!isVerifiedOrStaff(interaction)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
     if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
     if (tribes.myTribe(interaction.member)) {
       // Cosigning JOINS this tribe, so you must leave your current one first. Rather than just tell them,
@@ -6492,6 +6567,10 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
   // ==== /tribe panel interaction handlers (Phase 8) ============================================
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_admin_pick') {
+    await interaction.deferUpdate();
+    return interaction.editReply(await buildTribePanelView(interaction, interaction.values[0]));
+  }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_start_game') {
     const picked = interaction.values[0];
     const isClassic = picked.startsWith('classic_');
@@ -7178,7 +7257,7 @@ client.on('interactionCreate', async (interaction) => {
   // to collect text, then hand it to the module. Info buttons show an ephemeral view. All ephemeral.
   if (interaction.isButton?.() && interaction.customId.startsWith('pub')) {
     const cid = interaction.customId;
-    const verifiedGate = () => config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId);
+    const verifiedGate = () => !isVerifiedOrStaff(interaction);
     if (cid === 'pubdash_status') return interaction.reply({ ...pubdash.statusView(interaction.member, state), flags: MessageFlags.Ephemeral });
     if (cid === 'pubdash_info') return interaction.reply({ ...pubdash.infoView(), flags: MessageFlags.Ephemeral });
     if (cid === 'pubact_tribe') return interaction.reply({ ...pubdash.tribeView(interaction.member), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
@@ -7346,7 +7425,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Report') {
     // Member-facing: right-click a message → Apps → Report → anonymous report to staff (works anywhere).
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified to report.', flags: MessageFlags.Ephemeral });
     const target = interaction.targetMessage;
     if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
@@ -7581,7 +7660,7 @@ client.on('interactionCreate', async (interaction) => {
       content: `✅ Unbanned <@${id}>.` + (keepWatch ? ' They’re still on the **Watchlist**.' : '') });
   }
   if (name === 'contest-submit') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be **verified** to enter the contest.', flags: MessageFlags.Ephemeral });
     try { return await contest.submit(interaction); }
     catch (e) { console.error('[contest] submit:', e.message); return interaction.reply({ content: 'Something went wrong entering the contest.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
@@ -7885,7 +7964,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[suggestions] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'suggest') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can post suggestions.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -7902,7 +7981,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[confessions] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'confess') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can confess.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -7919,7 +7998,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[whistleblow] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'whistleblow') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can use this.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -7938,7 +8017,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[modapps] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'apply-mod') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
     if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet. Ask an admin to set it up in **/panel → 🧩 Setup**.', flags: MessageFlags.Ephemeral });
     if (!modapps.applicationsOpen()) return interaction.reply({ content: modapps.closedNotice(), flags: MessageFlags.Ephemeral });
@@ -8103,7 +8182,7 @@ client.on('interactionCreate', async (interaction) => {
     // BEFORE the tribe-resolution below, because a founder isn't in a tribe yet. ----
     if (sub === 'found') {
       if (!features.enabled('memberFoundedTribe')) return interaction.reply({ content: 'Founding a tribe as a member isn’t available yet.', flags: MessageFlags.Ephemeral });
-      if (config.verifiedRoleId && !interaction.member.roles.cache.has(config.verifiedRoleId)) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
+      if (!isVerifiedOrStaff(interaction)) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
       if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'This is a **member-led** tribe path — mods/admins/owners found tribes through `/tribe-admin`.', flags: MessageFlags.Ephemeral });
       if (isTrialMod(interaction)) return interaction.reply({ content: 'Trial mods can **cosign** a member-founded tribe, but the founder has to be a regular member.', flags: MessageFlags.Ephemeral });
       if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a tribe — leave it first before founding a new one.', flags: MessageFlags.Ephemeral });
@@ -8539,7 +8618,7 @@ client.on('interactionCreate', async (interaction) => {
     catch (e) { console.error(`[rolereq] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'request-role') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can request a role.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -8565,7 +8644,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[strikeAppeals] setup ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'appeal') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can open an appeal.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -8592,7 +8671,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[${name}] ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
   }
   if (name === 'report') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can use this.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -8601,7 +8680,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[reports] ${e.message}`); return interaction.editReply('Could not send that report.').catch(() => {}); }
   }
   if (name === 'modmail') {
-    if (config.verifiedRoleId && !interaction.member?.roles?.cache?.has(config.verifiedRoleId))
+    if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can use this.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {

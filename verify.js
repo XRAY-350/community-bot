@@ -4,6 +4,7 @@
 
 const config = require('./config');
 const { memberThreads, deleteThread } = require('./threads');
+const { cleanupWarnMsg } = require('./sweep');
 
 // Wire the guildMemberUpdate handler. `state` gives us idempotency across restarts and
 // partial-member gaps; `getChannel` returns the (cached) verify channel.
@@ -66,6 +67,10 @@ async function onVerified(member, state, getChannel) {
     });
     if (config.dryRun) state.forgetThread(thread.id); // live path: deleteThread already forgot it post-cleanup
   }
+  // A member who never opened a thread could still have a standalone "Verification Reminder" ping sitting
+  // in the unverified-chat channel (warnMember posts there when there's no thread to attach to) — clean it
+  // up now that they're verified, same as reapMember does on kick.
+  if (!config.dryRun) await cleanupWarnMsg(member.guild, member, state);
   console.log(`[verify] ${member.user.tag} verified — ${config.dryRun ? 'would delete' : 'deleted'} ${threads.length} thread(s)`);
 }
 
