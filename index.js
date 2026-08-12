@@ -4228,6 +4228,18 @@ client.once('ready', async () => {
       new ContextMenuCommandBuilder().setName('Strike').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Report').setType(ApplicationCommandType.Message).setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),   // member-facing anon report
+      // Immediate ban (owner, 2026-08-12: "there's no way to ban someone immediately through the bot" — the
+      // only existing path was buried inside the verify-panel's deny→kick→ban escalation chain, reachable
+      // only for fresh joiners going through verification). Two entry points to the same handler: a slash
+      // command for typing a user + reason, and a right-click context menu for the fastest possible path.
+      // Gated at the Discord permission level (Ban Members) — same convention as /unban, no extra tier check.
+      new SlashCommandBuilder().setName('ban').setDescription('Immediately ban a member')
+        .addUserOption(o => o.setName('user').setDescription('Who to ban').setRequired(true))
+        .addStringOption(o => o.setName('reason').setDescription('Audit-log reason'))
+        .addIntegerOption(o => o.setName('delete_days').setDescription('Delete their messages from the last N days (0-7, default 1)').setMinValue(0).setMaxValue(7))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
+      new ContextMenuCommandBuilder().setName('Ban').setType(ApplicationCommandType.User)
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
     ];
     // Only register commands whose feature is enabled (fail-off). Disabled features' commands
     // simply don't appear in the server. (Seeded above, before allCmds was built.)
@@ -6201,6 +6213,16 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.reply({ content: `🎉 Phrase solved: **${th.phrase}** (+${MOSAIC_PHRASE_PTS})! Your Mosaic is complete.`, flags: MessageFlags.Ephemeral });
   }
   // Send-to-corner reason modal (cornerReason feature). customId: corner_reason:<memberId>:<channelId>:<messageId>
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('ban_reason_modal:')) {
+    const targetId = interaction.customId.split(':')[1];
+    const rawReason = (interaction.fields.getTextInputValue('reason') || '').trim();
+    const reason = rawReason || `Banned by ${interaction.user.tag}`;
+    const targetUser = await client.users.fetch(targetId).catch(() => null);
+    try { await interaction.guild.bans.create(targetId, { reason, deleteMessageSeconds: 24 * 60 * 60 }); }
+    catch (e) { return interaction.reply({ content: `❌ Ban failed: ${e.message}`, flags: MessageFlags.Ephemeral }); }
+    await ownerlog.log(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `${targetUser ? targetUser.tag : targetId} (\`${targetId}\`) — ${reason} — by <@${interaction.user.id}>.` });
+    return interaction.reply({ content: `🔨 Banned **${targetUser ? targetUser.tag : targetId}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('corner_reason:')) {
     try {
       const [, memberId, channelId, messageId, ruleSeg] = interaction.customId.split(':');
@@ -7794,6 +7816,17 @@ client.on('interactionCreate', async (interaction) => {
     const r = await reports.submit(interaction.guild, interaction.member, target.author, text);
     return interaction.editReply(r.ok ? `✅ Reported that message to staff anonymously (Report #${r.num}). They won’t know it was you.` : `❌ ${r.msg}`);
   }
+  if (interaction.isUserContextMenuCommand?.() && interaction.commandName === 'Ban') {
+    // Fastest possible path (owner, 2026-08-12: "there's no way to ban someone immediately through the
+    // bot") — right-click a member, type an optional reason, done. Gated at the Discord permission level
+    // (Ban Members) via the command's setDefaultMemberPermissions; no extra tier check needed here.
+    const target = interaction.targetUser;
+    if (target.id === interaction.user.id) return interaction.reply({ content: "You can't ban yourself.", flags: MessageFlags.Ephemeral });
+    if (target.id === client.user.id) return interaction.reply({ content: "I'm not banning myself.", flags: MessageFlags.Ephemeral });
+    const modal = new ModalBuilder().setCustomId(`ban_reason_modal:${target.id}`).setTitle(`Ban ${target.tag}`.slice(0, 45)).addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
+    return safeShowModal(interaction, modal);
+  }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Send to corner') {
     // Same access + tier rules as /corner, but the trigger is a specific message — and that message
     // gets forwarded into the corner so the member (and mods) see exactly what put them there.
@@ -8004,6 +8037,17 @@ client.on('interactionCreate', async (interaction) => {
       if (!opspanel.memberTier(interaction.member) && isTrialMod(interaction)) return await opspanel.openReadOnly(interaction);
       return await opspanel.openPersonalPanel(interaction);
     } catch (e) { console.error(`[fops] /panel ${e.message}`); return interaction.reply({ content: 'Could not open the panel.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+  }
+  if (name === 'ban') {
+    const target = interaction.options.getUser('user');
+    if (target.id === interaction.user.id) return interaction.reply({ content: "You can't ban yourself.", flags: MessageFlags.Ephemeral });
+    if (target.id === client.user.id) return interaction.reply({ content: "I'm not banning myself.", flags: MessageFlags.Ephemeral });
+    const reason = interaction.options.getString('reason') || `Banned by ${interaction.user.tag}`;
+    const deleteDays = interaction.options.getInteger('delete_days') ?? 1;
+    try { await interaction.guild.bans.create(target.id, { reason, deleteMessageSeconds: deleteDays * 24 * 60 * 60 }); }
+    catch (e) { return interaction.reply({ content: `❌ Ban failed: ${e.message}`, flags: MessageFlags.Ephemeral }); }
+    await ownerlog.log(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `${target.tag} (\`${target.id}\`) — ${reason} — by <@${interaction.user.id}>.` });
+    return interaction.reply({ content: `🔨 Banned **${target.tag}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   if (name === 'unban') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can unban.', flags: MessageFlags.Ephemeral });
