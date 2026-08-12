@@ -47,6 +47,7 @@ const lore = require('./lore');
 const quests = require('./quests');
 const sealed = require('./sealed');
 const tribegames = require('./tribegames');
+const birthday = require('./birthday');
 const proving = require('./proving');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
@@ -901,6 +902,38 @@ async function broadcastCoronation(guild, tribe, result, crownRole, preBoard, se
   const rivals = (preBoard || []).filter(t => t.key !== tribe.key && (t.glory || 0) > 0).slice(0, 4);
   if (rivals.length) { await ch.send({ content: `-# They did not take it uncontested. ${rivals.map(r => `${r.emoji || '🏴'} ${r.shortName || r.name} (${r.glory})`).join(', ')} pressed them hard.`, allowedMentions: { parse: [] } }).catch(() => {}); await warSleep(2500); }
   await ch.send({ content: `-# Long may ${name} reign. This is their **${tribe.seasonCrowns || 1}** crown of ${season?.name || 'the age'}, one step closer to the 🏆 Age Champion.`, allowedMentions: { parse: [] } }).catch(() => {});
+}
+// Birthdays: a rotating 🎂 role, granted the day-of (UTC) and stripped once that day has passed. Ensure-once
+// role creation, same pattern as ensureSeasonChampionRole below.
+async function ensureBirthdayRole(guild) {
+  const id = birthday.roleId();
+  if (id) { const r = guild.roles.cache.get(id) || await guild.roles.fetch(id).catch(() => null); if (r) return r; }
+  const role = await guild.roles.create({ name: '🎂 Birthday', colors: { primaryColor: 0xF47FFF }, hoist: false, mentionable: false, reason: 'Birthday role' }).catch(() => null);
+  if (role) birthday.setRoleId(role.id);
+  return role;
+}
+// Daily (boot + hourly, self-gates on the day already having run): strip the role from anyone whose day has
+// passed, then grant it to anyone whose saved month/day matches today. Idempotent — safe to call repeatedly.
+async function sweepBirthdays(guild) {
+  const today = birthday.dayKey();
+  if (birthday.lastRunDay() === today) return;
+  const role = await ensureBirthdayRole(guild);
+  if (!role) return;
+  await ensureMembers(guild);
+  for (const [userId, grantedDay] of Object.entries(birthday.active())) {
+    if (grantedDay === today) continue;
+    const m = guild.members.cache.get(userId);
+    if (m && m.roles.cache.has(role.id)) await m.roles.remove(role.id, 'Birthday role: the day has passed').catch(() => {});
+    birthday.clearActive(userId);
+  }
+  for (const [userId, d] of Object.entries(birthday.allDates())) {
+    if (birthday.dayKey(Date.UTC(2000, d.month - 1, d.day)) !== today) continue;
+    const m = guild.members.cache.get(userId);
+    if (!m) continue;
+    if (!m.roles.cache.has(role.id)) await m.roles.add(role.id, 'Birthday role: it\'s their day').catch(() => {});
+    birthday.setActive(userId, today);
+  }
+  birthday.setLastRunDay(today);
 }
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
@@ -3816,6 +3849,13 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('role').setDescription('The role to remove').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
 
+      new SlashCommandBuilder().setName('birthday').setDescription('Set your birthday — you get a 🎂 Birthday role for the day, every year')
+        .addSubcommand(s => s.setName('set').setDescription('Set (or update) your birthday')
+          .addIntegerOption(o => o.setName('month').setDescription('Month (1-12)').setRequired(true).setMinValue(1).setMaxValue(12))
+          .addIntegerOption(o => o.setName('day').setDescription('Day (1-31)').setRequired(true).setMinValue(1).setMaxValue(31)))
+        .addSubcommand(s => s.setName('view').setDescription('See your saved birthday'))
+        .addSubcommand(s => s.setName('clear').setDescription('Remove your saved birthday')),
+
       new SlashCommandBuilder().setName('request-role').setDescription('Request a casual role, staff approves it')
         .addRoleOption(o => o.setName('role').setDescription('The role you want (or already have, if removing)').setRequired(true))
         .addBooleanOption(o => o.setName('remove').setDescription('Request to give this role UP instead of getting it (default: no)').setRequired(false))
@@ -4180,6 +4220,8 @@ client.once('ready', async () => {
   if (dguild) await backfillThroneExpiries(dguild).catch(e => console.error(`[throneExpire] backfill: ${e.message}`));
   if (dguild) await sweepStaffRanks(dguild).catch(e => console.error(`[tribe staffrank] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
+  if (dguild) await sweepBirthdays(dguild).catch(e => console.error(`[birthday] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepBirthdays(g)).catch(() => {}), 3600000);
   if (dguild) await reconcileTribeRoles(dguild).catch(e => console.error(`[tribe reconcile] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => reconcileTribeRoles(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
@@ -8610,6 +8652,27 @@ client.on('interactionCreate', async (interaction) => {
       await roleselect.rebuildFromIndex(interaction.guild, config.rolesChannelId, roleselect.SECTION_BLOCK_INDEX[section]);
       return interaction.editReply(`✅ ${sub === 'add' ? 'Added' : 'Removed'} <@&${role.id}> ${sub === 'add' ? 'to' : 'from'} **${roleselect.SECTION_TITLE[section]}**. #roles updated.`);
     } catch (e) { console.error(`[roleselect-role] ${e.message}`); return interaction.editReply(`Failed: ${e.message}`).catch(() => {}); }
+  }
+  if (name === 'birthday') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'set') {
+      const month = interaction.options.getInteger('month');
+      const day = interaction.options.getInteger('day');
+      const daysInMonth = new Date(Date.UTC(2000, month, 0)).getUTCDate();   // 2000 is a leap year, so Feb 29 is allowed
+      if (day > daysInMonth) return interaction.reply({ content: `That month only has ${daysInMonth} days.`, flags: MessageFlags.Ephemeral });
+      birthday.set(interaction.user.id, month, day);
+      const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return interaction.reply({ content: `🎂 Saved — **${MONTH_NAMES[month]} ${day}**. You'll get the Birthday role that day, every year.`, flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'view') {
+      const b = birthday.get(interaction.user.id);
+      const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return interaction.reply({ content: b ? `🎂 **${MONTH_NAMES[b.month]} ${b.day}**` : "You haven't set a birthday yet — \`/birthday set\`.", flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'clear') {
+      birthday.clear(interaction.user.id);
+      return interaction.reply({ content: '🗑️ Birthday cleared.', flags: MessageFlags.Ephemeral });
+    }
   }
   if (name === 'request-role-setup') {
     if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
