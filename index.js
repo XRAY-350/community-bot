@@ -5418,6 +5418,11 @@ async function applyTribeRank(guild, tribe, member, rankIndex, reason, announce 
 // corrective action per fire; after it, authorized === hasRole so subsequent fires no-op (no loop).
 async function enforceTribeMembership(member) {
   if (member.user.bot) return;
+  // Cornered: corner.js deliberately strips the tribe role (it grants real access, same reasoning as
+  // MDNI) and owns their roles until release. Without this check, this guard would see hasRole=false but
+  // authorized=true (a corner strip isn't a /tribe banish) and immediately re-add it, undoing the strip on
+  // every subsequent guildMemberUpdate — which is exactly what was happening.
+  if (config.cornerRoleId && member.roles.cache.has(config.cornerRoleId)) return;
   for (const t of tribes.all()) {
     const authorized = tribes.isAuthorized(t.key, member.id);
     const hasRole = member.roles.cache.has(t.roleId);

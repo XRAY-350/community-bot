@@ -86,18 +86,16 @@ const config = {
   autoCornerThreadDurationMs: Number(opt('AUTO_CORNER_THREAD_DURATION_MS', String(15 * 60 * 1000))) || 15 * 60 * 1000,
   // The category cornered people CAN see (view-only): "ᴠᴇʀɪꜰʏ ᴀɴᴅ ʀᴜʟᴇs".
   cornerViewCategoryId: opt('CORNER_VIEW_CATEGORY_ID', '1500938647132704818'),
-  // Identifying roles KEPT when someone is cornered (age / gender / country / MDNI). Everything
-  // else (non-managed) is stripped and restored on release.
-  identifyingRoleIds: opt('IDENTIFYING_ROLE_IDS',
-    '1516185172213628989,1516185300492222618,1516185358415433739,1516209186839466113,' + // age 15-17,18-21,21-25,25-30+
-    '1517716868650242098,1517717292392251483,1517717104399220856,1526939765667008615,' + // gender she/they/he/others
-    '1501649800968278192,1501649801677111508,1501649802642063380,1501649802759508235,1501649803774267422,1501649805045141694,' + // country EU/NA/SA/ASIA/OCE/AFR
-    '1519408206370308197' // MDNI
-    // OWNER⚜️ was here as a workaround for an old role-position limitation (the bot couldn't strip a role
-    // above its own). That's resolved — OWNER⚜️ grants real channel access, it's not a self-ID role like
-    // the ones above, so it now strips normally like everything else. The actual guild owner is separately
-    // fully un-cornerable regardless (guarded in corner.corner()).
-  ).split(',').map(s => s.trim()).filter(Boolean),
+  // Identifying roles KEPT when someone is cornered (age / gender / country — purely self-ID, grants no
+  // actual access). Everything else (non-managed) is stripped and restored on release, including MDNI and
+  // tribe roles — both grant real access (18+ content, tribe channels/perks), so a cornered member loses
+  // them like anything else. MDNI used to be on this list (a member cornered while MDNI'd kept 18+ access
+  // the whole time they were jailed) — moved off deliberately, not an oversight.
+  // No hardcoded default: this used to default to FUBU's own role IDs, which silently meant a fresh guild
+  // running this codebase (Melanin) kept NOTHING extra when cornering — none of FUBU's IDs matched any of
+  // its roles, so age/gender/country got stripped too, right along with everything else. Set explicitly
+  // per guild via IDENTIFYING_ROLE_IDS now.
+  identifyingRoleIds: opt('IDENTIFYING_ROLE_IDS', '').split(',').map(s => s.trim()).filter(Boolean),
 
   // Backfill: give the Unverified role to members who have NEITHER verified nor unverified. Their
   // reap clock starts when tagged (unverifiedSince), not their join date, so long-time members
