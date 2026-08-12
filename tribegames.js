@@ -11,13 +11,16 @@ const FILE = process.env.FUBU_TRIBEGAMES_FILE || statePath('tribegames.json');
 
 // format: 'versus' (single winner, no hidden roles) | 'roleOutcome2' (2 asymmetric sides) |
 // 'roleOutcome3' (MM2's own case: 4 role labels, 3 reward tiers — see index.js's TRIBEGAME_ROLE3_MULT).
+// category (combat/social/collective) feeds the winning tribe's attribute-power reward bonus (index.js) —
+// picked by each game's actual core skill: classic Among Us + MM2 are deduction/deception (social), Flee the
+// Facility + Hide & Seek are group evasion (collective), ABA is direct 1v1 combat, 'other' defaults combat.
 const GAME_CATALOG = {
-  amongus_classic: { label: 'Among Us — Classic (killing)', format: 'roleOutcome2', roles: ['imposter', 'crewmate'] },
-  amongus_hs:      { label: 'Among Us — Hide & Seek',       format: 'roleOutcome2', roles: ['imposter', 'crewmate'] },
-  ftf:              { label: 'Flee the Facility',           format: 'roleOutcome2', roles: ['beast', 'guard'] },
-  mm2:              { label: 'Murder Mystery 2',            format: 'roleOutcome3', roles: ['murderer', 'sheriff', 'hero', 'innocent'] },
-  aba:              { label: 'Anime Battle Arena',          format: 'versus' },
-  other:            { label: 'Other',                       format: 'versus' },
+  amongus_classic: { label: 'Among Us — Classic (killing)', format: 'roleOutcome2', roles: ['imposter', 'crewmate'], category: 'social' },
+  amongus_hs:      { label: 'Among Us — Hide & Seek',       format: 'roleOutcome2', roles: ['imposter', 'crewmate'], category: 'collective' },
+  ftf:              { label: 'Flee the Facility',           format: 'roleOutcome2', roles: ['beast', 'guard'], category: 'collective' },
+  mm2:              { label: 'Murder Mystery 2',            format: 'roleOutcome3', roles: ['murderer', 'sheriff', 'hero', 'innocent'], category: 'social' },
+  aba:              { label: 'Anime Battle Arena',          format: 'versus', category: 'combat' },
+  other:            { label: 'Other',                       format: 'versus', category: 'combat' },
   // minecraft: intentionally not added yet — pending MCFleet coordination (see PROGRESS_LOG/agentmsg thread
   // 'tribe-games-minecraft'). Add it here once scoped; nothing else needs to change to support a new entry.
 };

@@ -328,6 +328,20 @@ function pathAttribute(key, userId) {
   const withinPath = idx - PATH_SLOTS.indexOf(path) * 4;
   return withinPath < 0 ? 0 : ATTR_BASE + withinPath * ATTR_PER_RANK;
 }
+// Tribe-wide compile-up (owner, 2026-08-12: "path attributes... compile into" tribe-level effects) — sums
+// every member's OWN pathAttribute across everyone currently on this tribe's category-matching path. Not a
+// separate tribe-level stat; it's purely derived from current roster + rank composition, so it moves as
+// members join/leave/rank up. Grows the tribe's actual disposition/event-earning power in that category —
+// used by warPower (combat) and the Arena/Sealed Arena/Tribe Games reward bonus (index.js).
+function tribeAttributePower(key, category) {
+  const t = get(key); if (!t) return 0;
+  let power = 0;
+  for (const userId of Object.keys(t.members || {})) {
+    const path = memberPath(key, userId);
+    if (path && PATH_CATEGORY[path] === category) power += pathAttribute(key, userId);
+  }
+  return power;
+}
 
 // Nominations: a THIRD route into a tribe alongside self-join and a leader's direct /tribe invite. Any
 // member proposes -> the tribe's head or staff approves -> the NOMINEE gets their own accept prompt and only
@@ -625,12 +639,14 @@ function stealRelic(fromKey, toKey) {
 // Tides-based combat power: everyone (including leaders/staff, who earn Tides same as anyone) contributes
 // at least 1 (bare presence) plus their real accumulated Tides. Needs `guild` to enumerate live role holders.
 // Relics (if any) add a small, capped, decaying multiplier on top.
+const WAR_ATTR_SCALE = 0.01, WAR_ATTR_CAP = 0.5;   // combat tribeAttributePower of 50 -> +50% (capped), tunable
 function warPower(guild, tribe) {
   const role = guild.roles.cache.get(tribe.roleId);
   if (!role) return 0;
   let power = 0;
   for (const m of role.members.values()) power += 1 + getTides(tribe.key, m.id);
-  return power * (1 + relicPerk(tribe.key));
+  const combatMult = 1 + Math.min(tribeAttributePower(tribe.key, 'combat') * WAR_ATTR_SCALE, WAR_ATTR_CAP);
+  return power * (1 + relicPerk(tribe.key)) * combatMult;
 }
 function onWarCooldown(tribe, nowMs = Date.now()) { return !!tribe.lastWarAt && (nowMs - tribe.lastWarAt) < WAR_COOLDOWN_MS; }
 function warCooldownEndsAt(tribe) { return (tribe.lastWarAt || 0) + WAR_COOLDOWN_MS; }
@@ -822,8 +838,8 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, inAnyT
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,
   addTides, getTides, topTides, recordJoin, tenureDays, earnedRankIndex, currentRankIndex, isPathMode,
-  setLore, getLore, memberPath, setMemberPath, pathAttribute, pathStats,
-  PATH_SLOTS, PATH_CATEGORY, ATTR_BASE, ATTR_PER_RANK, BONUS_PER_ATTR_POINT,
+  setLore, getLore, memberPath, setMemberPath, pathAttribute, pathStats, tribeAttributePower,
+  PATH_SLOTS, PATH_CATEGORY, ATTR_BASE, ATTR_PER_RANK, BONUS_PER_ATTR_POINT, WAR_ATTR_SCALE, WAR_ATTR_CAP,
   setRelation, getRelation, allRelations, RELATION_MULT,
   getPrestige, resetMemberTides, addPrestige, prestigeLog,
   markVeteran, isVeteran, setMembership, isAuthorized, STATE_FILE,

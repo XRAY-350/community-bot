@@ -1628,6 +1628,22 @@ function scoreArena(tribeKey, userId, points = 1) {
 }
 const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'truefalse', 'reaction', 'pattern',
   'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];   // riddle + emoji removed (no infinite source, owner)
+// Which of a tribe's 3 path categories (see tribes.js's PATH_CATEGORY) each Arena mode rewards — reflex/speed
+// types lean combat, wordplay/cleverness leans social, knowledge/quiz types lean collective. Feeds the
+// winning tribe's attribute-power reward bonus (arenaAttrMult below) — a tribe invested in a matching path
+// earns more from the modes that fit it, same idea as an individual's personal Tides bonus, just tribe-wide.
+const ARENA_TYPE_CATEGORY = {
+  race: 'combat', reaction: 'combat', blitz: 'combat', typing: 'combat',
+  scramble: 'social', pattern: 'social', reverse: 'social', truefalse: 'social',
+  trivia: 'collective', math: 'collective', geoquiz: 'collective', sciquiz: 'collective', histquiz: 'collective', animalquiz: 'collective',
+};
+// Shared reward-bonus lookup — same scale/cap as warPower's combat bonus (tribes.WAR_ATTR_SCALE/CAP), just
+// generalized to any of the 3 categories instead of combat-only.
+function tribeCategoryMult(tribeKey, category) {
+  if (!category) return 1;
+  return 1 + Math.min(tribes.tribeAttributePower(tribeKey, category) * tribes.WAR_ATTR_SCALE, tribes.WAR_ATTR_CAP);
+}
+function arenaAttrMult(tribeKey, arenaType) { return tribeCategoryMult(tribeKey, ARENA_TYPE_CATEGORY[arenaType]); }
 // Downtime runs only calm, low-interaction, async-friendly games (no reflex/crowd types like reaction race).
 const DOWNTIME_TYPES = ['blitz', 'scramble', 'reverse'];
 const DOWNTIME_TREASURY_MULT = 2;   // downtime wins bank 2x Treasury but NO Glory: reward night owls, protect the crown
@@ -1915,12 +1931,14 @@ async function finalizeArena(guild, win, note = '') {
   let resultText;
   if (win) {
     const mult = underdogMultiplier(guild, win.key);
-    const treas = Math.round(arena.WIN_TREASURY * mult * (dt ? DOWNTIME_TREASURY_MULT : 1));
-    const glory = dt ? 0 : Math.round(arena.WIN_GLORY * mult);
+    const attrMult = arenaAttrMult(win.key, a.type);
+    const treas = Math.round(arena.WIN_TREASURY * mult * attrMult * (dt ? DOWNTIME_TREASURY_MULT : 1));
+    const glory = dt ? 0 : Math.round(arena.WIN_GLORY * mult * attrMult);
     tribes.addTreasury(win.key, treas);
     if (glory) tribes.addGlory(win.key, glory);
     const notes = [];
     if (mult > 1) notes.push(`underdog ×${mult}`);
+    if (attrMult > 1) notes.push(`attribute ×${attrMult.toFixed(2)}`);
     if (dt) notes.push(`downtime treasury ×${DOWNTIME_TREASURY_MULT}, no Glory`);
     const bonusNote = notes.length ? ` (${notes.join('; ')})` : '';
     resultText = `# 🏆 ${label}: ${tribeName(win.key)} wins${note}!\nScored **${win.score}**. Banked **+${treas} Treasury**${glory ? ` and **+${glory} Glory**` : ''}${bonusNote}.\n\n${arenaScoreboard(a)}`;
@@ -2153,7 +2171,7 @@ async function finishSealedArena(guild) {
   const winner = board[0] && board[0].score > 0 ? board[0] : null;
   const label = ARENA_LABEL[a.gameType] || 'Sealed Arena';
   if (winner) {
-    const mult = underdogMultiplier(guild, winner.key);
+    const mult = underdogMultiplier(guild, winner.key) * arenaAttrMult(winner.key, a.gameType);
     tribes.addTreasury(winner.key, Math.round(arena.WIN_TREASURY * 2 * mult));
     tribes.addGlory(winner.key, Math.round(arena.WIN_GLORY * 2 * mult));
     { const wt = tribes.get(winner.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || winner.key} won a Sealed ${label}`, tribes: [winner.key], score: winner.score }); }
@@ -2279,7 +2297,8 @@ const TRIBEGAME_ROLE3_MULT = { murderer: 2.0, decisive: 1.3, survivor: 1.0 };   
 // Pay a tribe for a Tribe Games result and log it to the world chronicle. mult is which reward tier applies
 // (see TRIBEGAME_*_MULT above); roleLabel (optional) carries flavor into the lore entry, e.g. "as Hero".
 function payTribeGameWin(guild, tribeKey, gameId, mult, roleLabel) {
-  const treas = Math.round(arena.WIN_TREASURY * mult), glory = Math.round(arena.WIN_GLORY * mult);
+  const attrMult = tribeCategoryMult(tribeKey, tribegames.GAME_CATALOG[gameId]?.category);
+  const treas = Math.round(arena.WIN_TREASURY * mult * attrMult), glory = Math.round(arena.WIN_GLORY * mult * attrMult);
   tribes.addTreasury(tribeKey, treas); tribes.addGlory(tribeKey, glory);
   const t = tribes.get(tribeKey);
   lore.record({ type: 'tribegame', title: `${t?.shortName || t?.name || tribeKey} won a Tribe Game of ${tribegames.GAME_CATALOG[gameId]?.label || gameId}${roleLabel ? ` (${roleLabel})` : ''}`, tribes: [tribeKey], game: gameId });
@@ -2501,7 +2520,9 @@ async function finishTrial(guild) {
   const winner = board[0] && board[0].score > 0 ? board[0] : null;
   const isMuster = !!a.muster;
   if (winner) {
-    const mult = underdogMultiplier(guild, winner.key) * (isMuster ? MUSTER_REWARD_MULT : 1);   // a Muster doubles the payout
+    // Trial + Muster are both group/breadth-scored events (rally together, breadth of contributors counts) —
+    // always 'collective', unlike Arena/Sealed which vary per game mode.
+    const mult = underdogMultiplier(guild, winner.key) * (isMuster ? MUSTER_REWARD_MULT : 1) * tribeCategoryMult(winner.key, 'collective');
     tribes.addTreasury(winner.key, Math.round(arena.WIN_TREASURY * 2 * mult));
     tribes.addGlory(winner.key, Math.round(arena.WIN_GLORY * 2 * mult));
     { const wt = tribes.get(winner.key); lore.record({ type: 'arena', title: `${wt?.shortName || wt?.name || winner.key} won ${isMuster ? 'a grand Muster' : 'a Trial'} (${TRIAL_GAME_LABEL[game] || 'The Assembly'})`, tribes: [winner.key], score: winner.score }); }
@@ -2728,7 +2749,12 @@ async function proverWeeklyIfDue(guild) {
   if (!prev.provers.length) return;
   // top tribe gets a bonus
   const topTribe = prev.tribes[0];
-  if (topTribe && topTribe.key) { tribes.addTreasury(topTribe.key, Math.round(arena.WIN_TREASURY * 1.5)); tribes.addGlory(topTribe.key, Math.round(arena.WIN_GLORY * 1.5)); }
+  // Proving Grounds is a solo obstacle-ladder/reflex challenge — 'combat', same as Arena's reflex-type modes.
+  if (topTribe && topTribe.key) {
+    const pgMult = 1.5 * tribeCategoryMult(topTribe.key, 'combat');
+    tribes.addTreasury(topTribe.key, Math.round(arena.WIN_TREASURY * pgMult));
+    tribes.addGlory(topTribe.key, Math.round(arena.WIN_GLORY * pgMult));
+  }
   const champ = prev.provers[0];
   if (champ && champ.uid) { const m = await guild.members.fetch(champ.uid).catch(() => null); const t = m && tribes.memberTribe(m); if (t) { achievements && features.enabled('achievements') && achievements.bumpAndCheck(champ.uid, 'prestige'); } }
   lore.record({ type: 'chronicle', title: `Prover of the Week: ${prev.provers[0] ? `<@${prev.provers[0].uid}>` : 'nobody'}` });
@@ -4057,6 +4083,9 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('correct').setDescription('Which is correct').setRequired(true)
             .addChoices({ name: 'Option A', value: 'a' }, { name: 'Option B', value: 'b' })))
         .addSubcommand(s => s.setName('gate-clear').setDescription('Remove a tribe’s entrance question (self-join goes back to instant)')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(s => s.setName('enroll').setDescription('Force-add a member to a tribe — no invite, no accept, no gate (owner only)')
+          .addUserOption(o => o.setName('member').setDescription('Who to enroll').setRequired(true))
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),   // visible to the ADMINS-★ role; handler gates on canWLAdmin
 
@@ -8789,6 +8818,19 @@ client.on('interactionCreate', async (interaction) => {
       if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
       tribes.clearEntranceGate(t.key);
       return interaction.reply({ content: `${t.emoji || '🏴'} **${t.shortName || t.name}** no longer gates self-joins.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'enroll') {
+      if (!isOwner(interaction)) return interaction.reply({ content: 'Only the owner can force-enroll — everyone else goes through invite/nominate/self-join.', flags: MessageFlags.Ephemeral });
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
+      const target = interaction.options.getMember('member');
+      if (!target) return interaction.reply({ content: 'That member isn’t in the server.', flags: MessageFlags.Ephemeral });
+      if (target.user.bot) return interaction.reply({ content: 'Bots can’t join tribes.', flags: MessageFlags.Ephemeral });
+      const other = tribes.inAnyTribe(target);
+      if (other) return interaction.reply({ content: `<@${target.id}> is already in **${other.shortName || other.name}**. A member can only be in one tribe — banish them there first.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const r = await joinTribeSelfServe(interaction.guild, t, target, `Owner enrollment by ${interaction.user.tag} — no invite/accept/gate`);
+      return interaction.editReply(r.ok ? `✅ Enrolled <@${target.id}> into **${t.shortName || t.name}** directly.` : `Couldn’t add the tribe role: ${r.content || 'check my role position.'}`);
     }
   }
   if (name === 'roleselect-role') {
