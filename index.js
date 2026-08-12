@@ -903,37 +903,55 @@ async function broadcastCoronation(guild, tribe, result, crownRole, preBoard, se
   if (rivals.length) { await ch.send({ content: `-# They did not take it uncontested. ${rivals.map(r => `${r.emoji || '🏴'} ${r.shortName || r.name} (${r.glory})`).join(', ')} pressed them hard.`, allowedMentions: { parse: [] } }).catch(() => {}); await warSleep(2500); }
   await ch.send({ content: `-# Long may ${name} reign. This is their **${tribe.seasonCrowns || 1}** crown of ${season?.name || 'the age'}, one step closer to the 🏆 Age Champion.`, allowedMentions: { parse: [] } }).catch(() => {});
 }
-// Birthdays: a rotating 🎂 role, granted the day-of (UTC) and stripped once that day has passed. Ensure-once
-// role creation, same pattern as ensureSeasonChampionRole below.
-async function ensureBirthdayRole(guild) {
-  const id = birthday.roleId();
-  if (id) { const r = guild.roles.cache.get(id) || await guild.roles.fetch(id).catch(() => null); if (r) return r; }
-  const role = await guild.roles.create({ name: '🎂 Birthday', colors: { primaryColor: 0xF47FFF }, hoist: false, mentionable: false, reason: 'Birthday role' }).catch(() => null);
-  if (role) birthday.setRoleId(role.id);
+// Birthdays: a PER-PERSON, ephemeral 🎉 role — created fresh when it becomes their day (in their own saved
+// timezone, default UTC) positioned just above THEIR OWN highest role, and deleted outright once their
+// local day ends. Deliberately not one shared role pinned high in the hierarchy: that would outrank staff
+// roles too and block moderation on whoever holds it that day (a mod-founded-tribe-style hierarchy bug,
+// caught before shipping). Positioning relative to each person's own highest role keeps a regular member's
+// birthday role below every staff role, same as it already was.
+async function grantBirthdayRole(guild, member) {
+  const botTop = guild.members.me?.roles?.highest;
+  const targetPos = botTop ? Math.max(1, Math.min(botTop.position - 1, member.roles.highest.position + 1)) : member.roles.highest.position + 1;
+  const role = await guild.roles.create({
+    name: `🎉 Birthday — ${member.user.username}`.slice(0, 100),
+    colors: { primaryColor: 0xF47FFF }, hoist: true, mentionable: false,
+    reason: `Birthday role for ${member.user.tag}`,
+  }).catch(() => null);
+  if (!role) return null;
+  if (targetPos > 0) await role.setPosition(targetPos).catch(() => {});
+  await member.roles.add(role, "Birthday role: it's their day").catch(() => {});
   return role;
 }
-// Daily (boot + hourly, self-gates on the day already having run): strip the role from anyone whose day has
-// passed, then grant it to anyone whose saved month/day matches today. Idempotent — safe to call repeatedly.
+async function revokeBirthdayRole(guild, userId, roleId) {
+  const m = guild.members.cache.get(userId) || await guild.members.fetch(userId).catch(() => null);
+  const role = guild.roles.cache.get(roleId) || await guild.roles.fetch(roleId).catch(() => null);
+  if (m && role) await m.roles.remove(role, "Birthday role: their day has passed").catch(() => {});
+  if (role) await role.delete("Birthday role: their day has passed").catch(() => {});
+}
+// Hourly (finer than daily on purpose — different members' local midnights land at different real-world
+// hours). Expires anyone whose local day rolled over, then grants to anyone whose local day now matches
+// their saved birthday and doesn't already have an active role.
 async function sweepBirthdays(guild) {
-  const today = birthday.dayKey();
-  if (birthday.lastRunDay() === today) return;
-  const role = await ensureBirthdayRole(guild);
-  if (!role) return;
+  const hourKey = Math.floor(Date.now() / 3600000).toString();
+  if (birthday.lastRunHour() === hourKey) return;
   await ensureMembers(guild);
-  for (const [userId, grantedDay] of Object.entries(birthday.active())) {
-    if (grantedDay === today) continue;
-    const m = guild.members.cache.get(userId);
-    if (m && m.roles.cache.has(role.id)) await m.roles.remove(role.id, 'Birthday role: the day has passed').catch(() => {});
+  for (const [userId, a] of Object.entries(birthday.active())) {
+    const d = birthday.get(userId);
+    if (d && birthday.localDayKey(Date.now(), d.tz) === a.localDay) continue;   // still their day — leave it
+    await revokeBirthdayRole(guild, userId, a.roleId);
     birthday.clearActive(userId);
   }
+  const activeNow = birthday.active();
   for (const [userId, d] of Object.entries(birthday.allDates())) {
-    if (birthday.dayKey(Date.UTC(2000, d.month - 1, d.day)) !== today) continue;
+    if (activeNow[userId]) continue;
+    const today = birthday.localDayKey(Date.now(), d.tz);
+    if (`${d.month}-${d.day}` !== today) continue;
     const m = guild.members.cache.get(userId);
     if (!m) continue;
-    if (!m.roles.cache.has(role.id)) await m.roles.add(role.id, 'Birthday role: it\'s their day').catch(() => {});
-    birthday.setActive(userId, today);
+    const role = await grantBirthdayRole(guild, m);
+    if (role) birthday.setActive(userId, role.id, today);
   }
-  birthday.setLastRunDay(today);
+  birthday.setLastRunHour(hourKey);
 }
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
@@ -3849,10 +3867,11 @@ client.once('ready', async () => {
           .addRoleOption(o => o.setName('role').setDescription('The role to remove').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
 
-      new SlashCommandBuilder().setName('birthday').setDescription('Set your birthday — you get a 🎂 Birthday role for the day, every year')
-        .addSubcommand(s => s.setName('set').setDescription('Set (or update) your birthday')
-          .addIntegerOption(o => o.setName('month').setDescription('Month (1-12)').setRequired(true).setMinValue(1).setMaxValue(12))
-          .addIntegerOption(o => o.setName('day').setDescription('Day (1-31)').setRequired(true).setMinValue(1).setMaxValue(31)))
+      new SlashCommandBuilder().setName('birthday').setDescription('Set your birthday — you get a 🎉 Birthday role for the day, every year')
+        .addSubcommand(s => s.setName('set').setDescription('Set (or update) your birthday and/or timezone')
+          .addIntegerOption(o => o.setName('month').setDescription('Month (1-12) — omit to only update your timezone').setRequired(false).setMinValue(1).setMaxValue(12))
+          .addIntegerOption(o => o.setName('day').setDescription('Day (1-31) — omit to only update your timezone').setRequired(false).setMinValue(1).setMaxValue(31))
+          .addStringOption(o => o.setName('timezone').setDescription('IANA timezone, e.g. America/New_York (default: UTC) — so it\'s YOUR day, not the server\'s').setRequired(false)))
         .addSubcommand(s => s.setName('view').setDescription('See your saved birthday'))
         .addSubcommand(s => s.setName('clear').setDescription('Remove your saved birthday')),
 
@@ -8655,19 +8674,29 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'birthday') {
     const sub = interaction.options.getSubcommand();
+    const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     if (sub === 'set') {
       const month = interaction.options.getInteger('month');
       const day = interaction.options.getInteger('day');
-      const daysInMonth = new Date(Date.UTC(2000, month, 0)).getUTCDate();   // 2000 is a leap year, so Feb 29 is allowed
-      if (day > daysInMonth) return interaction.reply({ content: `That month only has ${daysInMonth} days.`, flags: MessageFlags.Ephemeral });
-      birthday.set(interaction.user.id, month, day);
-      const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-      return interaction.reply({ content: `🎂 Saved — **${MONTH_NAMES[month]} ${day}**. You'll get the Birthday role that day, every year.`, flags: MessageFlags.Ephemeral });
+      const tzInput = interaction.options.getString('timezone');
+      const existing = birthday.get(interaction.user.id);
+      if ((month == null) !== (day == null)) return interaction.reply({ content: 'Give me both month and day together (or neither, if you\'re just updating your timezone).', flags: MessageFlags.Ephemeral });
+      if (month == null && !tzInput) return interaction.reply({ content: 'Give me a month + day, a timezone, or both.', flags: MessageFlags.Ephemeral });
+      if (month == null && !existing) return interaction.reply({ content: "You haven't set a birthday yet — include month and day too.", flags: MessageFlags.Ephemeral });
+      if (tzInput && !birthday.isValidTz(tzInput)) return interaction.reply({ content: `"${tzInput}" isn't a recognized timezone. Use an IANA name like \`America/New_York\`, \`Europe/London\`, or \`Asia/Tokyo\`.`, flags: MessageFlags.Ephemeral });
+      if (month != null) {
+        const daysInMonth = new Date(Date.UTC(2000, month, 0)).getUTCDate();   // 2000 is a leap year, so Feb 29 is allowed
+        if (day > daysInMonth) return interaction.reply({ content: `That month only has ${daysInMonth} days.`, flags: MessageFlags.Ephemeral });
+      }
+      const finalMonth = month != null ? month : existing.month;
+      const finalDay = month != null ? day : existing.day;
+      birthday.set(interaction.user.id, finalMonth, finalDay, tzInput === null ? undefined : tzInput);
+      const b = birthday.get(interaction.user.id);
+      return interaction.reply({ content: `🎉 Saved — **${MONTH_NAMES[b.month]} ${b.day}** (${b.tz || 'UTC'}). You'll get a Birthday role that day — in your own timezone, above your other roles.`, flags: MessageFlags.Ephemeral });
     }
     if (sub === 'view') {
       const b = birthday.get(interaction.user.id);
-      const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-      return interaction.reply({ content: b ? `🎂 **${MONTH_NAMES[b.month]} ${b.day}**` : "You haven't set a birthday yet — \`/birthday set\`.", flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: b ? `🎉 **${MONTH_NAMES[b.month]} ${b.day}** (${b.tz || 'UTC'})` : "You haven't set a birthday yet — \`/birthday set\`.", flags: MessageFlags.Ephemeral });
     }
     if (sub === 'clear') {
       birthday.clear(interaction.user.id);
