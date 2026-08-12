@@ -4235,7 +4235,9 @@ client.once('ready', async () => {
       // Gated at the Discord permission level (Ban Members) — same convention as /unban, no extra tier check.
       new SlashCommandBuilder().setName('ban').setDescription('Immediately ban a member')
         .addUserOption(o => o.setName('user').setDescription('Who to ban').setRequired(true))
-        .addStringOption(o => o.setName('reason').setDescription('Audit-log reason'))
+        .addStringOption(o => o.setName('rule').setDescription('Which rule did they break? (optional)').setRequired(false)
+          .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
+        .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)'))
         .addIntegerOption(o => o.setName('delete_days').setDescription('Delete their messages from the last N days (0-7, default 1)').setMinValue(0).setMaxValue(7))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
       new ContextMenuCommandBuilder().setName('Ban').setType(ApplicationCommandType.User)
@@ -6074,6 +6076,14 @@ client.on('interactionCreate', async (interaction) => {
     const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
     return interaction.showModal(cornerReasonModal(memberId, channelId, messageId, ruleN, isTrialMod(interaction)));
   }
+  // Ban rule picker (right-click Ban) → reason modal. customId: ban_rule_pick:<targetId>
+  if (interaction.isStringSelectMenu?.() && interaction.customId.startsWith('ban_rule_pick:')) {
+    const [, targetId] = interaction.customId.split(':');
+    const ruleN = interaction.values[0] === 'none' ? null : interaction.values[0];
+    const modal = new ModalBuilder().setCustomId(`ban_reason_modal:${targetId}:${ruleN || 'x'}`).setTitle('Ban: reason').addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Extra reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
+    return interaction.showModal(modal);
+  }
   // #roles pickers (roleselect.js) — any member, no staff gate.
   // Age/Color: single-select dropdown — swap to the chosen role, stripping any other held role in the
   // same group. Age additionally refuses outright once Verified (registration lock; index.js's
@@ -6214,9 +6224,10 @@ client.on('interactionCreate', async (interaction) => {
   }
   // Send-to-corner reason modal (cornerReason feature). customId: corner_reason:<memberId>:<channelId>:<messageId>
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('ban_reason_modal:')) {
-    const targetId = interaction.customId.split(':')[1];
+    const [, targetId, ruleSeg] = interaction.customId.split(':');
+    const ruleN = ruleSeg && ruleSeg !== 'x' ? ruleSeg : null;
     const rawReason = (interaction.fields.getTextInputValue('reason') || '').trim();
-    const reason = rawReason || `Banned by ${interaction.user.tag}`;
+    const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${rawReason ? `, ${rawReason}` : ''}` : (rawReason || `Banned by ${interaction.user.tag}`);
     const targetUser = await client.users.fetch(targetId).catch(() => null);
     try { await interaction.guild.bans.create(targetId, { reason, deleteMessageSeconds: 24 * 60 * 60 }); }
     catch (e) { return interaction.reply({ content: `❌ Ban failed: ${e.message}`, flags: MessageFlags.Ephemeral }); }
@@ -7823,9 +7834,9 @@ client.on('interactionCreate', async (interaction) => {
     const target = interaction.targetUser;
     if (target.id === interaction.user.id) return interaction.reply({ content: "You can't ban yourself.", flags: MessageFlags.Ephemeral });
     if (target.id === client.user.id) return interaction.reply({ content: "I'm not banning myself.", flags: MessageFlags.Ephemeral });
-    const modal = new ModalBuilder().setCustomId(`ban_reason_modal:${target.id}`).setTitle(`Ban ${target.tag}`.slice(0, 45)).addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
-    return safeShowModal(interaction, modal);
+    // Rule picker shown BEFORE the reason modal (a modal can't hold a dropdown) — same ruleRow() helper
+    // and two-step flow as Send-to-corner / Strike, so this behaves the same way staff already expect.
+    return interaction.reply({ content: `Which rule did **${target.tag}** break?`, components: [ruleRow(`ban_rule_pick:${target.id}`)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Send to corner') {
     // Same access + tier rules as /corner, but the trigger is a specific message — and that message
@@ -8042,7 +8053,9 @@ client.on('interactionCreate', async (interaction) => {
     const target = interaction.options.getUser('user');
     if (target.id === interaction.user.id) return interaction.reply({ content: "You can't ban yourself.", flags: MessageFlags.Ephemeral });
     if (target.id === client.user.id) return interaction.reply({ content: "I'm not banning myself.", flags: MessageFlags.Ephemeral });
-    const reason = interaction.options.getString('reason') || `Banned by ${interaction.user.tag}`;
+    const ruleN = interaction.options.getString('rule');
+    const customReason = interaction.options.getString('reason');
+    const reason = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${customReason ? `, ${customReason}` : ''}` : (customReason || `Banned by ${interaction.user.tag}`);
     const deleteDays = interaction.options.getInteger('delete_days') ?? 1;
     try { await interaction.guild.bans.create(target.id, { reason, deleteMessageSeconds: deleteDays * 24 * 60 * 60 }); }
     catch (e) { return interaction.reply({ content: `❌ Ban failed: ${e.message}`, flags: MessageFlags.Ephemeral }); }
