@@ -3300,6 +3300,9 @@ async function handleCornerButton(interaction) {
   const baseline = (rec.releaseAt && rec.releaseAt > Date.now()) ? rec.releaseAt : Date.now();
   const releaseAt = baseline + ms;
   state.setCornered(userId, { ...rec, releaseAt });
+  corner.armTimer(guild, userId, releaseAt);   // reschedule the pending auto-release — the stored releaseAt
+  // changing doesn't touch the already-armed setTimeout, which would otherwise still fire at the OLD time
+  // (a sentence extended from 2min to 1hr was auto-releasing at the original 2min mark, seen live in corner-log).
   await logCorner(guild, { emoji: '⏰', title: 'SENTENCE CHANGED', color: CORNER_AMBER,
     desc: `<@${userId}>'s release time was changed.\n**New release:** ${relPhrase(releaseAt)}\n**By:** <@${interaction.user.id}>` });
   return interaction.editReply(`⏳ <@${userId}> will now be released <t:${Math.floor(releaseAt / 1000)}:R> (<t:${Math.floor(releaseAt / 1000)}:f>).`);
@@ -9127,6 +9130,9 @@ client.on('interactionCreate', async (interaction) => {
         if (!rec) return interaction.editReply(`${user} is not in the corner.`);
         const releaseAt = Date.now() + durationMs;
         state.setCornered(user.id, { ...rec, releaseAt });
+        corner.armTimer(guild, user.id, releaseAt);   // same class of bug as handleCornerButton's sentence-change
+        // path: writing releaseAt alone doesn't arm/reschedule the setTimeout — an indefinite member given a
+        // release time here would otherwise just never actually auto-release.
         await logCorner(guild, { emoji: '⏳', title: 'RELEASE SCHEDULED', color: CORNER_AMBER,
           desc: `<@${user.id}>'s release was scheduled.\n**Release:** ${relPhrase(releaseAt)}\n**By:** <@${interaction.user.id}>` });
         return interaction.editReply(`⏳ Scheduled ${user}'s release <t:${Math.floor(releaseAt / 1000)}:R> (at <t:${Math.floor(releaseAt / 1000)}:f>). The corner will release them automatically.`);
