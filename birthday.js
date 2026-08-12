@@ -1,9 +1,9 @@
-// birthday.js — self-serve birthdays (month/day + optional IANA timezone) + a per-person, ephemeral
-// "Birthday" role: created fresh for that member when their day starts (in THEIR timezone, not the
-// server's), positioned just above their own highest role, then deleted outright when their local day
-// ends. Per-person and ephemeral — NOT one shared role positioned above everyone — because a role shared
-// across members and pinned high in the hierarchy would outrank staff roles too, blocking moderation on
-// whoever's role it is that day.
+// birthday.js — self-serve birthdays (month/day + a required UTC offset, e.g. "-5" or "+5:30") + a
+// per-person, ephemeral "Birthday" role: created fresh for that member when their day starts (in THEIR
+// offset, not the server's), positioned just above their own highest role, then deleted outright when
+// their local day ends. Per-person and ephemeral — NOT one shared role positioned above everyone — because
+// a role shared across members and pinned high in the hierarchy would outrank staff roles too, blocking
+// moderation on whoever's role it is that day.
 const fs = require('fs');
 const { statePath } = require('./statepath');
 const FILE = process.env.FUBU_BIRTHDAY_FILE || statePath('birthdays.json');
@@ -12,13 +12,11 @@ let _cache = null;
 function load() { if (_cache) return _cache; try { _cache = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { _cache = {}; } return _cache; }
 function save(s) { _cache = s; try { fs.writeFileSync(FILE, JSON.stringify(s)); } catch (e) { console.error('[birthday] save:', e.message); } }
 
-// tz is an IANA zone name (e.g. "America/New_York") or null/undefined → UTC. Passing tz===undefined on an
-// update preserves whatever was already saved, so `/birthday set` can update just the date without
-// clobbering a previously-set timezone (and vice versa).
-function set(userId, month, day, tz) {
+// utcOffsetMin: whole minutes offset from UTC (e.g. -300 for UTC-5, 330 for UTC+5:30). Always required —
+// there's no "default UTC" here, the caller must always pass a value.
+function set(userId, month, day, utcOffsetMin) {
   const s = load(); s.dates = s.dates || {};
-  const prev = s.dates[userId] || {};
-  s.dates[userId] = { month, day, tz: tz !== undefined ? tz : (prev.tz || null) };
+  s.dates[userId] = { month, day, utcOffsetMin };
   save(s);
 }
 function get(userId) { return (load().dates || {})[userId] || null; }
@@ -34,16 +32,31 @@ function clearActive(userId) { const s = load(); if (s.active) delete s.active[u
 function lastRunHour() { return load().lastRunHour || null; }
 function setLastRunHour(key) { const s = load(); s.lastRunHour = key; save(s); }
 
-// "month-day" for a given timestamp in a given IANA timezone (defaults to UTC on a bad/unknown zone rather
-// than throwing — a stale/mistyped saved tz shouldn't take the whole sweep down).
-function localDayKey(nowMs, tz) {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', month: 'numeric', day: 'numeric' }).formatToParts(new Date(nowMs || Date.now()));
-    return `${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
-  } catch { return tz ? localDayKey(nowMs, null) : '1-1'; }
+// "month-day" for a given timestamp shifted by a fixed UTC offset (minutes).
+function localDayKey(nowMs, utcOffsetMin) {
+  const shifted = new Date((nowMs || Date.now()) + (utcOffsetMin || 0) * 60000);
+  return `${shifted.getUTCMonth() + 1}-${shifted.getUTCDate()}`;
 }
-function isValidTz(tz) {
-  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+// Accepts "-5", "+5", "5", "-5:30", "+5:30", "UTC-8", "utc+5:30", "GMT+1" → minutes, or null if unparseable
+// or out of the real-world UTC-12..UTC+14 range.
+function parseOffset(input) {
+  const s = String(input || '').trim().toUpperCase().replace(/^(UTC|GMT)\s*/, '');
+  const m = s.match(/^([+-]?)(\d{1,2})(?::?(\d{2}))?$/);
+  if (!m) return null;
+  const sign = m[1] === '-' ? -1 : 1;
+  const hours = parseInt(m[2], 10);
+  const mins = m[3] ? parseInt(m[3], 10) : 0;
+  if (mins >= 60) return null;
+  const total = sign * (hours * 60 + mins);
+  if (total < -720 || total > 840) return null;   // UTC-12:00 .. UTC+14:00
+  return total;
+}
+function formatOffset(min) {
+  const sign = min < 0 ? '-' : '+';
+  const abs = Math.abs(min);
+  const h = Math.floor(abs / 60);
+  const mm = abs % 60;
+  return `UTC${sign}${h}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
 }
 
-module.exports = { set, get, clear, allDates, active, setActive, clearActive, lastRunHour, setLastRunHour, localDayKey, isValidTz };
+module.exports = { set, get, clear, allDates, active, setActive, clearActive, lastRunHour, setLastRunHour, localDayKey, parseOffset, formatOffset };
