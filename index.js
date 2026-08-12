@@ -528,7 +528,11 @@ async function buildTribe(guild, opts, config) {
 function tribeThronePanel(tribe) {
   const pts = tribe.pointsName || 'points';
   const title = tribes.leaderTitle(tribe);
-  const ranks = (tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet';
+  // Path-mode tribes have 3 separate 4-rank ladders, not one — concatenating all 12 in a line reads as
+  // meaningless noise. Point to the pinned Paths & Attributes reference instead of trying to cram it here.
+  const ranks = tribes.isPathMode(tribe)
+    ? `pick a path — see the pinned 📖 Paths & Attributes reference below for all three ladders`
+    : ((tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet');
   const k = tribe.key;
   const ally = tribes.getAlly(tribe.key);
   const onCooldown = tribes.onOutboundCooldown(tribe);   // "can we start a war" = the outbound cooldown
@@ -575,6 +579,29 @@ function tribeThronePanel(tribe) {
   if (recog.length) rows.push(new ActionRowBuilder().addComponents(recog.slice(0, 5)));
   return { content, components: rows, allowedMentions: { parse: [] } };
 }
+// Permanent reference for path-mode tribes — pinned (so it survives the throne's 24h message expiry) rather
+// than relying on the one-off announcement, which a member could easily miss or scroll past. Explains what
+// an attribute actually DOES (personal points bonus + the tribe-wide war/event bonus it compiles into) once,
+// in one place, instead of scattering that explanation across every place attributes show up.
+function tribePathsReference(tribe) {
+  const loreData = tribe.lore;
+  if (!loreData || !tribes.isPathMode(tribe)) return null;
+  const lines = [`# 📖 ${loreData.title} — Paths & Attributes`];
+  if (tribe.presentingAttribute) lines.push(`-# ${tribe.shortName || tribe.name}'s presenting attribute (how it relates to other tribes — alliances, war rivalry): **${tribe.presentingAttribute}**`);
+  lines.push(
+    '',
+    '**What an attribute does:** picking a path and ranking up in it grows your OWN personal point bonus on matching activity. ' +
+    'Everyone currently on a path also compiles into the TRIBE\'s power in that category — a stronger, more-ranked-up combat path means real bonuses in War; social and collective the same for whichever Arena modes, Sealed Arena, Trial, and Tribe Games fit that category.',
+    `-# Haven't picked? You default to **Collective** until you choose otherwise — use ${'`/tribe panel`'} → Choose Your Path to switch.`,
+    '',
+  );
+  tribes.PATH_SLOTS.forEach((pathKey, i) => {
+    const ranks = tribe.ranks.filter(r => r.pathKey === pathKey).map(r => r.name).join(' → ');
+    const category = tribes.PATH_CATEGORY[pathKey];
+    lines.push(`**${loreData.pathNames[i]}** — *${loreData.attributeNames[i]}* (${category})\n${ranks}`);
+  });
+  return { content: lines.join('\n').slice(0, 3900), allowedMentions: { parse: [] } };
+}
 // Post + pin the panel in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
 // e.g. the channel already has 50 pins — all fail silently rather than blocking tribe creation on it).
 async function postThroneGuide(guild, tribe) {
@@ -583,6 +610,11 @@ async function postThroneGuide(guild, tribe) {
   if (!throne) return null;
   const msg = await throne.send(tribeThronePanel(tribe)).catch(() => null);
   if (msg) { await msg.pin().catch(() => {}); tribes.update(tribe.key, { panelMessageId: msg.id }); }
+  const refPayload = tribePathsReference(tribe);
+  if (refPayload) {
+    const refMsg = await throne.send(refPayload).catch(() => null);
+    if (refMsg) await refMsg.pin().catch(() => {});
+  }
   return msg;
 }
 // Re-render the already-posted/pinned Throne Hub — call after anything that changes what it shows (motto,
@@ -2164,9 +2196,29 @@ function sealedTryScore(tribeKey, uid, answerTs, correct) {
   sealed.scoreThrone(tribeKey, uid, SEALED_CORRECT_PTS + speed);
   return true;
 }
+// Sealed Arena / Trial post their prompts directly into each participating tribe's THRONE (see sealed.js's
+// per-tribe channelId, which is just tribe.throneId) — the 24h auto-expire on throne messages only helps if
+// the throne isn't constantly refilled with fresh ones, which these events do by design. Bulk-delete the
+// non-pinned mess a few minutes after the event actually ends instead of waiting a full day, so the throne's
+// pinned Panel + Paths reference are the only thing left standing shortly after. bulkDelete silently skips
+// anything older than 14 days, which never applies here (always run within minutes of the messages posting).
+function scheduleThroneMessageCleanup(guild, channelIds, delayMs = 5 * 60000) {
+  const ids = [...new Set(channelIds.filter(Boolean))];
+  setTimeout(async () => {
+    for (const chId of ids) {
+      const ch = await guild.channels.fetch(chId).catch(() => null);
+      if (!ch || !ch.bulkDelete) continue;
+      const msgs = await ch.messages.fetch({ limit: 100 }).catch(() => null);
+      if (!msgs) continue;
+      const toDelete = [...msgs.values()].filter(m => !m.pinned);
+      if (toDelete.length) await ch.bulkDelete(toDelete, true).catch(e => console.error(`[throne-cleanup] ${chId}:`, e.message));
+    }
+  }, delayMs);
+}
 async function finishSealedArena(guild) {
   clearSealedTimers();
   const a = sealed.get(); if (!a) return;
+  const throneChannelIds = sealed.thronesArr().map(th => th.channelId);   // captured before sealed.clear() below
   if (a.kind === 'typed') for (const th of sealed.thronesArr()) {
     const ch = await guild.channels.fetch(th.channelId).catch(() => null); if (!ch) continue;
     await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'sealed arena over' }).catch(() => {});
@@ -2185,6 +2237,7 @@ async function finishSealedArena(guild) {
     await refreshThronePanel(guild, tribes.get(winner.key)).catch(() => {});
   }
   sealed.clear();
+  scheduleThroneMessageCleanup(guild, throneChannelIds);
   enqueueSpectacle(SPECTACLE_PRIORITY.sealedResult, 'sealedResult', () => revealSealedArena(guild, board, winner, label));
 }
 async function revealSealedArena(guild, board, winner, label) {
@@ -2505,6 +2558,7 @@ async function trialVcBonus(guild, tribeKey) {
 async function finishTrial(guild) {
   clearTrialTimers();
   const a = sealed.get(); if (!a || a.mode !== 'trial') return;
+  const throneChannelIds = sealed.thronesArr().map(th => th.channelId);   // captured before sealed.clear() below
   for (const th of sealed.thronesArr()) {
     if (!th.promptMessageId) continue;
     const ch = await guild.channels.fetch(th.channelId).catch(() => null);
@@ -2536,6 +2590,7 @@ async function finishTrial(guild) {
     await refreshThronePanel(guild, tribes.get(winner.key)).catch(() => {});
   }
   sealed.clear();
+  scheduleThroneMessageCleanup(guild, throneChannelIds);
   enqueueSpectacle(SPECTACLE_PRIORITY.trialResult, 'trialResult', () => revealTrial(guild, board, winner, isMuster));
 }
 async function revealTrial(guild, board, winner, isMuster) {
