@@ -24,7 +24,7 @@ const REGISTRY = [
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
   { key: 'dashboard',   audience: 'member', built: true,  commands: ['dashboard'], // public member hub: status, server info, feature guide (setup folded into /panel → Setup)
     help: { name: '🤖 Member hub', value: 'Open `/dashboard` for your status, the rules, and every member feature in one place.' } },
-  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'stats'], contexts: ['Send to corner'] },   // 'cornered' folded into /panel → Corner page
+  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'stats', 'ban'], contexts: ['Send to corner', 'Ban'] },   // 'cornered' folded into /panel → Corner page
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter'] }, // temporary auto-delete of messages containing a set word/phrase
   { key: 'levelCheck',  audience: 'staff',  built: true,  commands: ['levelcheck'] }, // audit Arcane level roles landing (reads #bot-commands log) + admin resync-fix
