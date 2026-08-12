@@ -12,63 +12,34 @@
 const fs = require('fs');
 const { statePath } = require('./statepath');
 const copy = require('./copy');
-const path = require('path');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
+const config = require('./config');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 const { ensureMembers } = require('./memberCache');
 
-const DIVIDER_IMAGE = path.join(__dirname, 'assets', 'roles_divider.png');
 const STATE_FILE = process.env.FUBU_ROLESELECT_FILE || statePath('roleselect.json');
 const SECTIONS_FILE = process.env.FUBU_ROLESELECT_SECTIONS_FILE || statePath('roleselect_sections.json');
 
 function _load() { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { messageIds: [] }; } }
 function _save(s) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('[roleselect] save:', e.message); } }
 
-// key -> { title, roleId } for name lookups; COLOR/AGE render as a single-select dropdown, everything
-// else renders as toggle buttons (add-if-missing/remove-if-present — same as the old reactions did).
-const COLORS = [
-  ['Light Red', '1526943410269716561'], ['Red', '1526943228790706247'], ['Dark Red', '1516193430064201758'],
-  ['Light Orange', '1526943020124078290'], ['Orange', '1516193779202392094'], ['Dark Orange', '1526942927023247550'],
-  ['Light Yellow', '1526942462462132265'], ['Yellow', '1516194519526408223'], ['Dark Yellow', '1526942347504521236'],
-  ['Light Green', '1526941426187763772'], ['Green', '1526941282923188327'], ['Dark Green', '1516194696530100296'],
-  ['Light Blue', '1526943835727593573'], ['Blue', '1516194836078657577'], ['Dark Blue', '1526943715850190879'],
-  ['Light Purple', '1526941929986719911'], ['Purple', '1516194924402446448'], ['Dark Purple', '1526941828811591710'],
-  ['Light Pink', '1526940998545182931'], ['Pink', '1526940905095823482'], ['Dark Pink', '1516195011463614555'],
-];
-const AGE = [
-  ['16-17', '1516185172213628989'], ['18-21', '1516185300492222618'],
-  ['21-25', '1516185358415433739'], ['25-30+', '1516209186839466113'],
-];
-
-// Generic toggle-button sections — persisted + admin-editable via /roleselect-role, seeded once from
-// these defaults. After the first load the FILE is the source of truth, not these consts.
-const SECTION_ORDER = ['region', 'language', 'notifications', 'pronouns', 'misc'];
+// Every section — including age/colors — is persisted per-guild in SECTIONS_FILE (resolved via
+// statePath(), which is FUBU_STATE_DIR-scoped, so FUBU and Melanin each get their own file). DEFAULT_SECTIONS
+// only seeds a guild that has NO sections file yet at all, and is deliberately empty: this file used to hold
+// FUBU's specific role IDs as the "default" for every guild, which silently broke Melanin's picker (every
+// age/color option pointed at a role that only exists on FUBU) the first time it needed a fresh seed. Age and
+// colors need real per-guild role IDs added via /roleselect-role before they'll show any options.
+const SECTION_ORDER = ['age', 'colors', 'region', 'language', 'notifications', 'pronouns', 'misc'];
+// Rendered as an exclusive single-select dropdown (pick one, picking another swaps it) instead of toggle
+// buttons — 'colors' also gets a "no color (clear)" option appended.
+const EXCLUSIVE_SECTIONS = new Set(['age', 'colors']);
 const SECTION_TITLE = {
-  region: '🌍 Region', language: '🗣️ Language', notifications: '🔔 Notifications',
+  age: '🎂 Age', colors: '🎨 Color', region: '🌍 Region', language: '🗣️ Language', notifications: '🔔 Notifications',
   pronouns: '🏳️‍🌈 Pronouns', misc: '✨ Misc',
 };
 // Fixed block index (0-based) for each section's HEADING message — stable regardless of section
 // content, so "which message(s) to delete+resend" never needs to be recomputed from scratch.
-const SECTION_BLOCK_INDEX = { region: 5, language: 7, notifications: 9, pronouns: 11, misc: 13 };
-const DEFAULT_SECTIONS = {
-  region: [
-    ['🦒 Africa', '1501649805045141694'], ['🐼 Asia', '1501649802759508235'], ['🐂 Europe', '1501649800968278192'],
-    ['🦈 Oceania', '1501649803774267422'], ['🐆 South America', '1501649802642063380'], ['🦅 North America', '1501649801677111508'],
-  ],
-  language: [
-    ['🇫🇷 French', '1529939544391159979'], ['🇩🇪 German', '1532221881631903795'],
-    ['🇳🇱 Dutch', '1532221882563301468'], ['🇪🇸 Hispanic', '1532221883385380924'],
-  ],
-  notifications: [
-    ['🎮 Gaming', '1527426980226797680'], ['🎶 Music', '1527427317125746778'], ['📞 Calling', '1527427436827119686'],
-    ['⚠️ Important pings', '1527427606977314956'], ['🎥 Movies', '1527427164427784214'], ['❤️‍🩹 Revive', '1527427714401697842'],
-    ['🤾 Event ping', '1531010348126044412'], ['😂 OK to be tagged for jokes', '1529934697688465458'],
-  ],
-  pronouns: [
-    ['She/Her', '1517716868650242098'], ['He/Him', '1517717104399220856'],
-    ['They/Them', '1517717292392251483'], ['Others (ask)', '1526939765667008615'],
-  ],
-  misc: [],
-};
+const SECTION_BLOCK_INDEX = { age: 1, region: 5, language: 7, notifications: 9, pronouns: 11, misc: 13, colors: 15 };
+const DEFAULT_SECTIONS = { age: [], colors: [], region: [], language: [], notifications: [], pronouns: [], misc: [] };
 
 function loadSections() {
   try { return JSON.parse(fs.readFileSync(SECTIONS_FILE, 'utf8')); }
@@ -102,17 +73,20 @@ function toggleRow(customPrefix, items) {
 }
 function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
+function AGE() { return loadSections().age || []; }
+function COLORS() { return loadSections().colors || []; }
 function colorSelectRow() {
+  const items = COLORS();
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId('roleselect_color').setPlaceholder('Pick your color…')
       .addOptions(
-        ...COLORS.map(([label, roleId]) => ({ label, value: roleId })),
+        ...items.map(([label, roleId]) => ({ label, value: roleId })),
         { label: '🚫 No color (clear)', value: 'none' }));
 }
 function ageSelectRow() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId('roleselect_age').setPlaceholder('Pick your age bracket…')
-      .addOptions(AGE.map(([label, roleId]) => ({ label, value: roleId }))));
+      .addOptions(AGE().map(([label, roleId]) => ({ label, value: roleId }))));
 }
 // Right below the age bracket picker — same idea (age-adjacent), opens the same modal /birthday set drives.
 function birthdayButtonRow() {
@@ -120,12 +94,29 @@ function birthdayButtonRow() {
     new ButtonBuilder().setCustomId('roleselect_birthday_open').setLabel('Set Birthday').setEmoji('🎉').setStyle(ButtonStyle.Secondary));
 }
 
-function dividerAttachment() {
-  return fs.existsSync(DIVIDER_IMAGE) ? [new AttachmentBuilder(DIVIDER_IMAGE, { name: 'divider.png' })] : [];
+// Separator between blocks — config.rolesDividerImage is per-community (env var), so each guild gets its
+// OWN banner instead of one shared asset (the bug: a single hardcoded FUBU-branded image got posted into
+// every other guild's #roles too, found live on Melanin). Falls back to a plain text divider when unset
+// or the file's missing, rather than posting nothing (an empty message payload isn't valid).
+function dividerBlock() {
+  if (config.rolesDividerImage && fs.existsSync(config.rolesDividerImage)) {
+    return { files: [new AttachmentBuilder(config.rolesDividerImage, { name: 'divider.png' })] };
+  }
+  return { content: '⸻⸻⸻' };
 }
 
 function sectionBlock(key) {
   const items = loadSections()[key] || [];
+  if (key === 'age') {
+    // The birthday button is independent of age brackets — always show it, even on a guild with no
+    // age-bracket roles configured yet (e.g. Melanin, which never had equivalent roles to FUBU's).
+    const rows = items.length ? [ageSelectRow(), birthdayButtonRow()] : [birthdayButtonRow()];
+    return { content: copy.roleselect.ageHeading, components: rows };
+  }
+  if (key === 'colors') {
+    if (!items.length) return { content: copy.roleselect.sectionEmpty(copy.roleselect.colorHeading) };
+    return { content: copy.roleselect.colorHeading, components: [colorSelectRow()] };
+  }
   const heading = `## ${SECTION_TITLE[key]}`;
   if (!items.length) return { content: copy.roleselect.sectionEmpty(heading) };
   return { content: heading, components: chunk(items, 5).map(c => toggleRow('roleselect_toggle', c)) };
@@ -158,22 +149,22 @@ function tribeBlock(guild) {
 function buildBlocks(guild) {
   return [
     { content: copy.roleselect.header },
-    { content: copy.roleselect.ageHeading, components: [ageSelectRow(), birthdayButtonRow()] },
-    { files: dividerAttachment() },
-    { content: copy.roleselect.mdniHeading, components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', '1519408206370308197']])] },
-    { files: dividerAttachment() },
+    sectionBlock('age'),
+    dividerBlock(),
+    { content: copy.roleselect.mdniHeading, components: [toggleRow('roleselect_mdni', [['🔞 MDNI (Minors Do Not Interact)', config.mdniRoleId]])] },
+    dividerBlock(),
     sectionBlock('region'),
-    { files: dividerAttachment() },
+    dividerBlock(),
     sectionBlock('language'),
-    { files: dividerAttachment() },
+    dividerBlock(),
     sectionBlock('notifications'),
-    { files: dividerAttachment() },
+    dividerBlock(),
     sectionBlock('pronouns'),
-    { files: dividerAttachment() },
+    dividerBlock(),
     sectionBlock('misc'),
-    { files: dividerAttachment() },
-    { content: copy.roleselect.colorHeading, components: [colorSelectRow()] },
-    { files: dividerAttachment() },
+    dividerBlock(),
+    sectionBlock('colors'),
+    dividerBlock(),
     tribeBlock(guild),
   ].filter(Boolean);
 }
@@ -191,8 +182,7 @@ async function appendTribeBlock(guild, channelId) {
   const existing = await ch.messages.fetch({ limit: 50 }).catch(() => null);
   if (existing && [...existing.values()].some(m => m.components?.some(r => r.components?.some(c => c.customId === 'roleselect_tribe'))))
     return { ok: true, alreadyPosted: true };
-  const div = dividerAttachment();
-  if (div.length) { const dm = await ch.send({ files: div }); (st.messageIds ||= []).push(dm.id); await new Promise(r => setTimeout(r, 500)); }
+  const dm = await ch.send(dividerBlock()); (st.messageIds ||= []).push(dm.id); await new Promise(r => setTimeout(r, 500));
   const m = await ch.send(block); (st.messageIds ||= []).push(m.id); _save(st);
   return { ok: true, id: m.id };
 }

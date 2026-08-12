@@ -94,8 +94,7 @@ function systemicRoleIds(guild) {
   (config.adultAgeRoleIds || []).forEach(add);
   (config.strikeRoleIds || []).forEach(add);
   (config.identifyingRoleIds || []).forEach(add);
-  roleselect.COLORS.forEach(([, id]) => add(id));
-  roleselect.AGE.forEach(([, id]) => add(id));
+  // age/colors are now part of loadSections() too (see roleselect.js), so this one pass covers them.
   Object.values(roleselect.loadSections() || {}).forEach(list => (list || []).forEach(([, id]) => add(id)));
   add('1529120692845674687', '1529121181767176313', '1529121191384842330', '1529121471946035330'); // Arcane Novice/Inter/Elite/NOLIFE
   const contestCfg = contest.loadCfg ? contest.loadCfg() : null;
@@ -3931,13 +3930,13 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('roleselect-role').setDescription('Add or remove a self-assign role in #roles (admin)')
         .addSubcommand(s => s.setName('add').setDescription('Add a role to a #roles section')
           .addStringOption(o => o.setName('section').setDescription('Which section').setRequired(true)
-            .addChoices({ name: 'Region', value: 'region' }, { name: 'Language', value: 'language' },
+            .addChoices({ name: 'Age', value: 'age' }, { name: 'Color', value: 'colors' }, { name: 'Region', value: 'region' }, { name: 'Language', value: 'language' },
               { name: 'Notifications', value: 'notifications' }, { name: 'Pronouns', value: 'pronouns' }, { name: 'Misc', value: 'misc' }))
           .addRoleOption(o => o.setName('role').setDescription('The role to add').setRequired(true))
           .addStringOption(o => o.setName('label').setDescription('Button text (default: the role name, add your own emoji if you want one)').setRequired(false)))
         .addSubcommand(s => s.setName('remove').setDescription('Remove a role from a #roles section')
           .addStringOption(o => o.setName('section').setDescription('Which section').setRequired(true)
-            .addChoices({ name: 'Region', value: 'region' }, { name: 'Language', value: 'language' },
+            .addChoices({ name: 'Age', value: 'age' }, { name: 'Color', value: 'colors' }, { name: 'Region', value: 'region' }, { name: 'Language', value: 'language' },
               { name: 'Notifications', value: 'notifications' }, { name: 'Pronouns', value: 'pronouns' }, { name: 'Misc', value: 'misc' }))
           .addRoleOption(o => o.setName('role').setDescription('The role to remove').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
@@ -5968,7 +5967,7 @@ client.on('interactionCreate', async (interaction) => {
     if (isAge && config.verifiedRoleId && interaction.member.roles.cache.has(config.verifiedRoleId)) {
       return interaction.reply({ content: 'Your age bracket is locked once you’re verified. It’s a one-time registration choice. If it’s wrong, ask a mod/admin and they can correct it for you.', flags: MessageFlags.Ephemeral });
     }
-    const group = (isAge ? roleselect.AGE : roleselect.COLORS).map(([, id]) => id);
+    const group = (isAge ? roleselect.AGE() : roleselect.COLORS()).map(([, id]) => id);
     const chosen = interaction.values[0];
     const clearing = chosen === 'none'; // color-only - age has no clear option, always a real bracket
     const toRemove = group.filter(id => id !== chosen && interaction.member.roles.cache.has(id));

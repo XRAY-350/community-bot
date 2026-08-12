@@ -44,6 +44,10 @@ const config = {
   // Assigning this role to a member is the "they've been verified" signal.
   verifiedRoleId: req('VERIFIED_ROLE_ID'),
   rolesChannelId: opt('ROLES_CHANNEL_ID', '1500589790750572555'),  // 🎓┆ʀᴏʟᴇs - bot-owned self-assign pickers
+  // Per-community banner image used as the #roles divider between sections — was a single hardcoded FUBU
+  // asset shared across every guild running this codebase (Melanin got FUBU's banner). Blank = no image,
+  // falls back to a plain text divider.
+  rolesDividerImage: opt('ROLES_DIVIDER_IMAGE', ''),
   // Category for member-facing, thread-based moderation tools (ban/strike appeals) — same home as the
   // mod-apps applicant channel, which the owner already confirmed is a fine spot for this shape of thing.
   appealsCategoryId: opt('APPEALS_CATEGORY_ID', '1531845194134196254'),  // 💭 ᴄᴏɴꜰᴇssɪᴏɴs
