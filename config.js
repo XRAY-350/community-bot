@@ -111,6 +111,7 @@ const config = {
   trialModRoleId: opt('TRIAL_MOD_ROLE_ID', '1532037321740779860'),
   modAlertChannelId: opt('MOD_ALERT_CHANNEL_ID', ''), // falls back to verifyChannelId at use
   modAnnounceChannelId: opt('MOD_ANNOUNCE_CHANNEL_ID', '1526926690637578362'), // strict watchlist alerts + ban buttons
+  awardsAnnounceChannelId: opt('AWARDS_ANNOUNCE_CHANNEL_ID', ''), // weekly peer-vote reminder + results — a real "general" channel, set per-guild
   watchLogChannelId: opt('WATCH_LOG_CHANNEL_ID', '1531382379342729428'), // loose day-to-day monitor reports (mod-only, no ping)
   propagandaForumId: opt('PROPAGANDA_FORUM_ID', '1536421958449893477'), // per-tribe forum tags; propagandaDailyIfDue reads reactions from here
   // Admin-only alert channel — MODS explicitly excluded (owner, 2026-08-08: watched staff members must not

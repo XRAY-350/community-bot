@@ -48,6 +48,7 @@ const quests = require('./quests');
 const sealed = require('./sealed');
 const tribegames = require('./tribegames');
 const birthday = require('./birthday');
+const awards = require('./awards');
 const proving = require('./proving');
 const throneExpire = require('./throneExpire');
 const smartwatch = require('./smartwatch');
@@ -967,6 +968,65 @@ function saveBirthdayInput(userId, month, day, offsetInput, year) {
 }
 function birthdaySavedMsg(r) {
   return `🎉 Saved — **${BIRTHDAY_MONTH_NAMES[r.month]} ${r.day}**${r.year ? ` ${r.year}` : ''} (${birthday.formatOffset(r.offsetMin)}). You'll get a Birthday role that day — in your own timezone, above your other roles.`;
+}
+
+// Weekly peer-voted member awards. A category's role is created once and reused week to week (the same
+// role just changes hands), unlike birthday's per-person ephemeral role — there's no moderation-hierarchy
+// concern here since it's one fixed role, positioned normally (bottom of the hierarchy on creation), never
+// repositioned above anyone.
+async function ensureAwardRole(guild, categoryKey) {
+  const cat = awards.getCategory(categoryKey);
+  if (!cat) return null;
+  if (cat.roleId) { const r = guild.roles.cache.get(cat.roleId) || await guild.roles.fetch(cat.roleId).catch(() => null); if (r) return r; }
+  const role = await guild.roles.create({ name: cat.name.slice(0, 100), hoist: true, mentionable: false, reason: `Award role: ${cat.name}` }).catch(() => null);
+  if (role) awards.setCategoryRoleId(categoryKey, role.id);
+  return role;
+}
+async function swapAwardHolder(guild, categoryKey, newUserId) {
+  const role = await ensureAwardRole(guild, categoryKey);
+  if (!role) return false;
+  const prevId = awards.holder(categoryKey);
+  if (prevId && prevId !== newUserId) {
+    const prev = guild.members.cache.get(prevId) || await guild.members.fetch(prevId).catch(() => null);
+    if (prev) await prev.roles.remove(role, 'Award: new winner this week').catch(() => {});
+  }
+  const winner = guild.members.cache.get(newUserId) || await guild.members.fetch(newUserId).catch(() => null);
+  if (!winner) return false;
+  if (!winner.roles.cache.has(role.id)) await winner.roles.add(role, 'Award: this week\'s winner').catch(() => {});
+  awards.setHolder(categoryKey, newUserId);
+  return true;
+}
+// Wednesday: one reminder per week, only if there's at least one category to vote on.
+async function awardsReminderIfDue(guild) {
+  if (!awards.dueForReminder(Date.now())) return;
+  awards.markReminderDone(Date.now());   // mark first — an overlapping tick shouldn't double-post
+  const cats = Object.entries(awards.categories());
+  if (!cats.length || !config.awardsAnnounceChannelId) return;
+  const ch = await guild.channels.fetch(config.awardsAnnounceChannelId).catch(() => null);
+  if (!ch) return;
+  const list = cats.map(([, c]) => `**${c.name}**`).join(', ');
+  await ch.send({ content: `🗳️ Weekly awards close **Friday** — vote with \`/awards vote\`! Categories open: ${list}. You can't vote for yourself.`, allowedMentions: { parse: [] } }).catch(() => {});
+}
+// Friday: tally each category, swap the role to the winner (ties broken by keeping the current holder if
+// they're tied for first, else the first voted-in), announce, clear votes for next week.
+async function awardsResultsIfDue(guild) {
+  if (!awards.dueForResults(Date.now())) return;
+  awards.markResultsDone(Date.now());
+  const cats = Object.entries(awards.categories());
+  if (!cats.length) return;
+  await ensureMembers(guild);
+  const ch = config.awardsAnnounceChannelId ? await guild.channels.fetch(config.awardsAnnounceChannelId).catch(() => null) : null;
+  for (const [key, cat] of cats) {
+    const ranked = awards.tally(key);
+    if (!ranked.length) { awards.clearVotes(key); continue; }
+    const top = ranked[0].count;
+    const tied = ranked.filter(r => r.count === top);
+    const prevHolder = awards.holder(key);
+    const winnerId = (tied.find(r => r.userId === prevHolder) || tied[0]).userId;
+    const ok = await swapAwardHolder(guild, key, winnerId);
+    if (ok && ch) await ch.send({ content: `🏆 **${cat.name}** this week: <@${winnerId}> (${top} vote${top === 1 ? '' : 's'})! Voting resets — nominate again with \`/awards vote\`.`, allowedMentions: { users: [winnerId] } }).catch(() => {});
+    awards.clearVotes(key);
+  }
 }
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
@@ -3892,6 +3952,17 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('view').setDescription('See your saved birthday'))
         .addSubcommand(s => s.setName('clear').setDescription('Remove your saved birthday')),
 
+      new SlashCommandBuilder().setName('awards').setDescription('Weekly peer-voted member awards (e.g. Funniest Member)')
+        .addSubcommand(s => s.setName('vote').setDescription('Vote for someone in a category (not yourself, one vote/category/week)')
+          .addStringOption(o => o.setName('category').setDescription('Which award').setRequired(true).setAutocomplete(true))
+          .addUserOption(o => o.setName('member').setDescription('Who you\'re voting for').setRequired(true)))
+        .addSubcommand(s => s.setName('list').setDescription('See this week\'s award categories and current holders'))
+        .addSubcommand(s => s.setName('category-add').setDescription('Add an award category (staff)')
+          .addStringOption(o => o.setName('key').setDescription('Short id, e.g. funniest').setRequired(true).setMaxLength(30))
+          .addStringOption(o => o.setName('name').setDescription('Display name, e.g. 😂 Funniest Member').setRequired(true).setMaxLength(80)))
+        .addSubcommand(s => s.setName('category-remove').setDescription('Remove an award category (staff) — deletes its role too')
+          .addStringOption(o => o.setName('category').setDescription('Which award').setRequired(true).setAutocomplete(true))),
+
       new SlashCommandBuilder().setName('request-role').setDescription('Request a casual role, staff approves it')
         .addRoleOption(o => o.setName('role').setDescription('The role you want (or already have, if removing)').setRequired(true))
         .addBooleanOption(o => o.setName('remove').setDescription('Request to give this role UP instead of getting it (default: no)').setRequired(false))
@@ -4258,6 +4329,9 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepStaffRanks(g)).catch(() => {}), 3600000);
   if (dguild) await sweepBirthdays(dguild).catch(e => console.error(`[birthday] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepBirthdays(g)).catch(() => {}), 3600000);
+  if (dguild) await awardsReminderIfDue(dguild).catch(e => console.error(`[awards] boot reminder check: ${e.message}`));
+  if (dguild) await awardsResultsIfDue(dguild).catch(e => console.error(`[awards] boot results check: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(async g => { await awardsReminderIfDue(g); await awardsResultsIfDue(g); }).catch(() => {}), 3600000);
   if (dguild) await reconcileTribeRoles(dguild).catch(e => console.error(`[tribe reconcile] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => reconcileTribeRoles(g)).catch(() => {}), 3600000);
   // Mod-tribe 3-leader requirement (boot + hourly): alert → freeze perks at grace midpoint → disband-pending.
@@ -5661,6 +5735,16 @@ client.on('interactionCreate', async (interaction) => {
           .map(r => ({ name: `${r.key}${features.enabled(r.key) ? ' (on)' : ' (off)'}`.slice(0, 100), value: r.key }));
         return interaction.respond(choices);
       } catch (e) { console.error('[features] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
+    }
+    if (interaction.commandName === 'awards') {
+      try {
+        const focused = (interaction.options.getFocused() || '').toLowerCase();
+        const choices = Object.entries(awards.categories())
+          .filter(([key, c]) => !focused || key.includes(focused) || c.name.toLowerCase().includes(focused))
+          .slice(0, 25)
+          .map(([key, c]) => ({ name: c.name.slice(0, 100), value: key }));
+        return interaction.respond(choices);
+      } catch (e) { console.error('[awards] autocomplete:', e.message); return interaction.respond([]).catch(() => {}); }
     }
     // Role-filtered member pickers: only list members who actually hold the applicable role, so the
     // list in the command matches the dropdowns (class fix). promote-trial/demote-trial → trial mods;
@@ -8742,6 +8826,50 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'clear') {
       birthday.clear(interaction.user.id);
       return interaction.reply({ content: '🗑️ Birthday cleared.', flags: MessageFlags.Ephemeral });
+    }
+  }
+  if (name === 'awards') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'vote') {
+      const key = interaction.options.getString('category');
+      const target = interaction.options.getUser('member');
+      const cat = awards.getCategory(key);
+      if (!cat) return interaction.reply({ content: 'That award category doesn\'t exist anymore.', flags: MessageFlags.Ephemeral });
+      if (target.id === interaction.user.id) return interaction.reply({ content: 'You can\'t vote for yourself.', flags: MessageFlags.Ephemeral });
+      if (target.bot) return interaction.reply({ content: 'You can\'t vote for a bot.', flags: MessageFlags.Ephemeral });
+      awards.castVote(key, interaction.user.id, target.id);
+      return interaction.reply({ content: `🗳️ Voted <@${target.id}> for **${cat.name}**. You can change your vote anytime before Friday.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'list') {
+      const cats = Object.entries(awards.categories());
+      if (!cats.length) return interaction.reply({ content: 'No award categories yet — staff can add one with `/awards category-add`.', flags: MessageFlags.Ephemeral });
+      const lines = cats.map(([key, c]) => {
+        const h = awards.holder(key);
+        const n = Object.keys(awards.votes(key)).length;
+        return `**${c.name}** — holder: ${h ? `<@${h}>` : '_none yet_'} · ${n} vote${n === 1 ? '' : 's'} so far this week`;
+      });
+      return interaction.reply({ content: `## 🏆 Weekly Awards\n${lines.join('\n')}\nResults every Friday.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'category-add') {
+      if (!canBan(interaction)) return interaction.reply({ content: 'Only staff can add award categories.', flags: MessageFlags.Ephemeral });
+      const key = interaction.options.getString('key').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const catName = interaction.options.getString('name');
+      if (!key) return interaction.reply({ content: 'That key needs at least one letter/number.', flags: MessageFlags.Ephemeral });
+      if (awards.getCategory(key)) return interaction.reply({ content: `"${key}" already exists.`, flags: MessageFlags.Ephemeral });
+      awards.addCategory(key, catName);
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const role = await ensureAwardRole(interaction.guild, key);
+      return interaction.editReply(role ? `✅ Added **${catName}** (\`${key}\`) — role ${role}.` : `Added **${catName}**, but couldn't create its role (check my role position).`);
+    }
+    if (sub === 'category-remove') {
+      if (!canBan(interaction)) return interaction.reply({ content: 'Only staff can remove award categories.', flags: MessageFlags.Ephemeral });
+      const key = interaction.options.getString('category');
+      const cat = awards.getCategory(key);
+      if (!cat) return interaction.reply({ content: 'That award category doesn\'t exist.', flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (cat.roleId) { const role = await interaction.guild.roles.fetch(cat.roleId).catch(() => null); if (role) await role.delete('Award category removed').catch(() => {}); }
+      awards.removeCategory(key);
+      return interaction.editReply(`🗑️ Removed **${cat.name}**.`);
     }
   }
   if (name === 'request-role-setup') {
