@@ -3887,7 +3887,8 @@ client.once('ready', async () => {
           .addIntegerOption(o => o.setName('month').setDescription('Month (1-12)').setRequired(true).setMinValue(1).setMaxValue(12))
           .addIntegerOption(o => o.setName('day').setDescription('Day (1-31)').setRequired(true).setMinValue(1).setMaxValue(31))
           .addStringOption(o => o.setName('utc_offset').setDescription('Your UTC offset, e.g. -5, +5:30, or UTC-8 — required, so it\'s YOUR day, not the server\'s').setRequired(true))
-          .addIntegerOption(o => o.setName('year').setDescription('Birth year (optional)').setRequired(false).setMinValue(1900).setMaxValue(2100)))
+          .addIntegerOption(o => o.setName('year').setDescription('Birth year (optional)').setRequired(false).setMinValue(1900).setMaxValue(2100))
+          .addUserOption(o => o.setName('member').setDescription('Set someone else\'s birthday instead — staff only, also how you correct an already-set one').setRequired(false)))
         .addSubcommand(s => s.setName('view').setDescription('See your saved birthday'))
         .addSubcommand(s => s.setName('clear').setDescription('Remove your saved birthday')),
 
@@ -5853,16 +5854,17 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply({ content: r.ok ? r.content : 'Couldn’t add the tribe role. Tell an admin.', components: [] });
   }
   if (interaction.isButton?.() && interaction.customId === 'roleselect_birthday_open') {
-    const existing = birthday.get(interaction.user.id);
+    if (birthday.get(interaction.user.id)) return interaction.reply({ content: 'Your birthday is already set — that\'s a one-time self-set. Ask a mod to change it (`/birthday set` with the `member` option).', flags: MessageFlags.Ephemeral });
     const rows = [
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('month').setLabel('Month (1-12)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2).setValue(existing ? String(existing.month) : '')),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('day').setLabel('Day (1-31)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2).setValue(existing ? String(existing.day) : '')),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('utc_offset').setLabel('Your UTC offset, e.g. -5 or +5:30').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10).setValue(existing ? birthday.formatOffset(existing.utcOffsetMin).replace('UTC', '') : '')),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('year').setLabel('Birth year (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setValue(existing?.year ? String(existing.year) : '')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('month').setLabel('Month (1-12)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('day').setLabel('Day (1-31)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('utc_offset').setLabel('Your UTC offset, e.g. -5 or +5:30').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('year').setLabel('Birth year (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
     ];
     return interaction.showModal(new ModalBuilder().setCustomId('roleselect_birthday_modal').setTitle('Set Your Birthday').addComponents(...rows));
   }
   if (interaction.isModalSubmit?.() && interaction.customId === 'roleselect_birthday_modal') {
+    if (birthday.get(interaction.user.id)) return interaction.reply({ content: 'Your birthday is already set — that\'s a one-time self-set. Ask a mod to change it.', flags: MessageFlags.Ephemeral });
     const monthRaw = interaction.fields.getTextInputValue('month');
     const dayRaw = interaction.fields.getTextInputValue('day');
     const offsetInput = interaction.fields.getTextInputValue('utc_offset');
@@ -8721,9 +8723,17 @@ client.on('interactionCreate', async (interaction) => {
       const day = interaction.options.getInteger('day');
       const offsetInput = interaction.options.getString('utc_offset');
       const year = interaction.options.getInteger('year');
-      const r = saveBirthdayInput(interaction.user.id, month, day, offsetInput, year);
+      const targetUser = interaction.options.getUser('member');
+      let targetId = interaction.user.id;
+      if (targetUser) {
+        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff can set another member\'s birthday.', flags: MessageFlags.Ephemeral });
+        targetId = targetUser.id;
+      } else if (birthday.get(interaction.user.id)) {
+        return interaction.reply({ content: 'Your birthday is already set — that\'s a one-time self-set. Ask a mod to change it.', flags: MessageFlags.Ephemeral });
+      }
+      const r = saveBirthdayInput(targetId, month, day, offsetInput, year);
       if (!r.ok) return interaction.reply({ content: r.error, flags: MessageFlags.Ephemeral });
-      return interaction.reply({ content: birthdaySavedMsg(r), flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: (targetUser ? `Set for <@${targetId}>: ` : '') + birthdaySavedMsg(r), flags: MessageFlags.Ephemeral });
     }
     if (sub === 'view') {
       const b = birthday.get(interaction.user.id);
