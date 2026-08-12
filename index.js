@@ -5576,19 +5576,17 @@ async function backfillDefaultPaths(guild) {
   return assigned;
 }
 
-// Emergency incident response (owner, 2026-08-12): a leaked/abused webhook was used to spam Melanin under
-// rotating spoofed usernames (create webhook, blast, delete, repeat, new fake name each time) — banning
-// those "users" does nothing since a webhook post has no real member behind it, and chasing each new spoofed
-// name individually doesn't scale. Melanin has ZERO legitimate webhooks configured (verified live), so this
-// blocks EVERY webhook-authored message there outright. Scoped to Melanin's guild ID specifically — FUBU has
-// a real "History Migration" webhook in use, so this must NOT apply to that guild. If a real webhook
-// integration is ever added to Melanin, switch this to allowlist by webhookId instead of a blanket block.
-const MELANIN_GUILD_ID = '1533896214465216532';
 client.on('messageCreate', async (msg) => {
   try {
+    // Raid prevention (owner, 2026-08-12, following the Melanin incident): EVERY webhook message is
+    // blocked by default, server-wide, unless that exact webhook id has been explicitly authorized via the
+    // ✅ button on raidguard's watchdog alert (raidguard.js). Started as a Melanin-only emergency block
+    // during the live incident; generalized here now that authorization is per-webhook-id instead of an
+    // all-or-nothing guild toggle, so FUBU's legitimate "History Migration" webhook just needs (and has)
+    // its own explicit authorization rather than a guild-wide carve-out.
     // Checked BEFORE the bot-author early-return below — a webhook post has msg.author.bot === true, so it
     // would otherwise be silently skipped by that return.
-    if (msg.guild && msg.guild.id === MELANIN_GUILD_ID && msg.webhookId) {
+    if (msg.guild && msg.webhookId && !raidguard.isAuthorized(msg.guild.id, msg.webhookId)) {
       await msg.delete().catch(() => {});
       return;
     }
@@ -7646,6 +7644,7 @@ client.on('interactionCreate', async (interaction) => {
     const id = interaction.customId || '';
     try {
       if (id.startsWith('vpanel_')) return await handleVerifyButton(interaction);
+      if (raidguard.isAuthorizeButton(interaction)) return await raidguard.handleAuthorizeButton(interaction);
       // #roles pickers (roleselect.js) — generic multi-toggle (regions/notifications/pronouns/misc):
       // add if missing, remove if present. Same mechanic the old Carl-bot reactions had, just bot-owned.
       if (id.startsWith('roleselect_toggle:')) {

@@ -10,14 +10,37 @@
 //   3. Message-flood auto-quarantine — the same author (a real member OR a webhook) posting faster than a
 //      human can type gets shut down on sight, not after a mod notices and reacts.
 // Join-spike detection already exists (freshwatch.js's influx warning) — deliberately not duplicated here.
-const { PermissionsBitField, AuditLogEvent } = require('discord.js');
+const { PermissionsBitField, AuditLogEvent, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const { statePath } = require('./statepath');
 const config = require('./config');
 
 const FILE = process.env.FUBU_RAIDGUARD_FILE || statePath('raidguard.json');
-function load() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { return { knownWebhookIds: {} }; } }
+function load() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { return { knownWebhookIds: {}, authorizedWebhookIds: {} }; } }
 function save(s) { try { fs.writeFileSync(FILE, JSON.stringify(s)); } catch (e) { console.error('[raidguard] save:', e.message); } }
+
+// ---- 0) webhook allowlist -----------------------------------------------------------------------
+// Every webhook message is blocked UNLESS its webhook id is on this per-guild allowlist (owner,
+// 2026-08-12, following the incident: "block all messages from webhooks unless authorized through the
+// bot"). Authorizing happens via the ✅ button on the watchdog alert below — deliberately no way to
+// pre-authorize a webhook that hasn't posted/been seen yet, so there's always a real alert + a real
+// decision on record, not a silently-growing exception list.
+function isAuthorized(guildId, webhookId) {
+  const s = load();
+  return !!(s.authorizedWebhookIds && s.authorizedWebhookIds[guildId] && s.authorizedWebhookIds[guildId].includes(webhookId));
+}
+function authorize(guildId, webhookId) {
+  const s = load();
+  s.authorizedWebhookIds = s.authorizedWebhookIds || {};
+  s.authorizedWebhookIds[guildId] = s.authorizedWebhookIds[guildId] || [];
+  if (!s.authorizedWebhookIds[guildId].includes(webhookId)) s.authorizedWebhookIds[guildId].push(webhookId);
+  save(s);
+}
+function revoke(guildId, webhookId) {
+  const s = load();
+  if (s.authorizedWebhookIds && s.authorizedWebhookIds[guildId]) s.authorizedWebhookIds[guildId] = s.authorizedWebhookIds[guildId].filter(id => id !== webhookId);
+  save(s);
+}
 
 const P = PermissionsBitField.Flags;
 const DANGEROUS_PERMS = [
@@ -26,11 +49,11 @@ const DANGEROUS_PERMS = [
   ['ManageChannels', P.ManageChannels],
 ];
 
-async function alertMods(guild, content) {
+async function alertMods(guild, content, components = []) {
   if (!config.modAnnounceChannelId) return;
   const ch = await guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
   if (!ch) return;
-  await ch.send({ content: `${config.modRoleId ? `<@&${config.modRoleId}> ` : ''}${content}`, allowedMentions: { roles: config.modRoleId ? [config.modRoleId] : [] } }).catch(() => {});
+  await ch.send({ content: `${config.modRoleId ? `<@&${config.modRoleId}> ` : ''}${content}`, components, allowedMentions: { roles: config.modRoleId ? [config.modRoleId] : [] } }).catch(() => {});
 }
 
 // A Discord snowflake encodes its own creation time — decode it to flag freshly-registered bot accounts
@@ -60,8 +83,11 @@ async function onWebhooksUpdate(channel) {
     save(s);
     for (const wh of added.values()) {
       const ageDays = snowflakeAgeDays(wh.id);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`raidguard_authwh:${wh.id}`).setEmoji('✅').setLabel('Authorize (legit)').setStyle(ButtonStyle.Success));
       await alertMods(guild, `🪝 **New webhook created**: \`${wh.name}\` in <#${channel.id}>${wh.owner ? ` by ${wh.owner.tag}` : ''}.`
-        + (ageDays !== null && ageDays > 0 ? ` Underlying app account is **${ageDays}d old**${ageDays < 30 ? ' ⚠️ (young — worth a look)' : ''}.` : ''));
+        + (ageDays !== null && ageDays > 0 ? ` Underlying app account is **${ageDays}d old**${ageDays < 30 ? ' ⚠️ (young — worth a look)' : ''}.` : '')
+        + ' **Its messages are blocked by default** — click Authorize below if this is legitimate.', [row]);
     }
   } catch (e) { console.error('[raidguard] onWebhooksUpdate:', e.message); }
 }
@@ -155,4 +181,21 @@ function register(client) {
   console.log('[raidguard] webhook/integration watchdog + permission alarm + flood detection armed');
 }
 
-module.exports = { register, checkFlood, quarantine, alertMods, snowflakeAgeDays, DANGEROUS_PERMS };
+const BTN_PREFIX = 'raidguard_authwh:';
+function isAuthorizeButton(interaction) { return interaction.isButton?.() && interaction.customId?.startsWith(BTN_PREFIX); }
+// Mod-gated (same tier as verify) — one click on the watchdog alert allowlists that exact webhook id for
+// this guild going forward. No bulk/wildcard authorize by design: each webhook gets its own conscious decision.
+async function handleAuthorizeButton(interaction) {
+  const roles = interaction.member?.roles?.cache;
+  const canAuth = (config.modRoleId && roles?.has(config.modRoleId)) || interaction.memberPermissions?.has(P.Administrator);
+  if (!canAuth) return interaction.reply({ content: 'Only staff (mods+) can authorize a webhook.', flags: MessageFlags.Ephemeral });
+  const webhookId = interaction.customId.slice(BTN_PREFIX.length);
+  authorize(interaction.guild.id, webhookId);
+  await interaction.reply({ content: `✅ Webhook \`${webhookId}\` authorized — its messages will no longer be blocked.`, flags: MessageFlags.Ephemeral });
+  await interaction.message.edit({ content: interaction.message.content + `\n-# ✅ Authorized by <@${interaction.user.id}>`, components: [] }).catch(() => {});
+}
+
+module.exports = {
+  register, checkFlood, quarantine, alertMods, snowflakeAgeDays, DANGEROUS_PERMS,
+  isAuthorized, authorize, revoke, isAuthorizeButton, handleAuthorizeButton,
+};
