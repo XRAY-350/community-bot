@@ -7,6 +7,7 @@ const config = require('./config');
 const { kickMember } = require('./threads');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
+const freshwatch = require('./freshwatch');
 
 const PREFIX = 'vpanel_';
 
@@ -58,14 +59,19 @@ async function handleVerifyButton(interaction) {
       return interaction.editReply(`Failed to verify: ${e.message}`);
     }
     await interaction.editReply(`✅ Verified **${member.user.tag}**.`);
-    await ownerlog.log(guild, { emoji: '✅', title: 'Member verified', color: 0x57F287, detail: `<@${member.id}> (${member.user.tag}) — by <@${interaction.user.id}>.` });
+    // Raid prevention (owner, 2026-08-12): a brand-new Discord account is a common raid-tool signal, worth
+    // a heads-up at the moment they actually gain access — not a block (plenty of real users have fresh
+    // accounts), just a note staff can weigh. Reuses freshwatch's own self-calibrated fresh cutoff rather
+    // than a separate hardcoded threshold.
+    const freshNote = freshwatch.noteFor(member);
+    await ownerlog.log(guild, { emoji: '✅', title: 'Member verified', color: 0x57F287, detail: `<@${member.id}> (${member.user.tag}) — by <@${interaction.user.id}>.${freshNote ? `\n${freshNote}` : ''}` });
     // Freeze the panel to a persistent record; the now-verified owner's thread is swept normally.
     // Real notification (they're still in the server and can see this thread) — mention in CONTENT,
     // not just the embed, since embeds never ping.
     await interaction.message.edit({
       content: `## ✅ Verified\n<@${targetId}>`,
       embeds: [new EmbedBuilder().setColor(0x2ecc71)
-        .setDescription(`<@${targetId}> was **verified** by <@${interaction.user.id}>.`)],
+        .setDescription(`<@${targetId}> was **verified** by <@${interaction.user.id}>.${freshNote ? `\n${freshNote}` : ''}`)],
       components: [],
       allowedMentions: { users: [targetId] },
     }).catch(() => {});

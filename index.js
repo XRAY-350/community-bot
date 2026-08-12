@@ -34,6 +34,7 @@ const langmods = require('./langmods');
 const promote = require('./promote');
 const ownerlog = require('./ownerlog');
 const permguard = require('./permguard');
+const raidguard = require('./raidguard');
 const perms = require('./perms');
 const rolereq = require('./rolereq');
 const appeals = require('./appeals');
@@ -531,7 +532,7 @@ function tribeThronePanel(tribe) {
   // Path-mode tribes have 3 separate 4-rank ladders, not one — concatenating all 12 in a line reads as
   // meaningless noise. Point to the pinned Paths & Attributes reference instead of trying to cram it here.
   const ranks = tribes.isPathMode(tribe)
-    ? `pick a path — see the pinned 📖 Paths & Attributes reference below for all three ladders`
+    ? `pick a path, see the pinned 📖 Paths & Attributes reference below for all three ladders`
     : ((tribe.ranks || []).map(r => r.name).join(' → ') || 'ranks not set up yet');
   const k = tribe.key;
   const ally = tribes.getAlly(tribe.key);
@@ -540,7 +541,7 @@ function tribeThronePanel(tribe) {
     + (tribe.motto ? `-# *${tribe.motto}*\n` : '')
     + `\n**Earn ${pts}:** chat in the hall, +1 per message, once a minute. Climb the ranks: ${ranks}. Ranks only ever go up.\n`
     + `-# Staff who join as members automatically hold **${tribes.staffRankTitle(tribe)}**, above the whole ladder.\n`
-    + `\n${ally ? `**Allied with ${ally.emoji || '🏴'} ${ally.shortName || ally.name}** — mutual defense in wars, treasury can be gifted between you.` : '_No current alliance._'}`
+    + `\n${ally ? `**Allied with ${ally.emoji || '🏴'} ${ally.shortName || ally.name}**: mutual defense in wars, treasury can be gifted between you.` : '_No current alliance._'}`
     + (onCooldown ? `\n-# ⚔️ On attack cooldown until <t:${Math.floor(tribes.outboundCooldownEndsAt(tribe) / 1000)}:R> (you can still be attacked / defend).` : '')
     + `\n-# Row 1: everyone. Rows 2-4: ${title} or staff only.`
     + (tribe.entranceGate ? `\n-# ⚔️ This tribe gates new applicants: "${tribe.entranceGate.prompt}" (also asked of nominated/invited members before they join).` : '');
@@ -587,19 +588,19 @@ function tribeThronePanel(tribe) {
 function tribePathsReference(tribe) {
   const loreData = tribe.lore;
   if (!loreData || !tribes.isPathMode(tribe)) return null;
-  const lines = [`# 📖 ${loreData.title} — Paths & Attributes`];
-  if (tribe.presentingAttribute) lines.push(`-# ${tribe.shortName || tribe.name}'s presenting attribute (how it relates to other tribes — alliances, war rivalry): **${tribe.presentingAttribute}**`);
+  const lines = [`# 📖 ${loreData.title}: Paths & Attributes`];
+  if (tribe.presentingAttribute) lines.push(`-# ${tribe.shortName || tribe.name}'s presenting attribute (how it relates to other tribes: alliances, war rivalry): **${tribe.presentingAttribute}**`);
   lines.push(
     '',
     '**What an attribute does:** picking a path and ranking up in it grows your OWN personal point bonus on matching activity. ' +
     'Everyone currently on a path also compiles into the TRIBE\'s power in that category — a stronger, more-ranked-up combat path means real bonuses in War; social and collective the same for whichever Arena modes, Sealed Arena, Trial, and Tribe Games fit that category.',
-    `-# Haven't picked? You default to **Collective** until you choose otherwise — use ${'`/tribe panel`'} → Choose Your Path to switch.`,
+    `-# Haven't picked? You default to **Collective** until you choose otherwise, use ${'`/tribe panel`'} → Choose Your Path to switch.`,
     '',
   );
   tribes.PATH_SLOTS.forEach((pathKey, i) => {
     const ranks = tribe.ranks.filter(r => r.pathKey === pathKey).map(r => r.name).join(' → ');
     const category = tribes.PATH_CATEGORY[pathKey];
-    lines.push(`**${loreData.pathNames[i]}** — *${loreData.attributeNames[i]}* (${category})\n${ranks}`);
+    lines.push(`**${loreData.pathNames[i]}**: *${loreData.attributeNames[i]}* (${category})\n${ranks}`);
   });
   return { content: lines.join('\n').slice(0, 3900), allowedMentions: { parse: [] } };
 }
@@ -4293,6 +4294,7 @@ client.once('ready', async () => {
     const permResult = await permguard.sweepPermissions(guild, { notify: false }).catch(e => { console.error('[permguard] boot sweep failed:', e.message); return null; });
     if (permResult) console.log(`[permguard] boot sweep: ${permResult.fixed} overwrite(s) corrected, ${permResult.newMemberOverwrites.length} new member-overwrite(s) flagged, ${permResult.unmanagedChannels} channel(s) unmanaged (created after snapshot)`);
     permguard.register(client);
+    raidguard.register(client);
     if (features.enabled('amongUs')) amongus.register(client);   // VC Among Us mode: voice-state hook + boot RESUME of persisted games
     // Monthly contests: arm the auto-close tick (crowns winners on the 1st of the month if a round's open).
     if (features.enabled('contest')) contest.register(client);
@@ -5574,8 +5576,31 @@ async function backfillDefaultPaths(guild) {
   return assigned;
 }
 
+// Emergency incident response (owner, 2026-08-12): a leaked/abused webhook was used to spam Melanin under
+// rotating spoofed usernames (create webhook, blast, delete, repeat, new fake name each time) — banning
+// those "users" does nothing since a webhook post has no real member behind it, and chasing each new spoofed
+// name individually doesn't scale. Melanin has ZERO legitimate webhooks configured (verified live), so this
+// blocks EVERY webhook-authored message there outright. Scoped to Melanin's guild ID specifically — FUBU has
+// a real "History Migration" webhook in use, so this must NOT apply to that guild. If a real webhook
+// integration is ever added to Melanin, switch this to allowlist by webhookId instead of a blanket block.
+const MELANIN_GUILD_ID = '1533896214465216532';
 client.on('messageCreate', async (msg) => {
   try {
+    // Checked BEFORE the bot-author early-return below — a webhook post has msg.author.bot === true, so it
+    // would otherwise be silently skipped by that return.
+    if (msg.guild && msg.guild.id === MELANIN_GUILD_ID && msg.webhookId) {
+      await msg.delete().catch(() => {});
+      return;
+    }
+    // raidguard: message-flood auto-quarantine (owner, 2026-08-12 — "hearty raid prevention" after the
+    // Melanin incident). Applies server-wide, both bots, real members AND webhooks alike — the same author
+    // posting faster than a human can type gets shut down on sight instead of waiting for a mod to notice.
+    // Checked before the bot early-return so a webhook flood is covered too; excludes THIS bot's own id so
+    // its own rapid-fire posts (Arena rounds, etc.) never self-trigger.
+    if (msg.guild && msg.author.id !== client.user.id && raidguard.checkFlood(msg.author.id)) {
+      await msg.delete().catch(() => {});
+      await raidguard.quarantine(msg.guild, msg);
+    }
     // Auto-delete the "X pinned a message" system notification so pins don't clutter channels (owner 2026-08-05).
     // Checked BEFORE the bot-author early-return below, since a bot-pinned notice is authored by the bot.
     if (msg.guild && msg.type === MessageType.ChannelPinnedMessage) { await msg.delete().catch(() => {}); return; }
@@ -8162,7 +8187,8 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: `<@${user.id}> is already verified.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await member.roles.add(config.verifiedRoleId, `Verified via /verify by ${interaction.user.tag}`).catch(() => {});
     if (config.unverifiedRoleId) await member.roles.remove(config.unverifiedRoleId, 'Verified via /verify').catch(() => {});
-    return interaction.reply({ content: `✅ Verified <@${user.id}> (\`${user.tag}\`).`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    const freshNote = freshwatch.noteFor(member);
+    return interaction.reply({ content: `✅ Verified <@${user.id}> (\`${user.tag}\`).${freshNote ? `\n${freshNote}` : ''}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   if (name === 'features') {
     const ftier = opspanel.tierOf(interaction);
