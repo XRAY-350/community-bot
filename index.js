@@ -5159,7 +5159,7 @@ async function syncTribeRankRoles(guild, tribeKey) {
 // language's channels (per-language roles now — French Mini-Mod acts only in French chat/VC, etc.), and
 // only when the 'langMiniMod' feature is on. Dormant if no languages are configured.
 function miniModCanActOn(interaction, channelId) {
-  return features.enabled('langMiniMod') && langmods.canActOn(interaction.member, channelId);
+  return features.enabled('langMiniMod') && langmods.canActOn(interaction.member, channelId, interaction.guild);
 }
 // Member-facing anon-pipe commands are confined to the bot-commands channel (keeps them out of chat).
 const BOT_COMMANDS_CH = process.env.FUBU_BOT_COMMANDS_CHANNEL_ID || '1528704767466016870';
@@ -5606,6 +5606,10 @@ client.on('messageCreate', async (msg) => {
     // Excluding the bot's own id fixes that without weakening the check against real external webhooks.
     if (msg.guild && msg.webhookId && msg.webhookId !== client.user.id && !raidguard.isAuthorized(msg.guild.id, msg.webhookId)) {
       await msg.delete().catch(() => {});
+      // Alert directly from here (owner-reported, 2026-08-13) — a webhook created, used once, and deleted
+      // right after (common for "fire and forget" integrations) never shows up in onWebhooksUpdate's diff
+      // by the time it re-checks, so that path alone can silently block a message with no alert ever firing.
+      raidguard.alertBlockedWebhookMessage(msg.guild, msg).catch(() => {});
       return;
     }
     // raidguard: message-flood auto-quarantine (owner, 2026-08-12 — "hearty raid prevention" after the
@@ -6132,6 +6136,20 @@ client.on('interactionCreate', async (interaction) => {
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('year').setLabel('Birth year (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
     ];
     return interaction.showModal(new ModalBuilder().setCustomId('roleselect_birthday_modal').setTitle('Set Your Birthday').addComponents(...rows));
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId === 'roleselect_askrole_modal') {
+    const what = interaction.fields.getTextInputValue('what').trim().slice(0, 200);
+    const rc = rolereq.loadConfig();
+    if (!rc.channelId) return interaction.reply({ content: 'Role requests aren\'t set up right now — ask a mod directly.', flags: MessageFlags.Ephemeral });
+    const channel = await interaction.guild.channels.fetch(rc.channelId).catch(() => null);
+    if (!channel) return interaction.reply({ content: 'Role requests aren\'t set up right now — ask a mod directly.', flags: MessageFlags.Ephemeral });
+    // Free-text, not tied to an existing role — no auto-approve buttons (rolereq's approve/deny flow needs
+    // a resolved role object), staff read it and create/assign manually via /roleselect-role + /request-role.
+    await channel.send({
+      content: `🙋 **Role request** from <@${interaction.user.id}>: ${what}`,
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+    return interaction.reply({ content: `✅ Sent your request for **${what}** to staff.`, flags: MessageFlags.Ephemeral });
   }
   if (interaction.isModalSubmit?.() && interaction.customId === 'roleselect_birthday_modal') {
     if (birthday.get(interaction.user.id)) return interaction.reply({ content: 'Your birthday is already set — that\'s a one-time self-set. Ask a mod to change it.', flags: MessageFlags.Ephemeral });
@@ -7690,6 +7708,13 @@ client.on('interactionCreate', async (interaction) => {
         try { if (has) await interaction.member.roles.remove(roleId, 'Role picker toggle'); else await interaction.member.roles.add(roleId, 'Role picker toggle'); }
         catch (e) { return interaction.reply({ content: `Couldn’t update that: ${e.message}`, flags: MessageFlags.Ephemeral }); }
         return interaction.reply({ content: `${has ? '➖ Removed' : '➕ Added'} <@&${roleId}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      }
+      // Replaces the old "Others (ask)" toggle role — opens a modal so the member says exactly what role
+      // they're after, instead of just flipping on a generic "ask me" flag (owner, 2026-08-13).
+      if (id === 'roleselect_askrole') {
+        const modal = new ModalBuilder().setCustomId('roleselect_askrole_modal').setTitle('Ask for a role').addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('what').setLabel('What role are you looking for?').setStyle(TextInputStyle.Short).setMaxLength(200).setRequired(true)));
+        return safeShowModal(interaction, modal);
       }
       // MDNI toggle — gated to holding an adult age bracket, and locked once Verified (backed by
       // enforceRegistrationLock either way; this just avoids the confusing apply-then-revert experience).

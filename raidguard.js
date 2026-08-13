@@ -66,6 +66,31 @@ function snowflakeAgeDays(id) {
   } catch { return null; }
 }
 
+// Fires the SAME alert as onWebhooksUpdate, but directly from the point a message actually gets
+// blocked — using the webhook id straight off the message, not a live re-fetch of the channel's webhook
+// list. Owner-reported (2026-08-13): a webhook that's created, used once, and deleted immediately (a
+// common "fire and forget" integration pattern, not just malicious use) never showed up in
+// onWebhooksUpdate's diff by the time it re-fetched — the message still got blocked correctly, but no
+// alert ever fired, so there was nothing to click Authorize on. This is now the primary alert path;
+// onWebhooksUpdate stays as a backstop for webhooks that stick around. Deduped per webhook id for 10
+// minutes so a flood doesn't spam mod-announce once per message.
+const _blockedAlertedAt = new Map(); // webhookId -> timestamp
+const BLOCKED_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+async function alertBlockedWebhookMessage(guild, msg) {
+  try {
+    const webhookId = msg.webhookId;
+    const last = _blockedAlertedAt.get(webhookId) || 0;
+    if (Date.now() - last < BLOCKED_ALERT_COOLDOWN_MS) return;
+    _blockedAlertedAt.set(webhookId, Date.now());
+    const ageDays = snowflakeAgeDays(webhookId);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`raidguard_authwh:${webhookId}`).setEmoji('✅').setLabel('Authorize (legit)').setStyle(ButtonStyle.Success));
+    await alertMods(guild, `🪝 **Blocked a webhook message**: \`${msg.author.username}\` in <#${msg.channelId}> (webhook \`${webhookId}\`, not on the allowlist).`
+      + (ageDays !== null && ageDays > 0 ? ` Underlying app account is **${ageDays}d old**${ageDays < 30 ? ' ⚠️ (young — worth a look)' : ''}.` : '')
+      + ' If this is a real integration (e.g. a bot bridge that creates/deletes its own webhook per message), click Authorize below.', [row]);
+  } catch (e) { console.error('[raidguard] alertBlockedWebhookMessage:', e.message); }
+}
+
 // ---- 1) integration/webhook watchdog --------------------------------------------------------------
 // webhooksUpdate fires the moment ANY webhook in a channel is created/updated/deleted — a live gateway
 // event, not a poll, so this reacts in seconds. Diffs against the last-known webhook set for that channel.
@@ -197,5 +222,5 @@ async function handleAuthorizeButton(interaction) {
 
 module.exports = {
   register, checkFlood, quarantine, alertMods, snowflakeAgeDays, DANGEROUS_PERMS,
-  isAuthorized, authorize, revoke, isAuthorizeButton, handleAuthorizeButton,
+  isAuthorized, authorize, revoke, isAuthorizeButton, handleAuthorizeButton, alertBlockedWebhookMessage,
 };
