@@ -34,7 +34,7 @@ const SECTION_ORDER = ['age', 'colors', 'region', 'language', 'notifications', '
 const EXCLUSIVE_SECTIONS = new Set(['age', 'colors']);
 const SECTION_TITLE = {
   age: '🎂 Age', colors: '🎨 Color', region: '🌍 Region', language: '🗣️ Language', notifications: '🔔 Notifications',
-  pronouns: '🏳️‍🌈 Pronouns', misc: '✨ Misc',
+  pronouns: '🏳️‍🌈 Identity', misc: '✨ Misc',
 };
 // Fixed block index (0-based) for each section's HEADING message — stable regardless of section
 // content, so "which message(s) to delete+resend" never needs to be recomputed from scratch.
@@ -94,6 +94,14 @@ function birthdayButtonRow() {
     new ButtonBuilder().setCustomId('roleselect_birthday_open').setLabel('Set Birthday').setEmoji('🎉').setStyle(ButtonStyle.Secondary));
 }
 
+// Replaces the old static "Others (ask)" toggle role (owner, 2026-08-13) — instead of a generic role that
+// just signaled "ask me", this opens a modal so a member can directly say what role they're actually
+// looking for. Posts to the same staff channel /request-role already uses; index.js's handler does the rest.
+function askRoleButtonRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('roleselect_askrole').setLabel('Others (ask)').setEmoji('🙋').setStyle(ButtonStyle.Secondary));
+}
+
 // Separator between blocks — config.rolesDividerImage is per-community (env var), so each guild gets its
 // OWN banner instead of one shared asset (the bug: a single hardcoded FUBU-branded image got posted into
 // every other guild's #roles too, found live on Melanin). Falls back to a plain text divider when unset
@@ -118,6 +126,12 @@ function sectionBlock(key) {
     return { content: copy.roleselect.colorHeading, components: [colorSelectRow()] };
   }
   const heading = `## ${SECTION_TITLE[key]}`;
+  if (key === 'pronouns') {
+    // Identity section (pronouns + LGBTQ+/Ally + whatever gets added later) always carries the
+    // "Ask for a role" button, even with zero toggle roles configured yet.
+    const rows = items.length ? [...chunk(items, 5).map(c => toggleRow('roleselect_toggle', c)), askRoleButtonRow()] : [askRoleButtonRow()];
+    return { content: heading, components: rows };
+  }
   if (!items.length) return { content: copy.roleselect.sectionEmpty(heading) };
   return { content: heading, components: chunk(items, 5).map(c => toggleRow('roleselect_toggle', c)) };
 }
