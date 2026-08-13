@@ -166,15 +166,19 @@ async function pollOwnerOverwrites(guild) {
   if (!loadManifest()) return 0;   // no baseline yet — nothing to auto-adopt into
   try {
     const st = loadAuditState();
-    const page = await guild.fetchAuditLogs({ limit: 50 }).catch(() => null);
+    // limit:100 (Discord's per-call max, up from 50) — this server generates a lot of audit noise
+    // (role-picker toggles, verifications), and a busy 2-minute window could exceed 50 events, silently
+    // pushing a real owner permission change out of the fetched page before it's ever seen.
+    const page = await guild.fetchAuditLogs({ limit: 100 }).catch(() => null);
     if (!page) return 0;
     const entries = [...page.entries.values()].sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
-    if (!st.lastId) {   // first run: seed the watermark to "now", don't rescan server history
-      const newest = entries[entries.length - 1];
-      saveAuditState({ lastId: newest ? newest.id : '0' });
-      return 0;
-    }
-    const fresh = entries.filter(e => BigInt(e.id) > BigInt(st.lastId) && OVERWRITE_EVENTS.has(e.action));
+    // owner-reported (2026-08-13, "inconsistent"): the OLD first-run behavior seeded the watermark to
+    // "now" and returned without processing anything — meaning any owner permission change made shortly
+    // before a restart was silently never blessed, left vulnerable to the next sweep reverting it. Bots on
+    // this fleet get restarted often (deploys), so this fired more than the rare "cold boot" case it was
+    // written for. Now the first run processes this initial page normally instead of skipping it.
+    const fresh = st.lastId ? entries.filter(e => BigInt(e.id) > BigInt(st.lastId) && OVERWRITE_EVENTS.has(e.action))
+      : entries.filter(e => OVERWRITE_EVENTS.has(e.action));
     if (fresh.length) {
       const blessed = new Set();
       for (const e of fresh) {
