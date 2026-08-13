@@ -668,7 +668,7 @@ function tribeHubEmbed() {
     + `## War & Alliances\n`
     + `A leader can **Declare War**: your members vote first (24h majority); if it passes the target's leader Accepts or Declines (a coin flip then decides). Each war is **named** and plays out as a live, narrated battle, resolved by a points-weighted strength sim (not rank-based, no guaranteed win), 72h cooldown. The loser is raided for ~25% treasury and can lose a few members for 36h (never the leader), though **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) need a member vote too; allies defend each other and can gift treasury.\n\n`
     + `## Challenges — the Arena\n`
-    + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in the arena channel. **14 game types** rotate, from Reaction Race, Trivia and Word Scramble to Number Pattern, Fast Fingers and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
+    + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in the arena channel. **15 game types** rotate, from Reaction Race, Trivia and Word Scramble to Number Pattern, Fast Fingers and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
     + `## Every tribe's Throne\n`
     + `Each throne has a pinned panel. Members get Roster / Leaderboard / Shop / Tithe / Leave, plus 🏅 Trophies, 🏛️ Hall of Fame, 🎯 Quests, 🏺 Relics and ⭐ Prestige. Leaders (or staff) also get Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Banner, Muster, War and Alliances.\n\n`
     + `-# Use the buttons below instead of typing commands out.`;
@@ -1639,7 +1639,7 @@ async function sweepExpiredAllianceVotes(guild) {
 // One active challenge at a time. Admin launches one into a public channel; the bot runs + scores it and the
 // winning tribe banks Glory + Treasury. In-memory timers (_arenaTimers) drive round advancement / the end;
 // on boot, an active challenge is resolved immediately (a restart ends it early) — see reconcileArena.
-const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, truefalse: 6, reaction: 4, pattern: 6,
+const ARENA_DEFAULTS = { race: 5, trivia: 6, scramble: 5, blitz: 30, math: 5, typing: 5, truefalse: 6, reaction: 4, reactionhard: 5, pattern: 6,
   geoquiz: 6, sciquiz: 6, histquiz: 6, animalquiz: 6, reverse: 5 };   // default minutes per type (riddle/emoji removed)
 const ARENA_LOBBY_MS = 5 * 60000;   // 5-min "get ready" countdown before an arena actually begins (owner)
 const _arenaTimers = { start: null, end: null, round: null, sd: null };
@@ -1666,14 +1666,14 @@ function scoreArena(tribeKey, userId, points = 1) {
   }
   return total;
 }
-const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'truefalse', 'reaction', 'pattern',
+const ARENA_ALL_TYPES = ['race', 'trivia', 'scramble', 'blitz', 'math', 'typing', 'truefalse', 'reaction', 'reactionhard', 'pattern',
   'geoquiz', 'sciquiz', 'histquiz', 'animalquiz', 'reverse'];   // riddle + emoji removed (no infinite source, owner)
 // Which of a tribe's 3 path categories (see tribes.js's PATH_CATEGORY) each Arena mode rewards — reflex/speed
 // types lean combat, wordplay/cleverness leans social, knowledge/quiz types lean collective. Feeds the
 // winning tribe's attribute-power reward bonus (arenaAttrMult below) — a tribe invested in a matching path
 // earns more from the modes that fit it, same idea as an individual's personal Tides bonus, just tribe-wide.
 const ARENA_TYPE_CATEGORY = {
-  race: 'combat', reaction: 'combat', blitz: 'combat', typing: 'combat',
+  race: 'combat', reaction: 'combat', reactionhard: 'combat', blitz: 'combat', typing: 'combat',
   scramble: 'social', pattern: 'social', reverse: 'social', truefalse: 'social',
   trivia: 'collective', math: 'collective', geoquiz: 'collective', sciquiz: 'collective', histquiz: 'collective', animalquiz: 'collective',
 };
@@ -1791,10 +1791,12 @@ async function beginArena(guild) {
     else { const cat = arena.TRIVIA_CATEGORY[type]; const f = await arena.fetchTrivia(arena.TRIVIA_QUESTIONS + 6, cat); const qs = (f && f.length) ? f : arena.localTrivia(arena.TRIVIA_QUESTIONS, []); questions = arena.freshenQuestions(type, qs, arena.TRIVIA_QUESTIONS); source = f ? 'online' : 'local'; }   // trivia + themed quizzes
     arena.set({ ...base, questions, qNum: 0, source });
     await askNextTrivia(guild);
-  } else if (type === 'reaction') {
+  } else if (type === 'reaction' || type === 'reactionhard') {
     // Reaction Rush: each round targets one emoji; the messageReactionAdd hook scores the first tribe member
     // to react and posts the next round. postReactionRound handles both the first round and each advance.
-    arena.set({ ...base, used: [], round: 0 });
+    // Hard mode (reactionhard): the bot does NOT pre-add the target, and surrounds it with decoy reactions,
+    // so players have to spot the right one among several instead of one-tapping the only reaction present.
+    arena.set({ ...base, used: [], round: 0, hard: type === 'reactionhard' });
     await postReactionRound(guild);
   }
   // Flip the per-tribe heads-up pings to "LIVE now — play!".
@@ -1813,7 +1815,7 @@ async function beginArena(guild) {
   return arena.get();
 }
 const ARENA_LABEL = { race: 'Reaction Race', trivia: 'Trivia Sprint', scramble: 'Word Scramble', blitz: 'Activity Blitz',
-  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush', pattern: 'Number Pattern',
+  math: 'Math Sprint', typing: 'Fast Fingers', riddle: 'Riddle Rush', emoji: 'Emoji Decode', truefalse: 'True or False', reaction: 'Reaction Rush', reactionhard: 'Reaction Rush (Hard)', pattern: 'Number Pattern',
   geoquiz: 'Geography Quiz', sciquiz: 'Science Quiz', histquiz: 'History Quiz', animalquiz: 'Animal Quiz', reverse: 'Reverse Word' };
 function arenaScoreboard(a) {
   const rows = Object.entries(a.scores || {}).sort((x, y) => y[1] - x[1]);
@@ -1834,14 +1836,26 @@ function typedContent(type, a) {
 // Reaction Rush: post the next round — a message asking players to click the target emoji, with the bot
 // pre-adding it so it's one tap. Storing the round # lets a late reaction on an old round be ignored.
 async function postReactionRound(guild) {
-  const a = arena.get(); if (!a || a.type !== 'reaction') return;
+  const a = arena.get(); if (!a || (a.type !== 'reaction' && a.type !== 'reactionhard')) return;
   const ch = await arenaChannel(guild); if (!ch) return;
   const target = arena.nextReaction(a.used || []);
   const round = (a.round || 0) + 1;
-  const msg = await ch.send({ content: `# ⚡ Reaction Rush — round ${round}\nFirst tribe member to react with ${target} scores for their tribe. Go!\n\n${arenaScoreboard(a)}` }).catch(() => null);
+  const hard = !!a.hard;
+  const label = hard ? '⚡ Reaction Rush (Hard) — round' : '⚡ Reaction Rush — round';
+  const prompt = hard
+    ? `# ${label} ${round}\nFind and react with ${target} among the reactions below to score for your tribe. Go!\n\n${arenaScoreboard(a)}`
+    : `# ${label} ${round}\nFirst tribe member to react with ${target} scores for their tribe. Go!\n\n${arenaScoreboard(a)}`;
+  const msg = await ch.send({ content: prompt }).catch(() => null);
   if (!msg) return;
   arena.update({ messageId: msg.id, target, round, used: [...(a.used || []), target].slice(-12), reactionOpen: true });
-  await msg.react(target).catch(() => {});
+  if (hard) {
+    // Decoys go on first (shuffled with the target's position), so the target isn't reliably "the last one added".
+    const decoys = arena.pickDecoys(target, 4 + Math.floor(Math.random() * 3));   // 4-6 decoys
+    const order = arena.shuffle([target, ...decoys]);
+    for (const e of order) await msg.react(e).catch(() => {});
+  } else {
+    await msg.react(target).catch(() => {});
+  }
 }
 // Tally an Activity Blitz from message history over [startMs, endMs] (owner: count at the end, not live).
 // A message anywhere by a tribe member scores for their tribe, with the same 8s per-member cooldown. Because
@@ -4486,13 +4500,13 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
     // Arena REACTION RUSH — first tribe member to react with the target emoji scores + advances the round.
     const ax = arena.get();
-    if (ax && ax.type === 'reaction' && ax.reactionOpen && reaction.message.id === ax.messageId) {
+    if (ax && (ax.type === 'reaction' || ax.type === 'reactionhard') && ax.reactionOpen && reaction.message.id === ax.messageId) {
       if (reaction.emoji?.name === ax.target) {
         const rguild = reaction.message.guild;
         const member = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
         const mine = member && tribes.memberTribe(member);
         const cur = arena.get();   // re-read to reduce a double-score race between near-simultaneous reactions
-        if (mine && cur && cur.type === 'reaction' && cur.reactionOpen && cur.messageId === ax.messageId) {
+        if (mine && cur && (cur.type === 'reaction' || cur.type === 'reactionhard') && cur.reactionOpen && cur.messageId === ax.messageId) {
           arena.update({ reactionOpen: false });   // first-to-react closes this round
           scoreArena(mine.key, member.id);
           await postReactionRound(rguild).catch(() => {});

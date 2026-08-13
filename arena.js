@@ -419,8 +419,15 @@ function genPattern(n) {
 
 // Reaction Rush — each round targets one easy-to-click emoji; first tribe member to react scores.
 const REACTION_EMOJIS = ['🔥', '⚡', '🎯', '🏆', '💎', '🌟', '🚀', '🎉', '👑', '🐉', '🛡️', '⚔️', '🌈', '💯', '🍀',
-  '🎈', '🎁', '🎵', '🍎', '🌙', '☀️', '❤️', '🐾', '🌸', '🍕', '🎸', '🦋', '🍦', '🎲', '🪁', '🌊', '🦄', '🍉', '🎺', '🧊'];
+  '🎈', '🎁', '🎵', '🍎', '🌙', '☀️', '❤️', '🐾', '🌸', '🍕', '🎸', '🦋', '🍦', '🎲', '🪁', '🌊', '🦄', '🍉', '🎺', '🧊',
+  '🍩', '🍇', '🍓', '🥑', '🌵', '🌻', '🍄', '🦁', '🐢', '🦖', '🐙', '🦂', '🐬', '⭐', '🌀', '💥', '🎃', '🕹️', '🎮', '🧃'];
 function nextReaction(used) { return pickFresh('reaction', REACTION_EMOJIS, used, e => e).chosen; }
+// Hard mode: pick `count` decoy emojis distinct from the target (and each other) to react alongside it, so
+// players have to spot the right one among several instead of tapping the one reaction already on the message.
+function pickDecoys(target, count) {
+  const pool = shuffle(REACTION_EMOJIS.filter(e => e !== target));
+  return pool.slice(0, count);
+}
 
 // Pick a scramble word not used this game NOR in recent games (owner: no in-game repeats + rare cross-game ones).
 function nextWord(used) { return pickFresh('word', loadBank().words, used, w => w).chosen; }
@@ -453,6 +460,6 @@ module.exports = {
   get, isActive, set, clear, update, addScore, addMemberScore, topMemberScorer, pushNewAch, getNewAch, markOnce, resetBucket, winner,
   recordEnd, startBlocked, autoStartDue, getNextAutoAt, getLastType, getHistory, excludeRecent,
   scrambleWord, nextWord, fetchTrivia, localTrivia, loadBank,
-  nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, REACTION_EMOJIS, genPattern,
+  nextTyped, nextMath, nextTyping, nextRiddle, nextEmoji, fetchBoolean, localBoolean, nextReaction, pickDecoys, REACTION_EMOJIS, genPattern, shuffle,
   freshenQuestions, loadCachedWords, fetchWordBank,
 };
