@@ -6,6 +6,91 @@
 const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
 
+// ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
+// /corner already refuses to corner someone of a HIGHER tier than the actor. This closes the mirror
+// gap: /uncorner (and shortening/lowering an active corner) previously had NO such check — any mod or
+// trial mod could undo a decision an admin or owner deliberately made. Canonical RANK lives here now;
+// index.js and opspanel.js reference corner.RANK instead of each keeping their own copy.
+const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+// Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
+// tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
+// 5-minute window of each other. Trial mods (and anyone with no recognized tier) have NO override path —
+// no number of them unlocks it; provisional, revisit once there's a sense of how often this comes up.
+const OVERRIDE_THRESHOLD = { botowner: 1, owner: 1, admin: 3, mod: 3 };
+const OVERRIDE_WINDOW_MS = 5 * 60 * 1000;
+// Setting a defined release time sooner than this counts as a "lowering" (gated), not a neutral
+// "defining" of an indefinite corner (ungated) — closes the obvious bypass (define it 10 seconds out to
+// dodge the release gate entirely).
+const LOWER_FLOOR_MS = 15 * 60 * 1000;
+
+// Is a proposed new releaseAt a LOWERING of this corner's current severity? Indefinite (null) is treated
+// as maximally severe, so any defined time counts as lowering UNLESS it clears the 15-minute floor; from
+// an existing defined time, only a SOONER new time is a lowering (later, or back to indefinite, is not).
+function isLowering(rec, newReleaseAt) {
+  const cur = rec.releaseAt;
+  if (cur == null) return newReleaseAt != null && (newReleaseAt - Date.now()) < LOWER_FLOOR_MS;
+  if (newReleaseAt == null) return false;
+  return newReleaseAt < cur;
+}
+
+// Can this actor act SOLO on a lowering/release, no override needed? Either they're the ORIGINAL
+// corner-er (always gets a solo override on their own case, any tier), or their current tier outranks —
+// or matches — whatever tier last touched this corner's severity (rec.appliedByRank).
+function canActSolo(rec, actorId, actorTier) {
+  if (rec.by === actorId) return true;
+  return (RANK[actorTier] || 0) >= (rec.appliedByRank || 0);
+}
+
+// Record a lowering/release attempt and report whether enough same-tier staff have now tried within the
+// window to force it through. Mutates rec.overrideVotes in place — caller persists via setCornered
+// regardless of outcome, since a failed attempt still counts toward the threshold.
+function registerOverrideVote(rec, actorId, actorTier) {
+  const threshold = OVERRIDE_THRESHOLD[actorTier];
+  if (!threshold) return { ok: false, have: 0, need: null };   // no override path at this tier
+  const now = Date.now();
+  rec.overrideVotes = (rec.overrideVotes || []).filter(v => now - v.at < OVERRIDE_WINDOW_MS);
+  if (!rec.overrideVotes.some(v => v.id === actorId)) rec.overrideVotes.push({ id: actorId, tier: actorTier, at: now });
+  const have = rec.overrideVotes.filter(v => v.tier === actorTier).length;
+  return { ok: have >= threshold, have, need: threshold };
+}
+
+// The strongest tier that has ever touched this corner's severity is the bar for LOWERING it — never
+// downgraded by a later, lower-tier person merely extending it further.
+function bumpAppliedRank(rec, actorTier) {
+  rec.appliedByRank = Math.max(rec.appliedByRank || 0, RANK[actorTier] || 0);
+}
+
+// Single entry point for both "reschedule this corner's release time" and "release them right now"
+// (pass newReleaseAt: 'RELEASE' for the latter — full release is unconditionally the strongest possible
+// lowering). Handles the gate + override bookkeeping AND persists state, so a caller whose gate passes
+// just proceeds with the actual effect (arm a timer, or call uncorner() for a real release); a caller
+// whose gate fails should report the vote tally and stop. A solo-authorized OR successfully-overridden
+// lowering resets the record's protective tier to the acting tier (once overridden, the corner is now
+// only as protected as that group's tier — not permanently locked to the original higher one).
+function attemptSeverityChange(state, userId, actorId, actorTier, newReleaseAt) {
+  const rec = state.getCornered(userId);
+  if (!rec) return { ok: false, notFound: true };
+  const lowering = newReleaseAt === 'RELEASE' ? true : isLowering(rec, newReleaseAt);
+  const applyNewTime = () => { if (newReleaseAt !== 'RELEASE') rec.releaseAt = newReleaseAt; };
+  if (!lowering) {
+    bumpAppliedRank(rec, actorTier);
+    applyNewTime();
+    state.setCornered(userId, rec);
+    return { ok: true, needsOverride: false };
+  }
+  if (canActSolo(rec, actorId, actorTier)) {
+    rec.appliedByRank = RANK[actorTier] || 0;
+    rec.overrideVotes = [];
+    applyNewTime();
+    state.setCornered(userId, rec);
+    return { ok: true, needsOverride: false };
+  }
+  const vote = registerOverrideVote(rec, actorId, actorTier);
+  if (vote.ok) { rec.appliedByRank = RANK[actorTier] || 0; rec.overrideVotes = []; applyNewTime(); }
+  state.setCornered(userId, rec);   // persisted either way — a failed attempt still counts toward the threshold
+  return { ok: vote.ok, needsOverride: true, have: vote.have, need: vote.need };
+}
+
 // ---- precise per-corner release timers -----------------------------------------------------------
 // A timed corner arms a setTimeout that releases the member at EXACTLY their time (down to the second),
 // instead of relying on the periodic poller — which now only survives as a restart backstop. index.js
@@ -188,7 +273,7 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
 
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
-async function corner(guild, member, durationMs, state, byId, ruleIndex) {
+async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTier = null) {
   const now = Date.now();
   // Nobody can corner themselves — every entry point (slash /corner, "Send to corner", the dashboard
   // picker, the re-corner button) funnels through here, so one central guard closes them all. The tier
@@ -215,9 +300,15 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   try { member = await member.fetch(true); } catch (e) { console.error('[corner] member refresh before strip:', e.message); }
   const existing = state.getCornered(member.id);
   if (existing) {
-    // Already cornered — just update the release time (don't re-strip).
-    state.setCornered(member.id, { ...existing, releaseAt: durationMs ? now + durationMs : null, by: byId });
-    armTimer(guild, member.id, durationMs ? now + durationMs : null);   // re-arm on a re-corner / duration change
+    // Already cornered — just update the release time (don't re-strip). Routed through the same
+    // severity gate as /uncorner's reschedule (owner, 2026-08-13) — re-running /corner with a shorter
+    // duration is just as much a "lowering" as scheduling one via /uncorner, and this path used to
+    // bypass the gate entirely AND silently reassign `by` to whoever re-ran it (letting anyone "adopt"
+    // solo-override rights over someone else's corner just by re-cornering them). `by` is preserved now.
+    const newReleaseAt = durationMs ? now + durationMs : null;
+    const res = attemptSeverityChange(state, member.id, byId, actorTier, newReleaseAt);
+    if (!res.ok) return { ok: false, error: 'gated', needsOverride: res.needsOverride, have: res.have, need: res.need };
+    armTimer(guild, member.id, newReleaseAt);   // re-arm on a re-corner / duration change
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
   }
@@ -247,7 +338,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex) {
   };
   const strip = rolesToStrip(guild, member);
   // Persist BEFORE mutating roles so a mid-way failure is still recoverable via /uncorner.
-  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now });
+  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0 });
   try {
     // ONE atomic role.set() instead of a separate remove() then add() (owner-reported, 2026-08-12: "cornered
     // people are still getting tribe roles back"). Two separate calls fired two separate guildMemberUpdate
@@ -348,4 +439,5 @@ async function releaseExpired(guild, state) {
 }
 
 module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
-  setReleaseHandler, armTimer, clearTimer, rearmAll };
+  setReleaseHandler, armTimer, clearTimer, rearmAll,
+  RANK, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };

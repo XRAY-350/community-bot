@@ -791,7 +791,12 @@ async function handlePanel(interaction) {
     const outranked = (RANK[targetTier] || 0) > (RANK[tier] || 0);
     if (act === 'corner') {
       if (outranked) return interaction.editReply(`🔒 You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
-      const r = await D.corner.corner(interaction.guild, member, null, D.state, interaction.user.id);
+      const r = await D.corner.corner(interaction.guild, member, null, D.state, interaction.user.id, null, tier);
+      if (!r.ok && r.error === 'gated') {
+        return interaction.editReply(r.need
+          ? `🔒 That shortens their time below what a higher tier set. Need **${r.need}** ${tier}${r.need === 1 ? '' : 's'} to try within 5 minutes (**${r.have}/${r.need}** so far).`
+          : `🔒 That shortens their time below what a higher tier set, and your tier has no override path for this.`);
+      }
       if (r.ok && D.announceCorner) await D.announceCorner(interaction.guild, uid, null, interaction.user.id, null);
       return interaction.editReply(r.ok ? `⛓️ Cornered <@${uid}> indefinitely, stripped ${r.stripped} role(s). Release from the ⛓️ Corner page when ready.` : `Failed: ${r.error}`);
     }
@@ -801,6 +806,15 @@ async function handlePanel(interaction) {
       return interaction.editReply(`✅ Verified <@${uid}> (\`${member.user.tag}\`).`);
     }
     if (act === 'uncorner') {
+      // Tiering (owner, 2026-08-13): same release gate as /uncorner — a dashboard click shouldn't be an
+      // easier way around the tier/override rules than the slash command.
+      const gate = D.corner.attemptSeverityChange(D.state, uid, interaction.user.id, tier, 'RELEASE');
+      if (gate.notFound) return interaction.editReply(`<@${uid}> is not in the corner.`);
+      if (!gate.ok) {
+        return interaction.editReply(gate.need
+          ? `🔒 You can't release <@${uid}> solo — they were cornered/held at a higher tier. Need **${gate.need}** ${tier}${gate.need === 1 ? '' : 's'} to try within 5 minutes (**${gate.have}/${gate.need}** so far).`
+          : `🔒 You can't release <@${uid}> solo — they were cornered/held at a higher tier, and your tier has no override path for this.`);
+      }
       const r = await D.corner.uncorner(interaction.guild, uid, D.state);
       return interaction.editReply(r.ok ? `🔓 Released <@${uid}>, restored ${r.restored} role(s).` : `Failed: ${r.error}`);
     }
@@ -963,8 +977,15 @@ async function handlePanel(interaction) {
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
       if (dur && !ms) return interaction.editReply(copy.corner.badDuration);
-      const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id);
-      if (!r.ok) return interaction.editReply(`Failed: ${r.error}`);
+      const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id, null, tier);
+      if (!r.ok) {
+        if (r.error === 'gated') {
+          return interaction.editReply(r.need
+            ? `🔒 That shortens their time below what a higher tier set. Need **${r.need}** ${tier}${r.need === 1 ? '' : 's'} to try within 5 minutes (**${r.have}/${r.need}** so far).`
+            : `🔒 That shortens their time below what a higher tier set, and your tier has no override path for this.`);
+        }
+        return interaction.editReply(`Failed: ${r.error}`);
+      }
       if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'}, stripped ${r.stripped} role(s).`);
       return refreshPanel(interaction.client);

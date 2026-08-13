@@ -3255,8 +3255,8 @@ async function handleCorneredList(interaction) {
 // and (when the cornerReason feature is on) the reason-modal path. Optional reason is surfaced in the
 // corner channel + the audit log. durationMs null = indefinite (blank in the modal, matching /corner).
 // Returns { ok, stripped, error }.
-async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = null, ruleN = null) {
-  const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
+async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = null, ruleN = null, actorTier = null) {
+  const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier);
   if (!r.ok) return { ok: false, error: r.error };
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
@@ -3337,7 +3337,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
-    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN);
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, opspanel.tierOf(interaction));
     if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
     else skipped.push(`<@${member.id}> (${r.error})`);
   }
@@ -3363,7 +3363,7 @@ async function handleCornerButton(interaction) {
     const recornerTargetTier = opspanel.memberTier(member);
     const recornerTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[recornerTargetTier] || 0;
     if (recornerTargetRank > recornerActorRank) return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${recornerTargetTier}**).`);
-    const r = await corner.corner(guild, member, null, state, interaction.user.id);
+    const r = await corner.corner(guild, member, null, state, interaction.user.id, null, opspanel.tierOf(interaction));
     if (!r.ok) return interaction.editReply(`Failed to re-corner: ${r.error}`);
     try {
       const ch = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
@@ -6256,7 +6256,7 @@ client.on('interactionCreate', async (interaction) => {
       const ch = await guild.channels.fetch(channelId).catch(() => null);
       const target = ch && await ch.messages.fetch(messageId).catch(() => null);
       if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
-      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs, ruleN);
+      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs, ruleN, opspanel.tierOf(interaction));
       if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
       // Extra members to corner alongside the target: `also` (named IDs) + `sweep` (everyone non-staff active in
       // this channel in the last N minutes). Merged into ONE deduped set so nobody is cornered twice.
@@ -6332,7 +6332,7 @@ client.on('interactionCreate', async (interaction) => {
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
       if (cornerMs) {
-        const cr = await corner.corner(guild, member, cornerMs, state, interaction.user.id, ruleN);
+        const cr = await corner.corner(guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
         if (cr.ok) {
           const relSec = Math.floor((Date.now() + cornerMs) / 1000);
           cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
@@ -8202,7 +8202,7 @@ client.on('interactionCreate', async (interaction) => {
       const res = await strikes.addStrike(interaction.guild, member, state, { weight, ruleIndex: ruleN, reason: reasonText, timeoutMs, byId: interaction.user.id, byTag: interaction.user.tag });
       let cornerNote = '';
       if (cornerMs) {
-        const cr = await corner.corner(interaction.guild, member, cornerMs, state, interaction.user.id, ruleN);
+        const cr = await corner.corner(interaction.guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
         if (cr.ok) {
           const relSec = Math.floor((Date.now() + cornerMs) / 1000);
           cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
@@ -9334,8 +9334,16 @@ client.on('interactionCreate', async (interaction) => {
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
       await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
-      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN);
-      if (!r.ok) return interaction.editReply(`Failed to corner: ${r.error}`);
+      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
+      if (!r.ok) {
+        if (r.error === 'gated') {
+          const actorTier = opspanel.tierOf(interaction);
+          return interaction.editReply(r.need
+            ? `🔒 That shortens ${user}'s time below what a higher tier set. Need **${r.need}** ${actorTier}${r.need === 1 ? '' : 's'} to try within 5 minutes (**${r.have}/${r.need}** so far).`
+            : `🔒 That shortens ${user}'s time below what a higher tier set, and your tier has no override path for this.`);
+        }
+        return interaction.editReply(`Failed to corner: ${r.error}`);
+      }
       if (mCorner) bumpMemberCornerCount(interaction.user.id);   // count it against their daily cap
       await maybeAlertCornerRepeat(guild, member, ruleN, r.repeatCount);
       const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
@@ -9358,19 +9366,36 @@ client.on('interactionCreate', async (interaction) => {
         if (!durationMs) return interaction.reply({ content: copy.corner.badDuration, flags: MessageFlags.Ephemeral });
       }
       await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
+      const actorTier = opspanel.tierOf(interaction);
       if (durationMs) {
         // Schedule a future release (e.g. give an indefinitely-cornered member a release time). The
         // auto-release loop frees them + posts the "time served" embed when it expires.
-        const rec = state.getCornered(user.id);
-        if (!rec) return interaction.editReply(`${user} is not in the corner.`);
+        // Tiering (owner, 2026-08-13): shortening an existing time, or defining a release sooner than
+        // 15 minutes out from indefinite, counts as "lowering" and needs the same tier/override gate as
+        // a full release — otherwise scheduling a near-immediate release would bypass that gate entirely.
         const releaseAt = Date.now() + durationMs;
-        state.setCornered(user.id, { ...rec, releaseAt });
+        const res = corner.attemptSeverityChange(state, user.id, interaction.user.id, actorTier, releaseAt);
+        if (res.notFound) return interaction.editReply(`${user} is not in the corner.`);
+        if (!res.ok) {
+          return interaction.editReply(res.need
+            ? `🔒 That shortens their time below what a higher tier set. Need **${res.need}** ${actorTier}${res.need === 1 ? '' : 's'} to try within 5 minutes (**${res.have}/${res.need}** so far).`
+            : `🔒 That shortens their time below what a higher tier set, and your tier has no override path for this.`);
+        }
         corner.armTimer(guild, user.id, releaseAt);   // same class of bug as handleCornerButton's sentence-change
         // path: writing releaseAt alone doesn't arm/reschedule the setTimeout — an indefinite member given a
         // release time here would otherwise just never actually auto-release.
         await logCorner(guild, { emoji: '⏳', title: 'RELEASE SCHEDULED', color: CORNER_AMBER,
           desc: `<@${user.id}>'s release was scheduled.\n**Release:** ${relPhrase(releaseAt)}\n**By:** <@${interaction.user.id}>` });
         return interaction.editReply(`⏳ Scheduled ${user}'s release <t:${Math.floor(releaseAt / 1000)}:R> (at <t:${Math.floor(releaseAt / 1000)}:f>). The corner will release them automatically.`);
+      }
+      // Immediate release is unconditionally the strongest possible "lowering" — always gated (subject to
+      // the same solo-tier / original-corner-er / multi-person-override rules as scheduling a sooner time).
+      const relCheck = corner.attemptSeverityChange(state, user.id, interaction.user.id, actorTier, 'RELEASE');
+      if (relCheck.notFound) return interaction.editReply(`${user} is not in the corner.`);
+      if (!relCheck.ok) {
+        return interaction.editReply(relCheck.need
+          ? `🔒 You can't release ${user} solo — they were cornered/held at a higher tier. Need **${relCheck.need}** ${actorTier}${relCheck.need === 1 ? '' : 's'} to try within 5 minutes (**${relCheck.have}/${relCheck.need}** so far).`
+          : `🔒 You can't release ${user} solo — they were cornered/held at a higher tier, and your tier has no override path for this.`);
       }
       const r = await corner.uncorner(guild, user.id, state);
       if (!r.ok) return interaction.editReply(`Failed to release: ${r.error}`);
