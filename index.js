@@ -48,6 +48,7 @@ const lore = require('./lore');
 const quests = require('./quests');
 const sealed = require('./sealed');
 const tribegames = require('./tribegames');
+const tally = require('./tally');
 const birthday = require('./birthday');
 const awards = require('./awards');
 const proving = require('./proving');
@@ -1832,6 +1833,48 @@ function typedContent(type, a) {
   if (type === 'emoji') return `# 🧠 Emoji Decode — round ${r}\nWhat do these emojis spell? **Type** your answer:\n## ${a.display}\n\n${sb}`;
   if (type === 'reverse') return `# 🔁 Reverse Word — round ${r}\nThis word is backwards. **Type it the right way** to score:\n## \`${a.display}\`\n\n${sb}`;
   return `# 🔤 Word Scramble — round ${r}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(a.display).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${sb}`;
+}
+// Live Tally (owner: spent an hour hand-counting reactions after an event). One shared message, one
+// reaction per tribe (that tribe's own emoji, pre-added by the bot); an Event Organizer or mod reacting
+// with a tribe's emoji adds it a point LIVE — the message is edited to show the running count. To add
+// another point for the same tribe, click the emoji off then on again (Discord only lets one user hold
+// one reaction of a given emoji at a time; only the ON transition scores).
+const TALLY_FALLBACK_EMOJI = ['🔵', '🟢', '🟣', '🟠', '⚪', '⚫', '🟤', '🟡'];
+function tallyContent(a) {
+  const rows = (a.tribeKeys || []).map(k => `> ${a.emojiOf[k]} ${tribeName(k)} — **${a.counts[k] || 0}**`).join('\n');
+  return `# 📊 Live Tally\nAn Event Organizer or mod reacts with a tribe's emoji below to add it a point — live, as it happens.\n\n${rows}`;
+}
+async function startTally(guild, startedById) {
+  if (tally.isActive()) return { ok: false, error: 'A live tally is already running.' };
+  const ch = await ensureArenaChannel(guild, config);
+  if (!ch) return { ok: false, error: 'No tribe-announcements channel.' };
+  const list = tribes.all();
+  if (!list.length) return { ok: false, error: 'No tribes registered.' };
+  const used = new Set(); const emojiOf = {}; let fi = 0;
+  for (const t of list) {
+    let e = t.emoji && !used.has(t.emoji) ? t.emoji : null;
+    for (let tries = 0; !e && tries < 40; tries++) { const cand = TALLY_FALLBACK_EMOJI[fi++ % TALLY_FALLBACK_EMOJI.length]; if (!used.has(cand)) e = cand; }
+    used.add(e); emojiOf[t.key] = e;
+  }
+  const tribeKeys = list.map(t => t.key);
+  const counts = {}; for (const k of tribeKeys) counts[k] = 0;
+  const a = { channelId: ch.id, tribeKeys, emojiOf, counts, startedById, startedAt: Date.now() };
+  const msg = await ch.send({ content: tallyContent(a) }).catch(() => null);
+  if (!msg) return { ok: false, error: "Couldn't post the tally message." };
+  a.messageId = msg.id;
+  tally.set(a);
+  for (const k of tribeKeys) await msg.react(emojiOf[k]).catch(() => {});
+  return { ok: true };
+}
+async function endTally(guild) {
+  const a = tally.get(); if (!a) return { ok: false, error: 'No live tally is running.' };
+  const ch = await guild.channels.fetch(a.channelId).catch(() => null);
+  let top = 0; for (const v of Object.values(a.counts || {})) if (v > top) top = v;
+  const winners = (a.tribeKeys || []).filter(k => (a.counts[k] || 0) === top && top > 0);
+  const winLine = winners.length ? `\n🏆 **${winners.map(k => tribeName(k)).join(' & ')}** leads the final tally.` : '';
+  if (ch) await ch.send({ content: `# 📊 Live Tally — final\n${(a.tribeKeys || []).map(k => `> ${a.emojiOf[k]} ${tribeName(k)} — **${a.counts[k] || 0}**`).join('\n')}${winLine}\n-# Award Treasury/Glory manually with \`/tribe-admin grant\` if this decides the event.` }).catch(() => {});
+  tally.clear();
+  return { ok: true };
 }
 // Reaction Rush: post the next round — a message asking players to click the target emoji, with the bot
 // pre-adding it so it's one tap. Storing the round # lets a late reaction on an old round be ignored.
@@ -4498,6 +4541,27 @@ client.on('messageReactionAdd', async (reaction, user) => {
   try {
     if (user.bot) return;
     if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+    // Live Tally — an Event Organizer/mod reacting with a tribe's emoji on the tracked message adds a point.
+    const tl = tally.get();
+    if (tl && reaction.message.id === tl.messageId && reaction.emoji?.name) {
+      const tribeKey = Object.keys(tl.emojiOf || {}).find(k => tl.emojiOf[k] === reaction.emoji.name);
+      if (tribeKey) {
+        const rguild = reaction.message.guild;
+        const member = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
+        const authorized = member && (opspanel.memberTier(member) || contest.isEventOrganizer(member));
+        if (authorized) {
+          const cur = tally.get();   // re-read to reduce a double-score race between near-simultaneous reactions
+          if (cur && cur.messageId === tl.messageId) {
+            tally.addPoint(tribeKey, 1);
+            const fresh = tally.get();
+            const ch = rguild && await rguild.channels.fetch(fresh.channelId).catch(() => null);
+            const msg = ch && await ch.messages.fetch(fresh.messageId).catch(() => null);
+            if (msg) await msg.edit({ content: tallyContent(fresh) }).catch(() => {});
+          }
+        }
+        return;   // it was a reaction on the tally message — don't fall through to react-resolve
+      }
+    }
     // Arena REACTION RUSH — first tribe member to react with the target emoji scores + advances the round.
     const ax = arena.get();
     if (ax && (ax.type === 'reaction' || ax.type === 'reactionhard') && ax.reactionOpen && reaction.message.id === ax.messageId) {
@@ -5068,6 +5132,19 @@ async function buildTribePanelView(interaction, forcedTribeKey = null) {
       } else {
         rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tp_result_open').setLabel('Report Result').setEmoji('📝').setStyle(ButtonStyle.Primary)));
       }
+    }
+  }
+
+  // Live Tally: for a manually-refereed event where a lot of small point-scoring moments happen over
+  // time (owner: spent an hour hand-counting reactions after one) — react-to-score, live, instead.
+  if (isStaff || contest.isEventOrganizer(member)) {
+    const tl = tally.get();
+    if (tl) {
+      const rows2 = (tl.tribeKeys || []).map(k => `${tl.emojiOf[k]} ${tribeName(k)}: **${tl.counts[k] || 0}**`).join(' · ');
+      lines.push(`**📊 Live Tally** — ${rows2}`);
+      rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tp_tally_end').setLabel('End Tally').setEmoji('🛑').setStyle(ButtonStyle.Danger)));
+    } else {
+      rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tp_tally_start').setLabel('Start Live Tally').setEmoji('📊').setStyle(ButtonStyle.Secondary)));
     }
   }
 
@@ -6992,6 +7069,20 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_admin_pick') {
     await interaction.deferUpdate();
     return interaction.editReply(await buildTribePanelView(interaction, interaction.values[0]));
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tp_tally_start') {
+    if (!(opspanel.memberTier(interaction.member) || contest.isEventOrganizer(interaction.member))) return interaction.reply({ content: 'Only staff or an Event Organizer can start a live tally.', flags: MessageFlags.Ephemeral });
+    await interaction.deferUpdate();
+    const r = await startTally(interaction.guild, interaction.user.id);
+    if (!r.ok) return interaction.editReply({ content: `Couldn't start it: ${r.error}`, components: [] });
+    return interaction.editReply(await buildTribePanelView(interaction));
+  }
+  if (interaction.isButton?.() && interaction.customId === 'tp_tally_end') {
+    if (!(opspanel.memberTier(interaction.member) || contest.isEventOrganizer(interaction.member))) return interaction.reply({ content: 'Only staff or an Event Organizer can end the live tally.', flags: MessageFlags.Ephemeral });
+    await interaction.deferUpdate();
+    const r = await endTally(interaction.guild);
+    if (!r.ok) return interaction.editReply({ content: r.error, components: [] });
+    return interaction.editReply(await buildTribePanelView(interaction));
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'tp_start_game') {
     const picked = interaction.values[0];
