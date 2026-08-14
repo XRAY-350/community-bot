@@ -241,22 +241,50 @@ async function vote(interaction, dir) {
 }
 
 // ---- accept / deny (admins+; gated in index.js) ----------------------------------------------------
-async function resolve(interaction, accepted, config) {
+// Reply to whichever interaction is resolving this, correctly whether it's fresh, deferred, or already
+// replied — resolve() gets called both from a direct Deny click AND from the accept-grant picker below
+// (a SEPARATE interaction from whatever originally opened it), so it can't assume its own reply state.
+// editReply (not followUp) when already deferred/replied — edits the SAME message into its final state
+// rather than leaving a stale "thinking…"/"Processing…" placeholder next to a separate result message.
+function respond(interaction, payload) {
+  if (interaction.deferred || interaction.replied) return interaction.editReply(payload).catch(() => interaction.followUp(payload));
+  return interaction.reply(payload);
+}
+// grantOverride: null = grant whatever they applied for (post.track/post.lang), same as always. Or
+// { track: 'mod' } / { track: 'lang', lang } to grant a DIFFERENT position than applied for (owner,
+// 2026-08-14: staff sometimes want to accept someone as Trial Mod instead of the mini-mod they applied
+// for, or vice versa) — post.track/post.lang stay untouched as the historical record of what they
+// actually applied for; post.grantedAs records what they were actually given, when it differs.
+async function resolve(interaction, accepted, config, grantOverride = null) {
+  // Ack immediately — the work below (role grant, message edits, applicant notify, ownerlog) is several
+  // awaits deep and can easily clear Discord's 3s interaction-response window otherwise. A no-op if the
+  // caller (finishAccept) already deferred this same interaction.
+  if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
   const state = loadState();
   const post = state.posts[interaction.channelId];
-  if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
-  if (post.status !== 'open') return interaction.reply({ content: copy.modapps.alreadyResolved, flags: MessageFlags.Ephemeral });
+  if (!post) return respond(interaction, { content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open') return respond(interaction, { content: copy.modapps.alreadyResolved, flags: MessageFlags.Ephemeral });
   const c = loadConfig();
-  post.status = accepted ? 'accepted' : 'denied'; saveState(state);
+  post.status = accepted ? 'accepted' : 'denied';
+  if (accepted && grantOverride) post.grantedAs = grantOverride;
+  saveState(state);
   const member = await interaction.guild.members.fetch(post.applicantId).catch(() => null);
-  // Grant the role that matches the position applied for: Trial Mod, or the specific language mini-mod.
-  const grantRoleId = post.track === 'lang' && post.lang ? langmods.roleForLang(post.lang) : c.trialModRoleId;
-  const grantLabel = post.track === 'lang' && post.lang ? `${post.lang} Mini-Mod` : 'Trial Mod';
+  const effTrack = grantOverride ? grantOverride.track : post.track;
+  const effLang = grantOverride ? grantOverride.lang : post.lang;
+  const grantRoleId = effTrack === 'lang' && effLang ? langmods.roleForLang(effLang) : c.trialModRoleId;
+  const grantLabel = effTrack === 'lang' && effLang ? `${effLang} Mini-Mod` : 'Trial Mod';
+  const differed = accepted && (effTrack !== post.track || (effTrack === 'lang' && effLang !== post.lang));
   let roleGiven = false;
   if (accepted && grantRoleId && member)
-    roleGiven = await member.roles.add(grantRoleId, `Mod app accepted by ${interaction.user.tag}`).then(() => true).catch(() => false);
-  const answers = answersFromEmbed(interaction.message.embeds[0]);
-  await interaction.update({ embeds: [reviewEmbed(post, answers, post.status, interaction.user.id)], components: [...reviewComponents(post, true), undoRow()] });
+    roleGiven = await member.roles.add(grantRoleId, `Mod app accepted by ${interaction.user.tag}${differed ? ' (granted a different position than applied for)' : ''}`).then(() => true).catch(() => false);
+  // Edit the review post directly — the acting interaction may be on a DIFFERENT message (the accept-grant
+  // picker's ephemeral reply), not the review post itself, so interaction.update() can't be relied on here.
+  const reviewThread = await interaction.guild.channels.fetch(interaction.channelId).catch(() => null);
+  const reviewMsg = reviewThread && await reviewThread.fetchStarterMessage().catch(() => null);
+  if (reviewMsg) {
+    const answers = answersFromEmbed(reviewMsg.embeds[0]);
+    await reviewMsg.edit({ embeds: [reviewEmbed(post, answers, post.status, interaction.user.id)], components: [...reviewComponents(post, true), undoRow()] }).catch(() => {});
+  }
   // notify the applicant IN THEIR THREAD, then close both
   const appThread = await interaction.guild.channels.fetch(post.appThreadId).catch(() => null);
   if (appThread) {
@@ -265,11 +293,34 @@ async function resolve(interaction, accepted, config) {
       : `Thanks for applying. Your application wasn’t accepted this time. You’re welcome to apply again later. 💛`).catch(() => {});
     await appThread.setArchived(true).catch(() => {});
   }
-  const review = await interaction.guild.channels.fetch(interaction.channelId).catch(() => null);
-  if (review) { await review.setAppliedTags([accepted ? c.tags.accepted : c.tags.denied].filter(Boolean)).catch(() => {}); await review.setLocked(true).catch(() => {}); await review.setArchived(true).catch(() => {}); }
+  if (reviewThread) { await reviewThread.setAppliedTags([accepted ? c.tags.accepted : c.tags.denied].filter(Boolean)).catch(() => {}); await reviewThread.setLocked(true).catch(() => {}); await reviewThread.setArchived(true).catch(() => {}); }
   await ownerlog.log(interaction.guild, { emoji: accepted ? '✅' : '❌', title: `Mod application ${accepted ? 'accepted' : 'denied'}`, color: accepted ? 0x57F287 : 0xED4245,
-    detail: `<@${post.applicantId}> — ${positionLabel(post)}${accepted && roleGiven ? ` (granted ${grantLabel})` : ''} — by <@${interaction.user.id}>.` });
-  return interaction.followUp({ content: accepted ? (roleGiven ? `✅ Accepted. Gave <@${post.applicantId}> the **${grantLabel}** role.` : `✅ Accepted (couldn’t assign the **${grantLabel}** role, check role hierarchy).`) : `❌ Denied. Applicant was notified in their thread.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    detail: `<@${post.applicantId}> — ${positionLabel(post)}${differed ? ` (granted **${grantLabel}** instead)` : ''}${accepted && roleGiven ? ` (granted ${grantLabel})` : ''} — by <@${interaction.user.id}>.` });
+  return respond(interaction, { content: accepted ? (roleGiven ? `✅ Accepted. Gave <@${post.applicantId}> the **${grantLabel}** role.${differed ? ' (different from what they applied for.)' : ''}` : `✅ Accepted (couldn’t assign the **${grantLabel}** role, check role hierarchy).`) : `❌ Denied. Applicant was notified in their thread.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+}
+
+// ---- accept-as-different-position picker ------------------------------------------------------------
+// Accept no longer grants immediately — it shows an ephemeral picker (defaulting to whatever they
+// actually applied for) so staff can grant a DIFFERENT position when that's the right call.
+function acceptGrantRow(post) {
+  const opts = [{ label: 'Trial Mod', value: 'mod', emoji: '🛡️', default: post.track !== 'lang' }];
+  for (const lang of langmods.languages()) opts.push({ label: `${lang} Mini-Mod`, value: `lang:${lang}`, emoji: '🌐', default: post.track === 'lang' && post.lang === lang });
+  const menu = new StringSelectMenuBuilder().setCustomId('modapp_accept_grant').setPlaceholder('Grant which role?').addOptions(opts.slice(0, 25));
+  return new ActionRowBuilder().addComponents(menu);
+}
+async function beginAccept(interaction) {
+  const state = loadState();
+  const post = state.posts[interaction.channelId];
+  if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
+  if (post.status !== 'open') return interaction.reply({ content: copy.modapps.alreadyResolved, flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: `Accepting <@${post.applicantId}> — which role should they actually get? Defaults to what they applied for (**${positionLabel(post)}**).`, components: [acceptGrantRow(post)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+}
+async function finishAccept(interaction, config) {
+  await interaction.deferUpdate();
+  const picked = interaction.values[0];   // 'mod' or 'lang:<Label>'
+  const grantOverride = picked === 'mod' ? { track: 'mod' } : { track: 'lang', lang: picked.slice(5) };
+  await interaction.editReply({ content: 'Processing…', components: [] }).catch(() => {});
+  return resolve(interaction, true, config, grantOverride);
 }
 
 function applicantEmbed(answers) {
@@ -344,12 +395,17 @@ async function undo(interaction, config) {
   const wasAccepted = post.status === 'accepted';
   await interaction.deferUpdate();
   const member = await interaction.guild.members.fetch(post.applicantId).catch(() => null);
-  const grantRoleId = post.track === 'lang' && post.lang ? langmods.roleForLang(post.lang) : c.trialModRoleId;
-  const grantLabel = post.track === 'lang' && post.lang ? `${post.lang} Mini-Mod` : 'Trial Mod';
+  // Undo what was ACTUALLY granted (post.grantedAs, when accept used a different position than applied
+  // for) — falling back to what they applied for otherwise. Removing the wrong role here would leave the
+  // real one stuck on them with no record of why.
+  const effTrack = post.grantedAs ? post.grantedAs.track : post.track;
+  const effLang = post.grantedAs ? post.grantedAs.lang : post.lang;
+  const grantRoleId = effTrack === 'lang' && effLang ? langmods.roleForLang(effLang) : c.trialModRoleId;
+  const grantLabel = effTrack === 'lang' && effLang ? `${effLang} Mini-Mod` : 'Trial Mod';
   let roleRemoved = false;
   if (wasAccepted && grantRoleId && member)
     roleRemoved = await member.roles.remove(grantRoleId, `Mod app acceptance undone by ${interaction.user.tag}`).then(() => true).catch(() => false);
-  post.status = 'open'; delete post.lastRelayPingAt; saveState(state);
+  post.status = 'open'; delete post.lastRelayPingAt; delete post.grantedAs; saveState(state);
   // reopen the review post: unlock + unarchive + back to the Pending tag, re-enable the decision buttons
   const review = await interaction.guild.channels.fetch(interaction.channelId).catch(() => null);
   if (review) {
@@ -374,7 +430,8 @@ async function handleButton(interaction, config) {
   const id = interaction.customId;
   if (id === 'modapp_up') return vote(interaction, 'up');
   if (id === 'modapp_down') return vote(interaction, 'down');
-  if (id === 'modapp_accept') return resolve(interaction, true, config);
+  if (id === 'modapp_accept') return beginAccept(interaction);
+  if (id === 'modapp_accept_grant') return finishAccept(interaction, config);
   if (id === 'modapp_deny') return resolve(interaction, false, config);
   if (id === 'modapp_askanon') return askAnonModal(interaction);
   if (id === 'modapp_undo') return undo(interaction, config);

@@ -6296,6 +6296,14 @@ client.on('interactionCreate', async (interaction) => {
     try { return await modapps.handlePositionSelect(interaction); }
     catch (e) { console.error(`[modapps] langsel ${e.message}`); return interaction.reply({ content: 'Could not open that.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'modapp_accept_grant') {
+    // Same gate as accept/deny/undo (index.js ~7909) — picking what to grant is as consequential as accepting.
+    const approvers = modapps.loadConfig().approvers || [];
+    if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
+      return interaction.reply({ content: 'Only the **server owner** can accept mod applications.', flags: MessageFlags.Ephemeral });
+    try { return await modapps.handleButton(interaction, config); }
+    catch (e) { console.error(`[modapps] accept-grant ${e.message}`); return interaction.reply({ content: 'Could not process that.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+  }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('modapp_ask:')) {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can do that.', flags: MessageFlags.Ephemeral });
     try { return await modapps.handleAskModal(interaction); }
