@@ -12,6 +12,15 @@ const config = require('./config');
 // trial mod could undo a decision an admin or owner deliberately made. Canonical RANK lives here now;
 // index.js and opspanel.js reference corner.RANK instead of each keeping their own copy.
 const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+// One-off personal override (owner request, 2026-08-14): beautyinelijah may corner le_pope_ specifically,
+// bypassing the normal higher-tier block below — regardless of either of their tiers now or later. Not a
+// general rule; keep this list short and named, same pattern as index.js's SELF_CORNER_EXEMPT_ID.
+const PERSONAL_CORNER_OVERRIDES = [
+  { actorId: '1415112053823242250', targetId: '989615671178575972' },   // beautyinelijah -> le_pope_
+];
+function canBypassCornerTier(actorId, targetId) {
+  return PERSONAL_CORNER_OVERRIDES.some(o => o.actorId === actorId && o.targetId === targetId);
+}
 // Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
 // tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
 // 5-minute window of each other. Trial mods (and anyone with no recognized tier) have NO override path —
@@ -443,4 +452,4 @@ async function releaseExpired(guild, state) {
 
 module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
   setReleaseHandler, armTimer, clearTimer, rearmAll,
-  RANK, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };
+  RANK, canBypassCornerTier, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };
