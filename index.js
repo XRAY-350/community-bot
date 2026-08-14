@@ -1846,8 +1846,12 @@ function tallyContent(a) {
 }
 async function startTally(guild, startedById) {
   if (tally.isActive()) return { ok: false, error: 'A live tally is already running.' };
-  const ch = await ensureArenaChannel(guild, config);
+  const ch = await ensureTribeAnnounce(guild, config);
   if (!ch) return { ok: false, error: 'No tribe-announcements channel.' };
+  // tribe-announcements normally denies @everyone SendMessages (mod/admin-only) — open it for the
+  // event so participants can actually post the messages that get reacted to (same as arena's TYPED_TYPES
+  // temporary open/re-lock).
+  await ch.permissionOverwrites.edit(guild.id, { SendMessages: true }, { reason: 'live tally: allow participants to post' }).catch(() => {});
   const a = { channelId: ch.id, counts: {}, memberCounts: {}, startedById, startedAt: Date.now() };
   const msg = await ch.send({ content: tallyContent(a) }).catch(() => null);
   if (!msg) return { ok: false, error: "Couldn't post the tally message." };
@@ -1862,7 +1866,10 @@ async function endTally(guild) {
   const winners = tribes.all().filter(t => ((a.counts || {})[t.key] || 0) === top && top > 0);
   const winLine = winners.length ? `\n🏆 **${winners.map(t => tribeName(t.key)).join(' & ')}** leads the final tally.` : '';
   const rows = tribes.all().map(t => `> ${t.emoji || '🏴'} ${tribeName(t.key)} — **${(a.counts || {})[t.key] || 0}**`).join('\n');
-  if (ch) await ch.send({ content: `# 📊 Live Tally — final\n${rows}${winLine}\n-# Award Treasury/Glory manually with \`/tribe-admin grant\` if this decides the event.` }).catch(() => {});
+  if (ch) {
+    await ch.send({ content: `# 📊 Live Tally — final\n${rows}${winLine}\n-# Award Treasury/Glory manually with \`/tribe-admin grant\` if this decides the event.` }).catch(() => {});
+    await ch.permissionOverwrites.edit(guild.id, { SendMessages: false }, { reason: 'live tally over: re-lock tribe-announcements' }).catch(() => {});
+  }
   tally.clear();
   return { ok: true };
 }
