@@ -1834,45 +1834,35 @@ function typedContent(type, a) {
   if (type === 'reverse') return `# 🔁 Reverse Word — round ${r}\nThis word is backwards. **Type it the right way** to score:\n## \`${a.display}\`\n\n${sb}`;
   return `# 🔤 Word Scramble — round ${r}\nUnscramble and **type the word** in this channel:\n## \`${arena.scrambleWord(a.display).toUpperCase()}\`\nFirst tribe member to get it scores for their tribe.\n\n${sb}`;
 }
-// Live Tally (owner: spent an hour hand-counting reactions after an event). One shared message, one
-// reaction per tribe (that tribe's own emoji, pre-added by the bot); an Event Organizer or mod reacting
-// with a tribe's emoji adds it a point LIVE — the message is edited to show the running count. To add
-// another point for the same tribe, click the emoji off then on again (Discord only lets one user hold
-// one reaction of a given emoji at a time; only the ON transition scores).
-const TALLY_FALLBACK_EMOJI = ['🔵', '🟢', '🟣', '🟠', '⚪', '⚫', '🟤', '🟡'];
+// Live Tally (owner: spent an hour hand-counting reactions after an event; the Event Organizer wants to
+// just react to a participant's own message and have it count for their tribe). Scoped to ONE channel —
+// an Event Organizer or mod reacting with tally.POINT_EMOJI on ANY member's message in that channel adds
+// a point to whichever tribe that message's AUTHOR belongs to (not the reactor). A standings message in
+// the same channel is edited live; reacting to that standings message itself never scores.
+const TIDES_PER_TALLY_POINT = 3;   // personal Tides for each point awarded, same rate as an arena point
 function tallyContent(a) {
-  const rows = (a.tribeKeys || []).map(k => `> ${a.emojiOf[k]} ${tribeName(k)} — **${a.counts[k] || 0}**`).join('\n');
-  return `# 📊 Live Tally\nAn Event Organizer or mod reacts with a tribe's emoji below to add it a point — live, as it happens.\n\n${rows}`;
+  const rows = tribes.all().map(t => `> ${t.emoji || '🏴'} ${tribeName(t.key)} — **${(a.counts || {})[t.key] || 0}**`).join('\n');
+  return `# 📊 Live Tally — LIVE\nReact ${tally.POINT_EMOJI} on a participant's own message in <#${a.channelId}> to add their tribe a point.\n\n${rows}`;
 }
 async function startTally(guild, startedById) {
   if (tally.isActive()) return { ok: false, error: 'A live tally is already running.' };
   const ch = await ensureArenaChannel(guild, config);
   if (!ch) return { ok: false, error: 'No tribe-announcements channel.' };
-  const list = tribes.all();
-  if (!list.length) return { ok: false, error: 'No tribes registered.' };
-  const used = new Set(); const emojiOf = {}; let fi = 0;
-  for (const t of list) {
-    let e = t.emoji && !used.has(t.emoji) ? t.emoji : null;
-    for (let tries = 0; !e && tries < 40; tries++) { const cand = TALLY_FALLBACK_EMOJI[fi++ % TALLY_FALLBACK_EMOJI.length]; if (!used.has(cand)) e = cand; }
-    used.add(e); emojiOf[t.key] = e;
-  }
-  const tribeKeys = list.map(t => t.key);
-  const counts = {}; for (const k of tribeKeys) counts[k] = 0;
-  const a = { channelId: ch.id, tribeKeys, emojiOf, counts, startedById, startedAt: Date.now() };
+  const a = { channelId: ch.id, counts: {}, memberCounts: {}, startedById, startedAt: Date.now() };
   const msg = await ch.send({ content: tallyContent(a) }).catch(() => null);
   if (!msg) return { ok: false, error: "Couldn't post the tally message." };
-  a.messageId = msg.id;
+  a.standingsMessageId = msg.id;
   tally.set(a);
-  for (const k of tribeKeys) await msg.react(emojiOf[k]).catch(() => {});
   return { ok: true };
 }
 async function endTally(guild) {
   const a = tally.get(); if (!a) return { ok: false, error: 'No live tally is running.' };
   const ch = await guild.channels.fetch(a.channelId).catch(() => null);
   let top = 0; for (const v of Object.values(a.counts || {})) if (v > top) top = v;
-  const winners = (a.tribeKeys || []).filter(k => (a.counts[k] || 0) === top && top > 0);
-  const winLine = winners.length ? `\n🏆 **${winners.map(k => tribeName(k)).join(' & ')}** leads the final tally.` : '';
-  if (ch) await ch.send({ content: `# 📊 Live Tally — final\n${(a.tribeKeys || []).map(k => `> ${a.emojiOf[k]} ${tribeName(k)} — **${a.counts[k] || 0}**`).join('\n')}${winLine}\n-# Award Treasury/Glory manually with \`/tribe-admin grant\` if this decides the event.` }).catch(() => {});
+  const winners = tribes.all().filter(t => ((a.counts || {})[t.key] || 0) === top && top > 0);
+  const winLine = winners.length ? `\n🏆 **${winners.map(t => tribeName(t.key)).join(' & ')}** leads the final tally.` : '';
+  const rows = tribes.all().map(t => `> ${t.emoji || '🏴'} ${tribeName(t.key)} — **${(a.counts || {})[t.key] || 0}**`).join('\n');
+  if (ch) await ch.send({ content: `# 📊 Live Tally — final\n${rows}${winLine}\n-# Award Treasury/Glory manually with \`/tribe-admin grant\` if this decides the event.` }).catch(() => {});
   tally.clear();
   return { ok: true };
 }
@@ -4541,26 +4531,33 @@ client.on('messageReactionAdd', async (reaction, user) => {
   try {
     if (user.bot) return;
     if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
-    // Live Tally — an Event Organizer/mod reacting with a tribe's emoji on the tracked message adds a point.
+    // Live Tally — an Event Organizer/mod reacting with tally.POINT_EMOJI on a participant's OWN message,
+    // anywhere in the tracked channel, adds a point to that message's AUTHOR's tribe (not the reactor's).
     const tl = tally.get();
-    if (tl && reaction.message.id === tl.messageId && reaction.emoji?.name) {
-      const tribeKey = Object.keys(tl.emojiOf || {}).find(k => tl.emojiOf[k] === reaction.emoji.name);
-      if (tribeKey) {
+    if (tl && reaction.message.channelId === tl.channelId && reaction.emoji?.name === tally.POINT_EMOJI) {
+      if (reaction.message.id !== tl.standingsMessageId) {
         const rguild = reaction.message.guild;
-        const member = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
-        const authorized = member && (opspanel.memberTier(member) || contest.isEventOrganizer(member));
+        const reactorMember = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
+        const authorized = reactorMember && (opspanel.memberTier(reactorMember) || contest.isEventOrganizer(reactorMember));
         if (authorized) {
-          const cur = tally.get();   // re-read to reduce a double-score race between near-simultaneous reactions
-          if (cur && cur.messageId === tl.messageId) {
-            tally.addPoint(tribeKey, 1);
-            const fresh = tally.get();
-            const ch = rguild && await rguild.channels.fetch(fresh.channelId).catch(() => null);
-            const msg = ch && await ch.messages.fetch(fresh.messageId).catch(() => null);
-            if (msg) await msg.edit({ content: tallyContent(fresh) }).catch(() => {});
+          const scoredMsg = reaction.message.partial ? await reaction.message.fetch().catch(() => null) : reaction.message;
+          const authorId = scoredMsg && !scoredMsg.author?.bot ? scoredMsg.author?.id : null;
+          const authorMember = authorId && rguild ? await rguild.members.fetch(authorId).catch(() => null) : null;
+          const authorTribe = authorMember && tribes.memberTribe(authorMember);
+          if (authorTribe) {
+            const cur = tally.get();   // re-read to reduce a double-score race between near-simultaneous reactions
+            if (cur && cur.channelId === tl.channelId) {
+              tally.addPoint(authorTribe.key, authorId, 1);
+              tribes.addTides(authorTribe.key, authorId, TIDES_PER_TALLY_POINT, 'combat');
+              const fresh = tally.get();
+              const ch = rguild && await rguild.channels.fetch(fresh.channelId).catch(() => null);
+              const smsg = ch && await ch.messages.fetch(fresh.standingsMessageId).catch(() => null);
+              if (smsg) await smsg.edit({ content: tallyContent(fresh) }).catch(() => {});
+            }
           }
         }
-        return;   // it was a reaction on the tally message — don't fall through to react-resolve
       }
+      return;   // it was a + reaction inside the tracked tally channel — don't fall through to react-resolve
     }
     // Arena REACTION RUSH — first tribe member to react with the target emoji scores + advances the round.
     const ax = arena.get();
@@ -5140,8 +5137,8 @@ async function buildTribePanelView(interaction, forcedTribeKey = null) {
   if (isStaff || contest.isEventOrganizer(member)) {
     const tl = tally.get();
     if (tl) {
-      const rows2 = (tl.tribeKeys || []).map(k => `${tl.emojiOf[k]} ${tribeName(k)}: **${tl.counts[k] || 0}**`).join(' · ');
-      lines.push(`**📊 Live Tally** — ${rows2}`);
+      const rows2 = tribes.all().map(t => `${t.emoji || '🏴'} ${tribeName(t.key)}: **${(tl.counts || {})[t.key] || 0}**`).join(' · ');
+      lines.push(`**📊 Live Tally** (react ${tally.POINT_EMOJI} on a participant's message in <#${tl.channelId}>) — ${rows2}`);
       rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tp_tally_end').setLabel('End Tally').setEmoji('🛑').setStyle(ButtonStyle.Danger)));
     } else {
       rows.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tp_tally_start').setLabel('Start Live Tally').setEmoji('📊').setStyle(ButtonStyle.Secondary)));
