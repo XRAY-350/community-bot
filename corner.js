@@ -34,10 +34,13 @@ function isLowering(rec, newReleaseAt) {
 }
 
 // Can this actor act SOLO on a lowering/release, no override needed? Either they're the ORIGINAL
-// corner-er (always gets a solo override on their own case, any tier), or their current tier outranks —
-// or matches — whatever tier last touched this corner's severity (rec.appliedByRank).
+// corner-er (always gets a solo override on their own case, any tier), their current tier outranks — or
+// matches — whatever tier last touched this corner's severity (rec.appliedByRank), OR they're an admin
+// acting on an owner-applied corner specifically (owner, 2026-08-14: admins no longer need a 3-admin
+// override vote to act on an owner's corner — botowner-applied corners are unaffected, still gated).
 function canActSolo(rec, actorId, actorTier) {
   if (rec.by === actorId) return true;
+  if (actorTier === 'admin' && (rec.appliedByRank || 0) === RANK.owner) return true;
   return (RANK[actorTier] || 0) >= (rec.appliedByRank || 0);
 }
 
