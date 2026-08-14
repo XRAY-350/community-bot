@@ -65,6 +65,10 @@ whatever fits). Each of the 3 paths should feel mechanically distinct from the o
 flavored, one social/cunning-flavored, one knowledge/craft-flavored) so members have a real reason to pick
 one path over another — this maps to hidden game categories, so genuine thematic variety matters.
 
+If the user message tells you this tribe's name, emoji, and/or color were already chosen (before any lore
+existed), treat those as fixed and write lore that actually fits them — don't contradict an already-chosen
+color's mood (e.g. icy blue reads cold/vast, not fiery) or ignore an already-chosen emoji's implication.
+
 Return ONLY a single JSON object, no other text, no markdown fences, shaped exactly like this:
 {
   "title": "...",
@@ -99,11 +103,25 @@ async function generate(args) {
   if (!apiKey) { console.error('No API key — set ANTHROPIC_API_KEY or SMARTWATCH_API_KEY.'); process.exit(1); }
   const client = new Anthropic({ apiKey });
 
+  // Ground the prompt in whatever's already been set up for this tribe (name/emoji/color, chosen before
+  // lore exists via /tribe-admin create) so the generated lore doesn't clash with it — e.g. no fiery
+  // "Path of Ember" for a tribe whose founder already picked an icy-blue role color.
+  const existing = tribes.get(key);
+  const contextLines = [`Tribe key: ${key}`];
+  if (existing) {
+    if (existing.name) contextLines.push(`Already-chosen tribe name: ${existing.name}${existing.shortName && existing.shortName !== existing.name ? ` (short: ${existing.shortName})` : ''}`);
+    if (existing.emoji) contextLines.push(`Already-chosen emoji: ${existing.emoji}`);
+    if (existing.color != null) contextLines.push(`Already-chosen color: #${existing.color.toString(16).padStart(6, '0')}`);
+  } else {
+    console.log(`[lorebuilder] note: no tribe registered yet under "${key}" — generating from the key + brief alone.`);
+  }
+  contextLines.push(`Founder's brief: ${brief}`);
+
   console.log(`[lorebuilder] asking ${MODEL} for lore on "${key}"...`);
   const resp = await client.messages.create({
     model: MODEL, max_tokens: 2500,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: `Tribe key: ${key}\nFounder's brief: ${brief}` }],
+    messages: [{ role: 'user', content: contextLines.join('\n') }],
   });
   const textBlock = (resp.content || []).find(b => b.type === 'text');
   const lore = parseLoreJSON(textBlock && textBlock.text);
