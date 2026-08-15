@@ -32,6 +32,7 @@ const modmail = require('./modmail');
 const modapps = require('./modapps');
 const langmods = require('./langmods');
 const promote = require('./promote');
+const nestedRoles = require('./nestedRoles');
 const ownerlog = require('./ownerlog');
 const permguard = require('./permguard');
 const raidguard = require('./raidguard');
@@ -4840,16 +4841,29 @@ const NEST_ADMIN_ROLE = process.env.FUBU_ADMIN_ROLE_ID || '1516179051105226833';
 async function enforceTierNesting(member) {
   if (!member || member.user?.bot) return false;
   const tier = opspanel.memberTier(member);           // owner / admin / mod / null (highest tier)
-  if (!tier) return false;                             // not staff - nothing to nest
   const has = id => id && member.roles.cache.has(id);
   const add = [], remove = [];
-  if ((tier === 'owner' || tier === 'admin') && NEST_MOD_ROLE && !has(NEST_MOD_ROLE)) add.push(NEST_MOD_ROLE);
-  if (tier === 'owner' && NEST_ADMIN_ROLE && !has(NEST_ADMIN_ROLE)) add.push(NEST_ADMIN_ROLE);
-  const trial = modapps.loadConfig().trialModRoleId;   // mod+ never keep Trial Mod
-  if (trial && has(trial)) remove.push(trial);
+  // mark() only fires on the add branch (the moment WE grant it) — never on an already-held role, so a
+  // role that was independently held BEFORE nesting ever touched it is simply never marked, permanently.
+  if ((tier === 'owner' || tier === 'admin') && NEST_MOD_ROLE && !has(NEST_MOD_ROLE)) { add.push(NEST_MOD_ROLE); nestedRoles.mark(member.id, NEST_MOD_ROLE); }
+  if (tier === 'owner' && NEST_ADMIN_ROLE && !has(NEST_ADMIN_ROLE)) { add.push(NEST_ADMIN_ROLE); nestedRoles.mark(member.id, NEST_ADMIN_ROLE); }
+  if (tier) {
+    const trial = modapps.loadConfig().trialModRoleId;   // mod+ never keep Trial Mod
+    if (trial && has(trial)) remove.push(trial);
+  }
+  // Demotion cleanup: a role WE nested-in shouldn't outlive the tier that justified it — real incident:
+  // an owner granted then un-granted Admin within 21s; the auto-nested Mod role sat orphaned for ~20h with
+  // no cleanup until a human noticed. Only strips roles WE marked nested (never an independently-held or
+  // genuinely-promoted one — see nestedRoles.js / promote.js's clear() call).
+  if (NEST_ADMIN_ROLE && tier !== 'owner' && has(NEST_ADMIN_ROLE) && nestedRoles.isNested(member.id, NEST_ADMIN_ROLE)) {
+    remove.push(NEST_ADMIN_ROLE); nestedRoles.clear(member.id, NEST_ADMIN_ROLE);
+  }
+  if (NEST_MOD_ROLE && tier !== 'owner' && tier !== 'admin' && has(NEST_MOD_ROLE) && nestedRoles.isNested(member.id, NEST_MOD_ROLE)) {
+    remove.push(NEST_MOD_ROLE); nestedRoles.clear(member.id, NEST_MOD_ROLE);
+  }
   if (!add.length && !remove.length) return false;
   if (add.length) await member.roles.add(add, 'tier auto-nest (owner⊇admin⊇mod)').catch(() => {});
-  if (remove.length) await member.roles.remove(remove, 'tier auto-nest: mod+ drops Trial Mod').catch(() => {});
+  if (remove.length) await member.roles.remove(remove, 'tier auto-nest: drop Trial Mod / no-longer-justified nested role(s)').catch(() => {});
   return true;
 }
 

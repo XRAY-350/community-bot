@@ -9,6 +9,7 @@ const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const ownerlog = require('./ownerlog');
 const copy = require('./copy');
+const nestedRoles = require('./nestedRoles');
 
 // Per-kind wiring, resolved against config at call time.
 const KINDS = {
@@ -85,8 +86,12 @@ async function resolve(interaction, confirmed, config) {
   const k = KINDS[rec.kind || 'trial'];
   const member = await interaction.guild.members.fetch(rec.candidateId).catch(() => null);
   let promoted = false;
-  if (confirmed && member && config[k.addKey])
+  if (confirmed && member && config[k.addKey]) {
     promoted = await member.roles.add(config[k.addKey], `Promoted to ${k.toLabel} by ${interaction.user.tag}`).then(() => true).catch(() => false);
+    // A genuine, voted-on promotion — not a tier-nesting byproduct. Clear any nested-only flag so a later
+    // loss of a HIGHER tier doesn't strip a role this person actually earned in their own right.
+    if (promoted) nestedRoles.clear(rec.candidateId, config[k.addKey]);
+  }
   await interaction.update({ embeds: [embed(rec, rec.status, interaction.user.id)], components: [voteRow(rec.up.length, rec.down.length, true), decideRow(true, confirmed)] });
   await ownerlog.log(interaction.guild, { emoji: confirmed ? '🏅' : '⛔', title: `Promotion ${confirmed ? 'confirmed' : 'rejected'}`, color: confirmed ? 0x57F287 : 0xED4245,
     detail: `<@${rec.candidateId}> — ${k.fromLabel} → ${k.toLabel} — by <@${interaction.user.id}>.` });
