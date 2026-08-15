@@ -12,11 +12,12 @@ const config = require('./config');
 // trial mod could undo a decision an admin or owner deliberately made. Canonical RANK lives here now;
 // index.js and opspanel.js reference corner.RANK instead of each keeping their own copy.
 const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-// One-off personal override (owner request, 2026-08-14): beautyinelijah may corner le_pope_ specifically,
+// One-off personal overrides (owner request, 2026-08-14): specific actors may corner le_pope_ specifically,
 // bypassing the normal higher-tier block below — regardless of either of their tiers now or later. Not a
 // general rule; keep this list short and named, same pattern as index.js's SELF_CORNER_EXEMPT_ID.
 const PERSONAL_CORNER_OVERRIDES = [
   { actorId: '1415112053823242250', targetId: '989615671178575972' },   // beautyinelijah -> le_pope_
+  { actorId: '593371777569390602', targetId: '989615671178575972' },    // kayena07 -> le_pope_
 ];
 function canBypassCornerTier(actorId, targetId) {
   return PERSONAL_CORNER_OVERRIDES.some(o => o.actorId === actorId && o.targetId === targetId);
