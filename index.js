@@ -47,6 +47,7 @@ const recruitment = require('./recruitment');
 const lore = require('./lore');
 const quests = require('./quests');
 const sealed = require('./sealed');
+const eventPacing = require('./eventPacing');
 const tribegames = require('./tribegames');
 const tally = require('./tally');
 const birthday = require('./birthday');
@@ -1706,6 +1707,7 @@ async function maybeAutoStartArena(guild) {
   if (mode === 'dead') return;
   if (arena.startBlocked()) return;        // already running/lobby, under the 1h floor, or daily cap reached
   if (!arena.autoStartDue(Date.now())) return;   // the randomly-scheduled next-auto time hasn't arrived yet
+  if (!eventPacing.combinedGapMet(Date.now())) return;   // something else (sealed/trial) ran too recently
   const downtime = mode === 'downtime';
   const fullPool = downtime ? DOWNTIME_TYPES : ARENA_ALL_TYPES;
   // A type can't come back around until roughly half the pool has cycled through (not just avoiding an
@@ -1744,6 +1746,7 @@ async function startArenaCountdown(guild, type, minutes, startedById, downtime =
   }
   arena.set({ type, minutes, phase: 'lobby', channelId: channel.id, startedBy: startedById, startsAt, downtime,
     lobbyMessageId: lobby ? lobby.id : null, thronePings, scores: {}, participants: [] });
+  eventPacing.recordEvent(Date.now());
   _arenaTimers.start = setTimeout(() => beginArena(guild).catch(e => console.error('[arena] begin:', e.message)), ARENA_LOBBY_MS);
   return arena.get();
 }
@@ -2190,6 +2193,7 @@ async function startSealedArena(guild, { type, startedById } = {}) {
   const startsAt = Date.now() + SEALED_LOBBY_MS;   // LOBBY: rally now, the first round drops after the countdown
   sealed.set({ mode: 'sealed', gameType, kind: set.kind, items: set.items, startedAt: Date.now(), startsAt, phase: 'lobby', thrones, startedById: startedById || null });
   sealed.bumpDaily(Date.now(), gameType);   // count the launch immediately (daily cap + min-gap start from now)
+  eventPacing.recordEvent(Date.now());
   await Promise.all(Object.keys(thrones).map(async (k) => {
     const th = thrones[k]; const ch = await guild.channels.fetch(th.channelId).catch(() => null); const t = tribes.get(k);
     if (ch) await ch.send({ content: `# 🚪 Sealed Arena begins <t:${Math.floor(startsAt / 1000)}:R>!\n${t?.roleId ? `<@&${t.roleId}>` : 'Your tribe'}, gather here now — in about **${Math.round(SEALED_LOBBY_MS / 60000)} minutes** it's ${SEALED_QUESTIONS} rounds, blind against every other tribe. Answer fast. Results are revealed to everyone at the end.`, allowedMentions: { roles: t?.roleId ? [t.roleId] : [] } }).catch(() => {});
@@ -2347,6 +2351,7 @@ async function sealedAutoTick(guild) {
   if (sealed.dailyCount(Date.now()) >= SEALED_DAILY_CAP) return;
   if (Date.now() - sealed.lastRunAt() < SEALED_MIN_GAP_MS) return;
   if (!sealedPeakHour()) return;
+  if (!eventPacing.combinedGapMet(Date.now())) return;   // something else (arena/trial) ran too recently
   const r = await startSealedArena(guild, {}).catch(e => { console.error('[sealed] auto start:', e.message); return null; });
   if (r && r.ok) console.log(`[sealed] auto-started (${r.gameType})`);
 }
@@ -2602,6 +2607,7 @@ async function startTrial(guild, { startedById, game = 'assembly', muster = fals
   }
   const startsAt = Date.now() + TRIAL_LOBBY_MS;   // LOBBY: rally now, the game itself begins after the countdown
   sealed.set({ mode: 'trial', muster: !!muster, game, kind: 'button', items, startedAt: Date.now(), startsAt, endsAt: startsAt + TRIAL_WINDOW_MS, phase: 'lobby', thrones, startedById: startedById || null });
+  eventPacing.recordEvent(Date.now());
   const label = (muster ? '🪖 A grand Muster — ' : '') + (TRIAL_GAME_LABEL[game] || 'A Trial');
   const verb = game === 'mosaic' ? 'claim tiles' : 'answer';
   await Promise.all(Object.keys(thrones).map(async (k) => {
@@ -2701,6 +2707,7 @@ async function trialAutoTick(guild) {
   if (!features.enabled('theTrials') || sealed.isActive() || arena.isActive()) return;
   if (sealed.trialDoneToday(Date.now())) return;
   if (!sealedPeakHour()) return;
+  if (!eventPacing.combinedGapMet(Date.now())) return;   // something else (arena/sealed) ran too recently
   sealed.markTrialDay(Date.now());
   const game = TRIAL_GAMES[Math.floor(Date.now() / 86400000) % TRIAL_GAMES.length];   // rotate one game per day
   const muster = Math.random() < MUSTER_AUTO_CHANCE;   // ~1 in 5 fire as a high-reward grand Muster

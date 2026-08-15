@@ -17,14 +17,15 @@ const WIN_GLORY = 100;
 const RACE_TARGET = 10;     // clicks to win a race
 const TRIVIA_QUESTIONS = 10; // questions per trivia sprint (owner: the online bank is huge, so ask more)
 const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
-const COOLDOWN_MS = 60 * 60 * 1000;        // HARD FLOOR: at least 1h between events (owner) — for manual + auto
-const DAILY_CAP = 16;                       // max/UTC day: peak (~14h) + downtime (~8h) both run, so this is raised
+const COOLDOWN_MS = 90 * 60 * 1000;        // HARD FLOOR: at least 1.5h between events (owner) — for manual + auto
+const DAILY_CAP = 8;                        // max/UTC day (was 16, owner 2026-08-15: still too often even with the gaps below)
 // Auto events don't fire on a fixed cadence: each next auto event is scheduled at a RANDOM time after the last
-// one ends. PEAK gap 1.5h..3h; DOWNTIME gap is longer (3h..5h) so the quiet hours stay sparse. Which range is
-// used depends on the mode passed to recordEnd. (Cut ~1.5x from the original 1h..2h/2h..3.5h, 2026-08-09 —
-// owner: events were firing too often.)
-const AUTO_GAP_MIN_MIN = 90;                // peak: never sooner than 1.5h after the last event
-const AUTO_GAP_SPREAD_MIN = 90;            // ...plus a random 0..90 min, so the peak gap is 1.5h..3h
+// one ends. PEAK gap 2h..3.5h; DOWNTIME gap is longer (3h..5h) so the quiet hours stay sparse. Which range is
+// used depends on the mode passed to recordEnd. (Cut ~1.5x from the original 1h..2h/2h..3.5h, 2026-08-09; widened
+// again 2026-08-15 — owner: still firing too often — see also eventPacing.js for the NEW combined cross-system
+// floor that now also gates this alongside these per-type numbers.)
+const AUTO_GAP_MIN_MIN = 120;               // peak: never sooner than 2h after the last event
+const AUTO_GAP_SPREAD_MIN = 90;            // ...plus a random 0..90 min, so the peak gap is 2h..3.5h
 const AUTO_GAP_NIGHT_MIN = 180;            // downtime: never sooner than 3h
 const AUTO_GAP_NIGHT_SPREAD = 120;         // ...plus a random 0..120 min, so the downtime gap is 3h..5h
 
