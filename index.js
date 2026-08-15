@@ -3417,7 +3417,7 @@ async function handleCornerButton(interaction) {
     if (!member) return interaction.editReply(copy.common.noMemberInServer);
     // Same tier hierarchy as /corner (own tier or lower, never higher) — see wl_corner's comment above for
     // why this can't be a blanket "no admins ever" block.
-    if (member.id === guild.ownerId) return interaction.editReply('You cannot corner the server owner.');
+    if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id)) return interaction.editReply('You cannot corner the server owner.');
     const recornerActorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
     const recornerTargetTier = opspanel.memberTier(member);
     const recornerTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[recornerTargetTier] || 0;
@@ -5566,7 +5566,7 @@ async function handleWatchlistButton(interaction) {
     // Same tier hierarchy as /corner and Send-to-corner (own tier or lower, never higher) — this used to be
     // a blanket "no admins/owner ever" block that didn't check the ACTOR's tier, so even the owner couldn't
     // corner an admin from here even though the slash command correctly allows it.
-    if (member.id === interaction.guild.ownerId)
+    if (member.id === interaction.guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id))
       return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
     const wlActorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
     const wlTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.memberTier(member)] || 0;
@@ -9367,7 +9367,14 @@ client.on('interactionCreate', async (interaction) => {
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
     // Verified members may use /corner (ONLY — not /uncorner) when the memberCorner feature is on. Their tight
     // limits (≤5m, no rule/reason, daily cap) are enforced inside the `name === 'corner'` block below.
-    const memberMayCorner = name === 'corner' && isMemberCorner(interaction);
+    // Separate from the memberCorner feature flag (owner request, 2026-08-15): a verified, non-staff member
+    // targeting a personally-approved corner target (see corner.js's PERSONAL_CORNER_OVERRIDES, e.g. the
+    // server owner opting themselves in) gets in regardless of whether memberCorner is on — "two separate
+    // features." Still under the SAME tight limits as memberCorner (checked again below via mCorner).
+    const earlyTargetId = name === 'corner' ? interaction.options.getUser('user')?.id : null;
+    const ownerCornerOK = name === 'corner' && !isMod && !trial && isMemberCornerEligibleRole(interaction)
+      && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId);
+    const memberMayCorner = name === 'corner' && (isMemberCorner(interaction) || ownerCornerOK);
     if (!isMod && !trial && !memberMayCorner) {
       // A verified member who WOULD qualify if the feature were on gets told plainly it's off, instead of
       // the generic staff-only message (command visibility no longer hides this from them either way).
@@ -9383,7 +9390,10 @@ client.on('interactionCreate', async (interaction) => {
     if (member.id === client.user.id) return interaction.reply({ content: 'I cannot corner myself.', flags: MessageFlags.Ephemeral });
 
     if (name === 'corner') {
-      const mCorner = isMemberCorner(interaction);
+      // Same "separate from the memberCorner flag" path as the early gate above, now re-checked against
+      // the actually-resolved target member (not just the raw option id).
+      const mCorner = isMemberCorner(interaction) || (!opspanel.tierOf(interaction) && !isTrialMod(interaction)
+        && isMemberCornerEligibleRole(interaction) && corner.canBypassCornerTier(interaction.user.id, member.id));
       // Belt-and-suspenders re-check of the same gate the caller already applied above (kept in case this
       // block is ever reached another way) — staff/trial-mods always; a verified member only when
       // 'memberCorner' is on. /corner is visible to everyone regardless of the flag, so this can still
@@ -9406,7 +9416,7 @@ client.on('interactionCreate', async (interaction) => {
       const actorRank = RANK[opspanel.tierOf(interaction)] || 0;      // actor's tier (admin if Administrator-perm)
       const targetTier = opspanel.memberTier(member);                 // target's role-only tier
       const targetRank = RANK[targetTier] || 0;
-      if (member.id === guild.ownerId) {
+      if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id)) {
         return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
       }
       if (targetRank > actorRank && !corner.canBypassCornerTier(interaction.user.id, member.id)) {

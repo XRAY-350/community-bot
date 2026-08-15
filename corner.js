@@ -12,15 +12,20 @@ const config = require('./config');
 // trial mod could undo a decision an admin or owner deliberately made. Canonical RANK lives here now;
 // index.js and opspanel.js reference corner.RANK instead of each keeping their own copy.
 const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-// One-off personal overrides (owner request, 2026-08-14): specific actors may corner le_pope_ specifically,
-// bypassing the normal higher-tier block below — regardless of either of their tiers now or later. Not a
+// One-off personal overrides (owner request, 2026-08-14/15): specific actors may corner specific targets,
+// bypassing the normal higher-tier block below — regardless of either party's tier now or later. Not a
 // general rule; keep this list short and named, same pattern as index.js's SELF_CORNER_EXEMPT_ID.
+// actorId '*' = ANY actor (still subject to their own tier's normal duration/reason/daily-cap limits —
+// this only lifts the "can't touch someone above your tier" gate, nothing else) — used for the real
+// Discord server owner opting themselves in as a cornerable target (2026-08-15): purely cosmetic for them
+// specifically, since the actual guild owner keeps full Discord permissions regardless of stripped roles.
 const PERSONAL_CORNER_OVERRIDES = [
   { actorId: '1415112053823242250', targetId: '989615671178575972' },   // beautyinelijah -> le_pope_
   { actorId: '593371777569390602', targetId: '989615671178575972' },    // kayena07 -> le_pope_
+  { actorId: '*', targetId: '865843812907089940' },                     // any verified/staff actor -> the server owner (opted in)
 ];
 function canBypassCornerTier(actorId, targetId) {
-  return PERSONAL_CORNER_OVERRIDES.some(o => o.actorId === actorId && o.targetId === targetId);
+  return PERSONAL_CORNER_OVERRIDES.some(o => (o.actorId === actorId || o.actorId === '*') && o.targetId === targetId);
 }
 // Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
 // tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
@@ -301,7 +306,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // NO owner check at all: the upstream command that opens the modal validates the target, but the modal
   // submit step that actually strips roles trusted the embedded id with no re-check. One guard here closes
   // every entry point, present and future, regardless of what each caller does or forgets to do upstream.
-  if (member.id === guild.ownerId) {
+  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id))) {
     return { ok: false, error: "you can't corner the server owner." };
   }
   // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
