@@ -174,6 +174,12 @@ const config = {
   // at once — shrunk so the truly quiet hours land ~04:00-08:00 UTC, night for both regions).
   arenaDowntimeStartHour: num('ARENA_DOWNTIME_START_HOUR', 0),
   arenaDowntimeEndHour: num('ARENA_DOWNTIME_END_HOUR', 6),
+  // TRUE PEAK: a narrower slice INSIDE the peak window above (owner, 2026-08-16) — the busiest realistic
+  // overlap across regions (European evening, still daytime for Africa, US afternoon/evening). Only here:
+  // Activity Blitz becomes possible (it measures server-wide message activity, so it needs a lot of people
+  // online to mean anything) and auto-events fire noticeably more often.
+  arenaTruePeakStartHour: num('ARENA_TRUE_PEAK_START_HOUR', 17),
+  arenaTruePeakEndHour: num('ARENA_TRUE_PEAK_END_HOUR', 22),
 
   // Public "spectacle" channel for big tribe moments (war results, crownings, season champions) so lurkers
   // and newcomers see the drama. Empty = fall back to the tribe-announcements channel.

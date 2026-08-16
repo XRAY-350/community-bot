@@ -20,12 +20,15 @@ const SCRAMBLE_ROUNDS = 5;  // rounds per scramble
 const COOLDOWN_MS = 90 * 60 * 1000;        // HARD FLOOR: at least 1.5h between events (owner) — for manual + auto
 const DAILY_CAP = 8;                        // max/UTC day (was 16, owner 2026-08-15: still too often even with the gaps below)
 // Auto events don't fire on a fixed cadence: each next auto event is scheduled at a RANDOM time after the last
-// one ends. PEAK gap 2h..3.5h; DOWNTIME gap is longer (3h..5h) so the quiet hours stay sparse. Which range is
-// used depends on the mode passed to recordEnd. (Cut ~1.5x from the original 1h..2h/2h..3.5h, 2026-08-09; widened
-// again 2026-08-15 — owner: still firing too often — see also eventPacing.js for the NEW combined cross-system
-// floor that now also gates this alongside these per-type numbers.)
-const AUTO_GAP_MIN_MIN = 120;               // peak: never sooner than 2h after the last event
-const AUTO_GAP_SPREAD_MIN = 90;            // ...plus a random 0..90 min, so the peak gap is 2h..3.5h
+// one ends. TRUE PEAK gap 1h..2h (owner, 2026-08-16: a third, busier tier); regular gap 2h..3.5h; DOWNTIME
+// gap is longer (3h..5h) so the quiet hours stay sparse. Which range is used depends on the gapTier string
+// passed to recordEnd. (Cut ~1.5x from the original 1h..2h/2h..3.5h, 2026-08-09; widened again 2026-08-15 —
+// owner: still firing too often — see also eventPacing.js for the combined cross-system floor that gates
+// this alongside these per-type numbers.)
+const AUTO_GAP_PEAK_MIN_MIN = 60;          // true peak: never sooner than 1h after the last event
+const AUTO_GAP_PEAK_SPREAD_MIN = 60;       // ...plus a random 0..60 min, so the true-peak gap is 1h..2h
+const AUTO_GAP_MIN_MIN = 120;              // regular: never sooner than 2h after the last event
+const AUTO_GAP_SPREAD_MIN = 90;            // ...plus a random 0..90 min, so the regular gap is 2h..3.5h
 const AUTO_GAP_NIGHT_MIN = 180;            // downtime: never sooner than 3h
 const AUTO_GAP_NIGHT_SPREAD = 120;         // ...plus a random 0..120 min, so the downtime gap is 3h..5h
 
@@ -58,7 +61,13 @@ function winner() { const a = get(); if (!a) return null; let best = null, bs = 
 // Cooldown + daily cap (owner). recordEnd() stamps the end of a challenge and bumps today's count (reset on
 // a new UTC day). startBlocked() returns a reason string if a new one can't start yet, or null if it can.
 function utcDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
-function recordEnd(nowMs, downtime, type) {
+// gapTier: 'truepeak' | 'downtime' | anything else (regular) — picks which random-gap range schedules the
+// next auto-start. Kept a string (not the old boolean) now that there are 3 tiers, not 2.
+const GAP_TIERS = {
+  truepeak: [AUTO_GAP_PEAK_MIN_MIN, AUTO_GAP_PEAK_SPREAD_MIN],
+  downtime: [AUTO_GAP_NIGHT_MIN, AUTO_GAP_NIGHT_SPREAD],
+};
+function recordEnd(nowMs, gapTier, type) {
   const s = load(); const now = nowMs || Date.now(); const day = utcDay(now);
   if (s.day !== day) { s.day = day; s.count = 0; }
   s.count = (s.count || 0) + 1; s.lastEndedAt = now;
@@ -69,8 +78,8 @@ function recordEnd(nowMs, downtime, type) {
     // cycled, not just avoid an immediate back-to-back repeat. Capped well above any real pool size.
     s.history = [type, ...(s.history || [])].slice(0, 20);
   }
-  const [gmin, gspread] = downtime ? [AUTO_GAP_NIGHT_MIN, AUTO_GAP_NIGHT_SPREAD] : [AUTO_GAP_MIN_MIN, AUTO_GAP_SPREAD_MIN];
-  s.nextAutoAt = now + (gmin + randInt(gspread + 1)) * 60000;   // random gap (1.5h..3h peak, 3h..5h downtime)
+  const [gmin, gspread] = GAP_TIERS[gapTier] || [AUTO_GAP_MIN_MIN, AUTO_GAP_SPREAD_MIN];
+  s.nextAutoAt = now + (gmin + randInt(gspread + 1)) * 60000;   // random gap (1h..2h true peak, 2h..3.5h regular, 3h..5h downtime)
   save(s);
 }
 function getLastType() { return load().lastType || null; }

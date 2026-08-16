@@ -1687,36 +1687,51 @@ function tribeCategoryMult(tribeKey, category) {
   return 1 + Math.min(tribes.tribeAttributePower(tribeKey, category) * tribes.WAR_ATTR_SCALE, tribes.WAR_ATTR_CAP);
 }
 function arenaAttrMult(tribeKey, arenaType) { return tribeCategoryMult(tribeKey, ARENA_TYPE_CATEGORY[arenaType]); }
-// Downtime runs only calm, low-interaction, async-friendly games (no reflex/crowd types like reaction race).
-const DOWNTIME_TYPES = ['blitz', 'scramble', 'reverse'];
+// Downtime runs only calm, low-interaction, async-friendly games (no reflex/crowd types like reaction race,
+// and no Blitz — owner, 2026-08-16: Blitz measures server-wide message activity, so it only means something
+// with a lot of people online, which downtime's quiet hours are specifically NOT).
+const DOWNTIME_TYPES = ['scramble', 'reverse'];
+// Regular (peak-window-but-not-true-peak) pool: everything except Blitz, which is reserved for true peak.
+const REGULAR_TYPES = ARENA_ALL_TYPES.filter(t => t !== 'blitz');
 const DOWNTIME_TREASURY_MULT = 2;   // downtime wins bank 2x Treasury but NO Glory: reward night owls, protect the crown
-// Which arena mode are we in right now, in the configured timezone? 'peak' (full slate, all types, tribe pings),
-// 'downtime' (calm low-ping games, bonus treasury/no glory), or 'dead' (no events — the pre-dawn lull).
+// Which arena mode are we in right now, in the configured timezone? 'peak' (full slate minus Blitz, tribe
+// pings), 'downtime' (calm low-ping games, bonus treasury/no glory), or 'dead' (no events — the pre-dawn lull).
 function arenaMode() {
   const hour = Number(new Date().toLocaleString('en-US', { timeZone: config.arenaAutoTimezone, hour: '2-digit', hour12: false }));
   if (hour >= config.arenaAutoStartHour && hour < config.arenaAutoEndHour) return 'peak';
   if (hour >= config.arenaDowntimeStartHour && hour < config.arenaDowntimeEndHour) return 'downtime';
   return 'dead';
 }
+// TRUE PEAK (owner, 2026-08-16): a narrower slice INSIDE the peak window — the busiest realistic overlap
+// across regions. Only meaningful when arenaMode() === 'peak'; a separate check rather than a 4th arenaMode
+// value since it's a sub-tier of peak, not a distinct top-level window.
+function isTruePeakHour() {
+  const hour = Number(new Date().toLocaleString('en-US', { timeZone: config.arenaAutoTimezone, hour: '2-digit', hour12: false }));
+  return hour >= config.arenaTruePeakStartHour && hour < config.arenaTruePeakEndHour;
+}
 // Auto-start (owner: "have the bot start them randomly"). Called on a ~15-min tick: pick the mode; if dead do
 // nothing; otherwise, if nothing's running, under the daily cap, and the randomly-scheduled next-auto time has
-// passed, launch a random type (calm subset in downtime). recordEnd schedules the next one with a mode-aware
-// random gap (1h..2h peak, 2h..3.5h downtime). Manual starts still work anytime (subject to the 1h floor).
+// passed, launch a random type (calm subset in downtime, full slate incl. Blitz only in true peak). recordEnd
+// schedules the next one with a tier-aware random gap (1h..2h true peak, 2h..3.5h regular, 3h..5h downtime).
+// Manual starts still work anytime (subject to the 1.5h floor).
 async function maybeAutoStartArena(guild) {
   if (!config.arenaAutoStart) return;
   const mode = arenaMode();
   if (mode === 'dead') return;
-  if (arena.startBlocked()) return;        // already running/lobby, under the 1h floor, or daily cap reached
+  if (arena.startBlocked()) return;        // already running/lobby, under the 1.5h floor, or daily cap reached
   if (!arena.autoStartDue(Date.now())) return;   // the randomly-scheduled next-auto time hasn't arrived yet
   if (!eventPacing.combinedGapMet(Date.now())) return;   // something else (sealed/trial) ran too recently
   const downtime = mode === 'downtime';
-  const fullPool = downtime ? DOWNTIME_TYPES : ARENA_ALL_TYPES;
+  const truePeak = mode === 'peak' && isTruePeakHour();
+  const fullPool = downtime ? DOWNTIME_TYPES : (truePeak ? ARENA_ALL_TYPES : REGULAR_TYPES);
   // A type can't come back around until roughly half the pool has cycled through (not just avoiding an
   // immediate back-to-back repeat) — owner: "shouldn't repeat until half the games have been done."
   const pool = arena.excludeRecent(fullPool, arena.getHistory());
   const type = pool[Math.floor(Math.random() * pool.length)];
-  try { await startArenaCountdown(guild, type, ARENA_DEFAULTS[type] || 5, client.user.id, downtime); console.log(`[arena] auto-started ${type}${downtime ? ' (downtime)' : ''}`); }
-  catch (e) { console.error('[arena] auto-start:', e.message); }
+  try {
+    await startArenaCountdown(guild, type, ARENA_DEFAULTS[type] || 5, client.user.id, downtime, truePeak);
+    console.log(`[arena] auto-started ${type}${downtime ? ' (downtime)' : truePeak ? ' (true peak)' : ''}`);
+  } catch (e) { console.error('[arena] auto-start:', e.message); }
 }
 
 async function arenaChannel(guild) { const a = arena.get(); if (!a) return null; return guild.channels.fetch(a.channelId).catch(() => null); }
@@ -1725,7 +1740,7 @@ function tribeName(key) { const t = tribes.get(key); return t ? `${t.emoji || '�
 // A challenge no longer starts the instant the button is clicked. Instead we announce a 5-minute "get ready"
 // LOBBY (owner) — a general ping in tribe-announcements + a per-tribe heads-up in each throne — then beginArena
 // actually launches the game. The lobby throne pings double as the event pings and are cleaned up at endArena.
-async function startArenaCountdown(guild, type, minutes, startedById, downtime = false) {
+async function startArenaCountdown(guild, type, minutes, startedById, downtime = false, truePeak = false) {
   const channel = await ensureArenaChannel(guild, config);
   if (!channel) throw new Error('no tribe-announcements channel');
   const startsAt = Date.now() + ARENA_LOBBY_MS;
@@ -1745,7 +1760,7 @@ async function startArenaCountdown(guild, type, minutes, startedById, downtime =
     const p = await throne.send({ content: `🎪 <@&${t.roleId}> — a **${label}** arena begins <t:${Math.floor(startsAt / 1000)}:R>! Get ready and gather in <#${channel.id}>.`, allowedMentions: { roles: [t.roleId] } }).catch(() => null);
     if (p) thronePings[t.key] = { channelId: t.throneId, messageId: p.id };
   }
-  arena.set({ type, minutes, phase: 'lobby', channelId: channel.id, startedBy: startedById, startsAt, downtime,
+  arena.set({ type, minutes, phase: 'lobby', channelId: channel.id, startedBy: startedById, startsAt, downtime, truePeak,
     lobbyMessageId: lobby ? lobby.id : null, thronePings, scores: {}, participants: [] });
   eventPacing.recordEvent(Date.now());
   _arenaTimers.start = setTimeout(() => beginArena(guild).catch(e => console.error('[arena] begin:', e.message)), ARENA_LOBBY_MS);
@@ -1768,7 +1783,7 @@ async function beginArena(guild) {
   // Preserve the lobby-created state (throne pings, lobby message, base scores) into the LIVE state.
   const base = { type, minutes, phase: 'live', channelId: channel.id, startedBy: pending.startedBy,
     startedAt: Date.now(), endsAt, scores: pending.scores || {}, participants: pending.participants || [],
-    thronePings, lobbyMessageId: pending.lobbyMessageId || null, downtime: pending.downtime || false };
+    thronePings, lobbyMessageId: pending.lobbyMessageId || null, downtime: pending.downtime || false, truePeak: pending.truePeak || false };
   if (type === 'race') {
     const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('arena_claim').setEmoji('🏁').setLabel('Claim for your tribe!').setStyle(ButtonStyle.Success));
     const msg = await channel.send({ content: `# 🏁 Reaction Race!\nFirst tribe to **${arena.RACE_TARGET}** claims wins **+${arena.WIN_GLORY} Glory / +${arena.WIN_TREASURY} Treasury**. One claim per member. Ends <t:${Math.floor(endsAt / 1000)}:R> if nobody hits the target.\n\n${arenaScoreboard({ ...base })}`, components: [row] });
@@ -2079,7 +2094,8 @@ async function finalizeArena(guild, win, note = '') {
     const mentions = { roles: roleIds }; if (users.length) mentions.users = users;
     await ch.send({ content: `${resultText}${mvpLine}${achLine}\n${roleIds.map(r => `<@&${r}>`).join(' ')}`, allowedMentions: mentions }).catch(() => {});
   }
-  arena.recordEnd(Date.now(), dt, a.type);   // stamp end + schedule the next auto (longer gap if downtime)
+  const gapTier = a.downtime ? 'downtime' : a.truePeak ? 'truepeak' : 'regular';
+  arena.recordEnd(Date.now(), gapTier, a.type);   // stamp end + schedule the next auto (tier-aware gap)
   arena.clear();
 }
 // Called on boot: an active challenge from before a restart is ended immediately (a restart ends it early)
