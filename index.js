@@ -2346,7 +2346,9 @@ async function reconcileSealed(guild) {
   return finishSealedArena(guild).catch(e => console.error('[sealed] boot resolve:', e.message));
 }
 // Auto-scheduler: hourly, fire during peak hours if enabled, under the daily cap, nothing else live, min-gap met.
-function sealedPeakHour() { const h = new Date().getUTCHours(); return h >= 15 && h <= 23; }   // ~peak (Europe evening), tune later
+// Unified with Arena's own config-driven schedule (owner, 2026-08-16) — this used to be an independent
+// hardcoded UTC 15-23 window, a second clock that could drift out of sync with Arena's actual peak hours.
+function sealedPeakHour() { return arenaMode() === 'peak'; }
 async function sealedAutoTick(guild) {
   if (!features.enabled('sealedArena') || sealed.isActive() || arena.isActive()) return;
   if (sealed.dailyCount(Date.now()) >= SEALED_DAILY_CAP) return;
