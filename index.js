@@ -5966,17 +5966,19 @@ client.on('messageDelete', async (msg) => {
     const rec = promote.cancelByMessageId(msg.id);
     if (rec) console.log(`[promote] auto-cancelled orphaned vote for ${rec.candidateId} (message ${msg.id} deleted)`);
   } catch (e) { console.error('[promote] messageDelete:', e.message); }
-  // Deleted-message log → #watch-log (owner, 2026-08-07: "start recording deleted messages"). Only for
-  // messages the bot actually had cached (msg.partial → we never saw the content, nothing useful to log),
-  // real non-bot authors, and not the watch-log channel itself (avoid the log logging itself).
+  // Deleted-message log → its own #deletion-log (owner, 2026-08-07: "start recording deleted messages";
+  // split out of #watch-log into its own channel 2026-08-16 so watchlist flags and plain deletions don't
+  // mix in the same feed). Only for messages the bot actually had cached (msg.partial → we never saw the
+  // content, nothing useful to log), real non-bot authors, and not the log channel itself (avoid the log
+  // logging itself).
   try {
-    if (msg.partial || !msg.guild || !config.watchLogChannelId || msg.channelId === config.watchLogChannelId) return;
+    if (msg.partial || !msg.guild || !config.deletionLogChannelId || msg.channelId === config.deletionLogChannelId) return;
     if (!msg.author || msg.author.bot) return;
     // Skip THRONE channels — throneExpire.js routinely auto-deletes every throne message after 24h by
     // design (not a moderation event), so logging those was just clutter (owner, 2026-08-08: "skip
     // messages deleted by the bot in the deletion log" re: throne 24h expiry).
     if (tribes.all().some(t => t.throneId === msg.channelId)) return;
-    const ch = await client.channels.fetch(config.watchLogChannelId).catch(() => null);
+    const ch = await client.channels.fetch(config.deletionLogChannelId).catch(() => null);
     if (!ch) return;
     // messageDelete carries no executor — MESSAGE_DELETE audit entries don't carry the message id either,
     // so correlate on author + channel + recency (same best-effort pattern threadDelete's appeal-log uses
