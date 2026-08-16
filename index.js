@@ -3440,16 +3440,27 @@ async function handleCornerButton(interaction) {
       desc: `<@${userId}> was sent straight back to the corner **indefinitely**.\n**By:** <@${interaction.user.id}>` });
     return interaction.editReply(`⛓️ Re-cornered <@${userId}>, stripped **${r.stripped}** role(s).`);
   }
+  // owner, 2026-08-16: these 3 branches were writing state.setCornered() directly, with ZERO tier/override
+  // check — a mod could one-click-release someone an owner or admin deliberately cornered, completely
+  // bypassing corner.attemptSeverityChange (the exact gate /uncorner already routes both its paths through).
+  // Same gate here now, for all 3 severity-changing branches this button drives.
+  const actorTier = opspanel.tierOf(interaction);
+  const gateReply = (res) => interaction.editReply(res.need
+    ? `🔒 That shortens their time below what a higher tier set. Need **${res.need}** ${actorTier}${res.need === 1 ? '' : 's'} to try within 5 minutes (**${res.have}/${res.need}** so far).`
+    : `🔒 That shortens their time below what a higher tier set, and your tier has no override path for this.`);
   if (msStr === 'indef') {
-    const rec = state.getCornered(userId);
-    if (!rec) return interaction.editReply(`<@${userId}> is not in the corner.`);
-    state.setCornered(userId, { ...rec, releaseAt: null });   // null = never auto-released
+    const res = corner.attemptSeverityChange(state, userId, interaction.user.id, actorTier, null);
+    if (res.notFound) return interaction.editReply(`<@${userId}> is not in the corner.`);
+    if (!res.ok) return gateReply(res);
     corner.clearTimer(userId);                                // cancel the pending precise-release timer
     await logCorner(guild, { emoji: '♾️', title: 'SENTENCE CHANGED', color: CORNER_AMBER,
       desc: `<@${userId}>'s corner is now **indefinite** (no auto-release).\n**By:** <@${interaction.user.id}>` });
     return interaction.editReply(`♾️ <@${userId}> is now cornered **indefinitely**. They stay until manually released.`);
   }
   if (ms === 0) {
+    const relCheck = corner.attemptSeverityChange(state, userId, interaction.user.id, actorTier, 'RELEASE');
+    if (relCheck.notFound) return interaction.editReply(`<@${userId}> is not in the corner.`);
+    if (!relCheck.ok) return gateReply(relCheck);
     const r = await corner.uncorner(guild, userId, state);
     if (!r.ok) return interaction.editReply(`Failed to release: ${r.error}`);
     const served = servedSuffix(r.servedMs);
@@ -3465,7 +3476,9 @@ async function handleCornerButton(interaction) {
   if (!rec) return interaction.editReply(`<@${userId}> is not in the corner.`);
   const baseline = (rec.releaseAt && rec.releaseAt > Date.now()) ? rec.releaseAt : Date.now();
   const releaseAt = baseline + ms;
-  state.setCornered(userId, { ...rec, releaseAt });
+  const res = corner.attemptSeverityChange(state, userId, interaction.user.id, actorTier, releaseAt);
+  if (res.notFound) return interaction.editReply(`<@${userId}> is not in the corner.`);
+  if (!res.ok) return gateReply(res);
   corner.armTimer(guild, userId, releaseAt);   // reschedule the pending auto-release — the stored releaseAt
   // changing doesn't touch the already-armed setTimeout, which would otherwise still fire at the OLD time
   // (a sentence extended from 2min to 1hr was auto-releasing at the original 2min mark, seen live in corner-log).
