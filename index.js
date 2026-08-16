@@ -7686,9 +7686,10 @@ client.on('interactionCreate', async (interaction) => {
     if (!req) return interaction.update({ content: 'This founding request is no longer active.', components: [] }).catch(() => {});
     const updated = tribes.cosignFounding(founderId, interaction.user.id);
     if (!updated) return interaction.reply({ content: 'You already co-signed this.', flags: MessageFlags.Ephemeral });
-    const need = Math.max(0, 2 - updated.cosigns.length);
+    const needed = Math.max(0, config.modFoundingCosignsRequired ?? 2);
+    const need = Math.max(0, needed - updated.cosigns.length);
     const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribefound_cosign:${founderId}`).setLabel('✅ Co-sign').setStyle(ButtonStyle.Success));
-    await interaction.update({ content: `## 🏴 Tribe founding request\n> <@${founderId}> wants to found a tribe. Co-signed by ${updated.cosigns.map(id => `<@${id}>`).join(', ')}.\n${need > 0 ? `-# Needs **${need} more** mod${need === 1 ? '' : 's'} to co-sign.` : `-# ✅ **3 mods reached** (founder + 2 co-signs). <@${founderId}> can now run \`/tribe-admin create\` again to continue.`}`, components: need > 0 ? [row] : [], allowedMentions: { users: [founderId, ...updated.cosigns] } });
+    await interaction.update({ content: `## 🏴 Tribe founding request\n> <@${founderId}> wants to found a tribe. Co-signed by ${updated.cosigns.map(id => `<@${id}>`).join(', ')}.\n${need > 0 ? `-# Needs **${need} more** mod${need === 1 ? '' : 's'} to co-sign.` : `-# ✅ **${needed + 1} mods reached** (founder + ${needed} co-sign${needed === 1 ? '' : 's'}). <@${founderId}> can now run \`/tribe-admin create\` again to continue.`}`, components: need > 0 ? [row] : [], allowedMentions: { users: [founderId, ...updated.cosigns] } });
   }
   // ---- Rituals: muster roll-call join button ----
   if (interaction.isButton?.() && interaction.customId.startsWith('tribemuster_join:')) {
@@ -9144,29 +9145,36 @@ client.on('interactionCreate', async (interaction) => {
       const leaderIsEligible = leaderMember && (['admin', 'owner'].includes(leaderTier) || isModSelfFound);
       if (!leaderIsEligible) return interaction.reply({ content: 'A tribe head has to hold the **admin role**, or be a **mod founding their own tribe** (you must name yourself as leader).', flags: MessageFlags.Ephemeral });
       if (isModSelfFound) {
-        // Owner: "if a mod wants to start a tribe it must be in a group of three" — the founder needs 2 OTHER
-        // mods to co-sign before the wizard unlocks. Admin-founded tribes skip this entirely.
+        // Owner: "if a mod wants to start a tribe it must be in a group of three" — the founder needs
+        // config.modFoundingCosignsRequired OTHER mods to co-sign before the wizard unlocks. Admin-founded
+        // tribes skip this entirely. FUBU keeps the default of 2; Melanin's env overrides this to 0 (owner,
+        // 2026-08-16: its mod team is much smaller, so a mod there can found a tribe solo).
         // BUG FIXED 2026-08-03: this used to clearFoundingRequest() BEFORE showModal(), so if the modal call
         // ever failed (or the founder didn't finish the wizard, e.g. got rejected by the Build-step bug
         // above), the founding request was already gone with nothing to show for it — confirmed live: a
         // founder hit "3 mods reached", the request vanished, and 11 hours later they had to gather 2 FRESH
         // co-signs from scratch since /tribe-admin create just started a brand-new request. Now only cleared
         // in tribewiz_build's actual success path, so re-running this command is always safe to retry.
-        const existing = tribes.getFoundingRequest(interaction.user.id);
-        if (existing && existing.cosigns.length >= 2) {
+        const needed = Math.max(0, config.modFoundingCosignsRequired ?? 2);
+        if (needed === 0) {
           wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
           return safeShowModal(interaction, tribeIdentityModal());
         }
-        if (existing) return interaction.reply({ content: `Still waiting on co-signs: **${existing.cosigns.length}/2** mods so far. Check <#${config.modAnnounceChannelId}>.`, flags: MessageFlags.Ephemeral });
+        const existing = tribes.getFoundingRequest(interaction.user.id);
+        if (existing && existing.cosigns.length >= needed) {
+          wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
+          return safeShowModal(interaction, tribeIdentityModal());
+        }
+        if (existing) return interaction.reply({ content: `Still waiting on co-signs: **${existing.cosigns.length}/${needed}** mods so far. Check <#${config.modAnnounceChannelId}>.`, flags: MessageFlags.Ephemeral });
         if (!config.modAnnounceChannelId) return interaction.reply({ content: 'No mod-announcements channel configured to route this through.', flags: MessageFlags.Ephemeral });
         const ch = await interaction.guild.channels.fetch(config.modAnnounceChannelId).catch(() => null);
         if (!ch) return interaction.reply({ content: 'Couldn’t find the mod-announcements channel.', flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         tribes.startFoundingRequest(interaction.user.id);
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribefound_cosign:${interaction.user.id}`).setLabel('✅ Co-sign').setStyle(ButtonStyle.Success));
-        const msg = await ch.send({ content: `## 🏴 Tribe founding request\n> <@${interaction.user.id}> wants to found a tribe. Founding a tribe as a mod takes **3 mods** total, needs **2 more** co-signs from other mods.`, components: [row], allowedMentions: { users: [interaction.user.id] } }).catch(() => null);
+        const msg = await ch.send({ content: `## 🏴 Tribe founding request\n> <@${interaction.user.id}> wants to found a tribe. Founding a tribe as a mod takes **${needed + 1} mods** total, needs **${needed} more** co-signs from other mods.`, components: [row], allowedMentions: { users: [interaction.user.id] } }).catch(() => null);
         if (msg) tribes.setFoundingMessage(interaction.user.id, ch.id, msg.id);
-        return interaction.editReply(`🏴 Posted to <#${ch.id}>. Needs **2 more** mods to co-sign before you can continue. Run this command again once they have.`);
+        return interaction.editReply(`🏴 Posted to <#${ch.id}>. Needs **${needed} more** mods to co-sign before you can continue. Run this command again once they have.`);
       }
       wizardTouch(interaction.user.id, { leaderId: leaderMember.id });
       return safeShowModal(interaction, tribeIdentityModal());

@@ -185,6 +185,12 @@ const config = {
   // Public "spectacle" channel for big tribe moments (war results, crownings, season champions) so lurkers
   // and newcomers see the drama. Empty = fall back to the tribe-announcements channel.
   tribeSpectacleChannelId: opt('TRIBE_SPECTACLE_CHANNEL_ID', ''),
+
+  // A mod founding their own tribe needs this many OTHER mods to co-sign first (owner: "if a mod wants to
+  // start a tribe it must be in a group of three" — FUBU default, 2 more cosigns on top of the founder).
+  // Melanin's mod team is much smaller, so its env overrides this to 0 — a mod there can found solo, no
+  // cosigns needed (owner, 2026-08-16: "let's allow mods to create tribe on their own").
+  modFoundingCosignsRequired: num('MOD_FOUNDING_COSIGNS_REQUIRED', 2),
   // The Chronicle channel: where the weekly history chapter is written. Empty = fall back to the spectacle chan.
   tribeChronicleChannelId: opt('TRIBE_CHRONICLE_CHANNEL_ID', ''),
 
