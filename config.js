@@ -142,6 +142,11 @@ const config = {
   mdniChannelId: opt('MDNI_CHANNEL_ID', '1531720395357687868'),              // 🔞┆ᴍᴅɴɪ (the gated 18+ channel)
   minorAgeRoleId: opt('MINOR_AGE_ROLE_ID', '1516185172213628989'),           // ✰ • 16-17
   adultAgeRoleIds: opt('ADULT_AGE_ROLE_IDS', '1516185300492222618,1516185358415433739,1516209186839466113').split(',').map(s => s.trim()).filter(Boolean), // 18-21 / 21-25 / 25-30+
+  // Second, stricter 18+ space (owner, 2026-08-16): NSFW-flagged, requires MDNI AND a confirmed adult age
+  // role TOGETHER. Discord can't express role-AND at the permission layer (every allow is OR'd), so the
+  // bot auto-manages a combined role instead — see enforceMdniVerified/sweepMdniVerified in index.js.
+  mdniVerifiedRoleId: opt('MDNI_VERIFIED_ROLE_ID', '1538353267493437460'),  // 🔞 𝗠𝗗𝗡𝗜 𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗 (auto-managed, MDNI + adult age)
+  mdniNsfwChannelId: opt('MDNI_NSFW_CHANNEL_ID', '1538353269146128545'),    // 🔞┆ᴍᴅɴɪ-ɴsꜰᴡ (nsfw:true, gated on mdniVerifiedRoleId)
   // Mod-dashboard channel — its non-pinned messages get tidied weekly (the pinned panel stays).
   dashboardChannelId: opt('DASHBOARD_CHANNEL_ID', '1531087673760944331'),
 
