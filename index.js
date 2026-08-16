@@ -4124,6 +4124,14 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('member').setDescription('The trial mod to demote').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('reason').setDescription('Optional note, kept internal').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+      new SlashCommandBuilder().setName('demote-mod').setDescription('Remove the Mod role from a member (owner)')
+        .addStringOption(o => o.setName('member').setDescription('The mod to demote').setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName('reason').setDescription('Optional note, kept internal').setRequired(false))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+      new SlashCommandBuilder().setName('demote-admin').setDescription('Remove the Admin role from a member (owner)')
+        .addStringOption(o => o.setName('member').setDescription('The admin to demote').setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName('reason').setDescription('Optional note, kept internal').setRequired(false))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
 
       // #roles picker management — one-up on the old Carl-bot setup: add/remove a self-assign role in a
       // section with one command, no manual message editing (admin).
@@ -6130,15 +6138,18 @@ client.on('interactionCreate', async (interaction) => {
     }
     // Role-filtered member pickers: only list members who actually hold the applicable role, so the
     // list in the command matches the dropdowns (class fix). promote-trial/demote-trial → trial mods;
-    // promote-mod → mods (excluding admins/owners who hold the mod role via nesting).
-    if (interaction.commandName === 'promote-trial' || interaction.commandName === 'demote-trial' || interaction.commandName === 'promote-mod') {
+    // promote-mod/demote-mod → mods (excluding admins/owners who hold the mod role via nesting);
+    // demote-admin → admins (excluding owners who hold it via nesting).
+    if (['promote-trial', 'demote-trial', 'promote-mod', 'demote-mod', 'demote-admin'].includes(interaction.commandName)) {
       try {
         const focused = (interaction.options.getFocused() || '').toLowerCase();
-        const roleId = interaction.commandName === 'promote-mod' ? config.modRoleId : config.trialModRoleId;
+        const roleId = interaction.commandName === 'demote-admin' ? config.adminRoleId
+          : (interaction.commandName === 'promote-mod' || interaction.commandName === 'demote-mod') ? config.modRoleId : config.trialModRoleId;
         const role = roleId && await interaction.guild.roles.fetch(roleId).catch(() => null);
         if (!role) return interaction.respond([]);
         let members = [...role.members.values()];
-        if (interaction.commandName === 'promote-mod') members = members.filter(m => opspanel.memberTier(m) === 'mod');   // real mods only, not admins/owners
+        if (interaction.commandName === 'promote-mod' || interaction.commandName === 'demote-mod') members = members.filter(m => opspanel.memberTier(m) === 'mod');   // real mods only, not admins/owners
+        if (interaction.commandName === 'demote-admin') members = members.filter(m => opspanel.memberTier(m) === 'admin');   // real admins only, not owners
         const matches = members
           .filter(m => !focused || m.user.username.toLowerCase().includes(focused) || m.displayName.toLowerCase().includes(focused) || m.id.includes(focused))
           .slice(0, 25)
@@ -8788,6 +8799,48 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(ok
       ? `✅ Removed the **Trial Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
       : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Trial Mod**.').catch(() => {});
+  }
+  if (name === 'demote-mod') {
+    // Owner/approver only — same tier bar as demote-trial.
+    const approvers = modapps.loadConfig().approvers || [];
+    if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
+      return interaction.reply({ content: 'Only the **server owner** can demote a mod.', flags: MessageFlags.Ephemeral });
+    if (!config.modRoleId) return interaction.reply({ content: 'No Mod role is configured.', flags: MessageFlags.Ephemeral });
+    const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
+    if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
+    if (!target.roles.cache.has(config.modRoleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    // Admins/owners hold Mod via tier nesting (owner⊇admin⊇mod) — stripping it here would just get
+    // auto-restored on the next role-change sweep. Point at the right command instead of silently no-op'ing.
+    const targetTier = opspanel.memberTier(target);
+    if (targetTier === 'admin' || targetTier === 'owner')
+      return interaction.reply({ content: `<@${target.id}> holds Mod through being an **${targetTier === 'owner' ? 'Owner' : 'Admin'}** — use \`/demote-admin\` (or remove their Owner role directly) instead; removing Mod alone would just be auto-restored by tier nesting.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const reason = interaction.options.getString('reason');
+    const ok = await target.roles.remove(config.modRoleId, `Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
+    return interaction.editReply(ok
+      ? `✅ Removed the **Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
+      : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Mod**.').catch(() => {});
+  }
+  if (name === 'demote-admin') {
+    // Owner/approver only — same tier bar as demote-trial.
+    const approvers = modapps.loadConfig().approvers || [];
+    if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
+      return interaction.reply({ content: 'Only the **server owner** can demote an admin.', flags: MessageFlags.Ephemeral });
+    if (!config.adminRoleId) return interaction.reply({ content: 'No Admin role is configured.', flags: MessageFlags.Ephemeral });
+    const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
+    if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
+    if (target.id === interaction.guild.ownerId) return interaction.reply({ content: 'You can’t demote the server owner.', flags: MessageFlags.Ephemeral });
+    if (!target.roles.cache.has(config.adminRoleId)) return interaction.reply({ content: `<@${target.id}> isn’t an **Admin**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    // Owners hold Admin via tier nesting (owner⊇admin) — stripping it here would just get auto-restored.
+    const targetTier = opspanel.memberTier(target);
+    if (targetTier === 'owner')
+      return interaction.reply({ content: `<@${target.id}> holds Admin through an **Owner** role — remove that role directly in Discord instead; \`/demote-admin\` alone would just be auto-restored by tier nesting.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const reason = interaction.options.getString('reason');
+    const ok = await target.roles.remove(config.adminRoleId, `Admin demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
+    return interaction.editReply(ok
+      ? `✅ Removed the **Admin** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''} If they hold Mod independently it stays; a purely tier-nested grant is cleaned up automatically.`
+      : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Admin**.').catch(() => {});
   }
   if (name === 'help') {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
