@@ -664,6 +664,64 @@ async function archiveOwnApplication(guild, memberId) {
   return archived;
 }
 
+// Rebuild a LIVE, working application from its static archived copy (owner, 2026-08-17: "can we get that
+// application back up" — archiveOwnApplication deletes the real thread + state record, but the applicant's
+// original answers survive as a static embed in the archive channel). Creates a fresh applicant thread +
+// review post from the most recent archived copy for that member, status 'open', votes reset to 0 (the
+// archive only has vote COUNTS, not voter identities, so there's nothing real to carry over) — a genuine
+// new consideration, not a resurrection of the exact old vote. Leaves the archive post as-is.
+async function restoreArchived(guild, memberId) {
+  const c = loadConfig();
+  if (!c.archiveChannelId || !c.forumId || !c.appsChannelId) return { ok: false, error: 'not set up.' };
+  const archiveCh = await guild.channels.fetch(c.archiveChannelId).catch(() => null);
+  if (!archiveCh) return { ok: false, error: 'archive channel not found.' };
+  let before, match;
+  for (let i = 0; i < 10 && !match; i++) {
+    const batch = await archiveCh.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+    if (!batch || !batch.size) break;
+    for (const m of batch.values()) {
+      const e = m.embeds?.[0];
+      const applicantField = e?.fields?.find(f => f.name === 'Applicant');
+      if (applicantField && applicantField.value.includes(memberId)) { match = e; break; }
+    }
+    before = [...batch.values()].pop()?.id;
+    if (batch.size < 100) break;
+  }
+  if (!match) return { ok: false, error: 'no archived application found for that member.' };
+  const g = fname => match.fields.find(f => f.name === fname)?.value;
+  const applyingFor = g('Applying for') || '';
+  const langMatch = applyingFor.match(/^🌐 Mini-Mod: (.+)$/i);
+  const track = langMatch ? 'lang' : 'mod';
+  const lang = langMatch ? langMatch[1] : null;
+  const clean = v => (v && v !== '-' ? v : null);
+  const answers = { age: clean(g('Age')), tz: clean(g('Active')), why: clean(g('Why mod?')), exp: clean(g('Experience')), extra: clean(g('Anything else')) };
+  const member = await guild.members.fetch(memberId).catch(() => null);
+  const forum = await guild.channels.fetch(c.forumId).catch(() => null);
+  const appsCh = await guild.channels.fetch(c.appsChannelId).catch(() => null);
+  if (!forum || !appsCh) return { ok: false, error: 'forum/apps channel not found.' };
+  const appThread = await appsCh.threads.create({
+    name: `Application · ${member?.user?.username || memberId}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,
+    reason: `Restored mod application for ${memberId}`,
+  });
+  if (member) await appThread.members.add(memberId).catch(() => {});
+  await appThread.send({ content: `🔄 Staff reopened your earlier application for another look. You don't need to do anything right now — hang tight.`,
+    embeds: [new EmbedBuilder().setColor(0x5865F2).setTitle('Your application').addFields(
+      { name: 'Age', value: answers.age || '-', inline: true }, { name: 'Active', value: (answers.tz || '-').slice(0, 100), inline: true },
+      { name: 'Why mod?', value: (answers.why || '-').slice(0, 1024) },
+      ...(answers.exp ? [{ name: 'Experience', value: answers.exp.slice(0, 1024) }] : []),
+      ...(answers.extra ? [{ name: 'Anything else', value: answers.extra.slice(0, 1024) }] : []))],
+    allowedMentions: { users: member ? [memberId] : [] } }).catch(() => {});
+  const post = { applicantId: memberId, appThreadId: appThread.id, status: 'open', up: [], down: [], startPoints: 0, recordReason: 'restored from archive', track, lang };
+  const review = await forum.threads.create({
+    name: `App · ${member?.user?.username || memberId}`.slice(0, 95),
+    message: { embeds: [reviewEmbed(post, answers)], components: reviewComponents(post, false) },
+    appliedTags: c.tags.pending ? [c.tags.pending] : [], reason: `Restored mod application for ${memberId}`,
+  });
+  const state = loadState();
+  state.posts[review.id] = post; saveState(state);
+  return { ok: true, reviewThreadId: review.id, appThreadId: appThread.id, track, lang };
+}
+
 // Trial-mod-only fix: a trial mod can't see the review forum at all (category-gated), so their only handle
 // on their own application is the private applicant thread they're a member of — remove their membership
 // (thread + review post stay for staff). Idempotent. NOT sufficient for mod+ — see archiveOwnApplication.
@@ -769,5 +827,5 @@ async function setApplicationsOpen(guild, open, message, track = 'both') {
   return { open };
 }
 
-module.exports = { setup, buildModal, positionRow, submitFromModal, handleButton, handlePositionSelect, handleAskModal, isConfigured, loadConfig, migrateLegacy, rerender, upgradeLegacyVotes, relayApplicantReply, backfillUndoButtons, sealOwnApplication, archiveOwnApplication,
+module.exports = { setup, buildModal, positionRow, submitFromModal, handleButton, handlePositionSelect, handleAskModal, isConfigured, loadConfig, migrateLegacy, rerender, upgradeLegacyVotes, relayApplicantReply, backfillUndoButtons, sealOwnApplication, archiveOwnApplication, restoreArchived,
   enforceReviewThreadMembers, enforceApplicantThreadMembers, removeDemotedFromReviewThreads, sweepReviewThreadMembers, applicationsOpen, closedNotice, setApplicationsOpen };

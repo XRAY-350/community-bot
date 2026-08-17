@@ -4198,6 +4198,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('track').setDescription('Which position? (default: both)').setRequired(false)
             .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Mini-mod', value: 'lang' }))
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
+        .addSubcommand(s => s.setName('restore').setDescription('Bring an archived application back as a fresh, votable one (e.g. reconsidering a mini-mod for full Mod)')
+          .addUserOption(o => o.setName('user').setDescription('The applicant whose archived application to restore').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
@@ -8930,6 +8932,14 @@ client.on('interactionCreate', async (interaction) => {
       await modapps.setApplicationsOpen(interaction.guild, true, null, track);
       await ownerlog.log(interaction.guild, { emoji: '✅', title: `Mod applications REOPENED (${TRACK_LABEL[track]})`, color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> — members can \`/apply-mod\` for ${TRACK_LABEL[track]} again.` });
       return interaction.editReply(`✅ **${TRACK_LABEL[track]}** mod applications are now **OPEN**. Members can \`/apply-mod\` again.`);
+    }
+    if (sub === 'restore') {
+      const user = interaction.options.getUser('user');
+      const r = await modapps.restoreArchived(interaction.guild, user.id);
+      if (!r.ok) return interaction.editReply(`❌ ${r.error}`);
+      await ownerlog.log(interaction.guild, { emoji: '🔄', title: 'Mod application restored from archive', color: 0xF1C40F,
+        detail: `<@${user.id}> — restored by <@${interaction.user.id}>. Fresh vote in <#${r.reviewThreadId}>.` });
+      return interaction.editReply(`🔄 Restored <@${user.id}>'s application (originally applied as ${r.track === 'lang' ? `${r.lang} Mini-Mod` : 'Moderator'}) as a **fresh** review in <#${r.reviewThreadId}> — votes reset to 0, ready to reconsider.`);
     }
     return;
   }
