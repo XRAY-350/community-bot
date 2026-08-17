@@ -6133,6 +6133,11 @@ client.on('messageDelete', async (msg) => {
         e.targetId === msg.author.id && e.extra?.channel?.id === msg.channelId && (Date.now() - e.createdTimestamp) < 10000);
       if (entry?.executor && entry.executor.id !== msg.author.id) deleterId = entry.executor.id;
     } catch { /* best-effort — falls back to "themselves" below */ }
+    // Skip the bot's OWN deletions (owner, 2026-08-17: "don't have messages deleted by the bot because of
+    // media filter and such show in the deletion log") — word filter, media filter, and any other
+    // auto-moderation delete are already visible via their own /list commands; this log is for deletions a
+    // HUMAN did (self-delete, or a mod manually removing something), not the bot enforcing a live filter.
+    if (deleterId === client.user.id) return;
     const content = (msg.content || '').trim();
     const embed = new EmbedBuilder().setColor(0x99AAB5)
       .setDescription(`🗑️ **Message deleted** — by <@${msg.author.id}>, in <#${msg.channelId}>, deleted by ${deleterId ? `<@${deleterId}>` : `<@${msg.author.id}> _(themselves)_`}`
