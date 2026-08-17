@@ -196,10 +196,13 @@ async function openReadOnly(interaction) {
 async function buildOverview() {
   const [pending, cornered] = [await pendingCount(), corneredMap()];
   const c = D.config;
+  // Same "left the server" filter as buildCorner — a cornered member who left isn't visibly in the corner.
+  const overviewGuild = D.client.guilds.cache.get(D.config.guildId) || D.client.guilds.cache.first();
+  const corneredCount = Object.keys(cornered).filter(id => overviewGuild?.members.cache.has(id)).length;
   const embed = new EmbedBuilder().setColor(0x5865f2).setDescription(
     '**Status right now.** Use the **dropdown below** to act. 📖 A full **command reference** is pinned at the top of this channel.\n\n' +
     `**🧵 Waiting to be verified:** ${pending} (opened a thread, need a mod to check them).\n` +
-    `**⛓️ In the corner:** ${Object.keys(cornered).length} (timed-out: roles removed, locked to the corner).\n` +
+    `**⛓️ In the corner:** ${corneredCount} (timed-out: roles removed, locked to the corner).\n` +
     `**🧹 Auto-removal:** ${c.dryRun ? '🟡 **TEST MODE**, *not* removing anyone' : '🟢 **ON**, removing for real'} · warns after **${c.warnDays}d**, removes after **${c.kickDays}d**.\n` +
     `**🔔 Helpers:** mod-nudges ${c.featureNudge ? 'on' : 'off'} · double-role flag ${c.conflictPing ? 'on' : 'off'} · weekly self-fix ${c.reactResolveEnabled ? 'on' : 'off'} · daily recap ${c.digestEnabled ? `${c.digestHour}:00` : 'off'}.`)
     .setFooter({ text: 'Anything marked 🔒 needs a higher role (Admin or Owner). Full command list is the pinned reference above.' }).setTimestamp(new Date());
@@ -257,7 +260,10 @@ function buildModeration() {
 
 async function buildCorner() {
   const cornered = corneredMap();
-  const ids = Object.keys(cornered);
+  // A cornered member who left the server stays cornered in state (so a rejoin sends them straight back),
+  // but they're not "in the corner" anywhere visible right now — owner, 2026-08-17: don't list them here.
+  const guild = D.client.guilds.cache.get(D.config.guildId) || D.client.guilds.cache.first();
+  const ids = Object.keys(cornered).filter(id => guild?.members.cache.has(id));
   const lines = [];
   const rows = [];
   let row = new ActionRowBuilder();

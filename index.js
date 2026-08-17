@@ -3332,7 +3332,9 @@ async function handleCorneredList(interaction) {
   if (!modClicked(interaction)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const cornered = state.listCornered();
-  const ids = Object.keys(cornered);
+  // A cornered member who left the server stays cornered in state (rejoining sends them straight back),
+  // but they're not visibly "in the corner" right now — owner, 2026-08-17: don't list them here.
+  const ids = Object.keys(cornered).filter(id => interaction.guild.members.cache.has(id));
   if (!ids.length) return interaction.editReply('✅ No one is in the corner.');
   const shown = ids.slice(0, 20);                    // Discord caps at 5 buttons/row × 5 rows
   const lines = [];
@@ -4714,6 +4716,19 @@ client.on('messageReactionAdd', async (reaction, user) => {
 client.on('guildMemberAdd', async (member) => {
   try {
     if (member.guild.id !== config.guildId || member.user.bot) return;
+    // A member who left WHILE cornered keeps their record (nothing clears it on leave — Discord itself
+    // wipes their roles, but state.cornered is keyed by userId, not membership). Owner, 2026-08-17: rejoining
+    // should drop them straight back in the corner, not through the normal Unverified/join flow — and NOT
+    // re-strip roles (there's nothing to strip, they joined with none) or touch the stored `roles` snapshot,
+    // so a later /uncorner still restores exactly what they had before they were first cornered.
+    const cornerRec = state.getCornered(member.id);
+    if (cornerRec && (cornerRec.releaseAt == null || cornerRec.releaseAt > Date.now())) {
+      await member.roles.add(config.cornerRoleId, 'Rejoined while still cornered').catch(e => console.error('[corner] rejoin re-apply:', e.message));
+      await logCorner(member.guild, { emoji: '⛓️', title: 'REJOINED WHILE CORNERED', color: CORNER_RED,
+        desc: `<@${member.id}> left the server while cornered and just rejoined — sent straight back to the corner.` });
+      console.log(`[corner] ${member.id} rejoined while cornered, re-applied corner role`);
+      return;
+    }
     freshwatch.onMemberJoin(member.guild, member);   // real-time join tracking (fresh-flag + influx detection)
     if (!config.unverifiedRoleId) return;
     if (member.roles.cache.has(config.verifiedRoleId)) return;   // already verified
