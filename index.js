@@ -2399,9 +2399,28 @@ async function startTribeGame(guild, { gameId, startedById }) {
       allowedMentions: { roles: t.roleId ? [t.roleId] : [] },
     }).catch(() => {});
   }));
+  tribegames.recordStart(Date.now());
+  eventPacing.recordEvent(Date.now());
   clearTribeGameTimers();
   _tribeGameTimers.start = setTimeout(() => beginTribeGame(guild).catch(e => console.error('[tribegames] begin:', e.message)), TRIBEGAME_LOBBY_MS);
   return { ok: true };
+}
+// Auto-start (owner, 2026-08-17: "they just weren't running automatically" — unlike Arena/Sealed/Trial,
+// Tribe Games had no scheduler at all, staff had to remember to launch one from /tribe panel). Only fires
+// during peak hours (needs real people around to set a rep and then actually go play), picks a random
+// catalog entry, and respects both its own wider auto-gap and the shared cross-system pacing floor.
+async function maybeAutoStartTribeGame(guild) {
+  if (!config.tribeGamesAutoStart) return;
+  if (arenaMode() !== 'peak') return;
+  if (tribegames.isActive()) return;
+  if (!tribegames.autoStartDue(Date.now())) return;
+  if (!eventPacing.combinedGapMet(Date.now())) return;
+  const ids = Object.keys(tribegames.GAME_CATALOG);
+  const gameId = ids[Math.floor(Math.random() * ids.length)];
+  try {
+    const r = await startTribeGame(guild, { gameId, startedById: client.user.id });
+    if (r.ok) console.log(`[tribegames] auto-started ${gameId}`);
+  } catch (e) { console.error('[tribegames] auto-start:', e.message); }
 }
 async function beginTribeGame(guild) {
   const a = tribegames.get(); if (!a || a.phase !== 'lobby') return;
@@ -4527,6 +4546,7 @@ client.once('ready', async () => {
   // Auto-start random arenas through the active day (owner). Checked every 15 min; the random next-auto time
   // (1h..2h after each event), the 1h floor + daily cap (via arena.startBlocked) keep it from over-firing.
   setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartArena(g)).catch(() => {}), 15 * 60000);
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => maybeAutoStartTribeGame(g)).catch(() => {}), 15 * 60000);
   // Sealed Arena (dark until enabled): resolve any in-flight one on boot (short, resolve-on-restart), then an
   // hourly auto-tick (peak hours, daily cap + min-gap gate inside).
   if (dguild) await reconcileSealed(dguild).catch(e => console.error(`[sealed] boot reconcile: ${e.message}`));

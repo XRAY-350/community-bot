@@ -165,6 +165,7 @@ const config = {
   // Arena auto-start: the bot randomly launches arena challenges through the active day (up to the daily
   // cap, respecting the cooldown) so activity happens without a leader manually starting one.
   arenaAutoStart: bool('ARENA_AUTO_START', true),
+  tribeGamesAutoStart: bool('TRIBE_GAMES_AUTO_START', true),
   // Active window is in this timezone (majority of the server is Central Europe, so default there, not US).
   arenaAutoTimezone: opt('ARENA_AUTO_TIMEZONE', 'Europe/Berlin'),
   arenaAutoStartHour: num('ARENA_AUTO_START_HOUR', 10),  // PEAK window: earliest local hour (full events, all types)

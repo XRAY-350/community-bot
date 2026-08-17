@@ -35,6 +35,16 @@ function set(ev) { const s = load(); s.active = ev; save(s); }
 function clear() { const s = load(); delete s.active; save(s); }
 function update(patch) { const a = get(); if (!a) return null; const n = { ...a, ...patch }; set(n); return n; }
 
+// Auto-start pacing (owner, 2026-08-17: "they just weren't running automatically" — Tribe Games had no
+// scheduler at all, unlike Arena/Sealed/Trial). A wider gap than Arena's on purpose: a Tribe Game needs
+// tribe leaders to actually set a rep AND staff to manually report the result afterward, so firing it too
+// often risks lobbies nobody's around to fill and results nobody follows up on.
+const AUTO_GAP_MIN_MIN = 240;      // never sooner than 4h after the last auto-started game
+const AUTO_GAP_SPREAD_MIN = 240;   // ...plus a random 0..240 min, so the gap is 4h..8h
+function randInt(n) { return Math.floor(Math.random() * n); }
+function recordStart(nowMs) { const s = load(); s.nextAutoAt = nowMs + (AUTO_GAP_MIN_MIN + randInt(AUTO_GAP_SPREAD_MIN + 1)) * 60000; save(s); }
+function autoStartDue(nowMs) { const s = load(); return !s.nextAutoAt || (nowMs || Date.now()) >= s.nextAutoAt; }
+
 // Per-tribe entrant helpers — active.entrants: { [tribeKey]: { repIds: [userId,...], role: null|string } }
 function setEntrant(tribeKey, repIds) {
   const a = get(); if (!a) return null;
@@ -58,4 +68,5 @@ module.exports = {
   get, isActive, set, clear, update,
   setEntrant, setEntrantRole, entrantTribeKeys,
   getChampionRoleId, setChampionRoleId,
+  recordStart, autoStartDue,
 };
