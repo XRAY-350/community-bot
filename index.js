@@ -9857,9 +9857,9 @@ client.on('interactionCreate', async (interaction) => {
       if (!opspanel.tierOf(interaction) && !isTrialMod(interaction) && !mCorner)
         return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
       // Self-cornering is blocked for everyone EXCEPT this one member (owner-approved standing exception,
-      // 2026-08-03: "white korean baddie" / beautyinelijah). She picks her own duration like anyone else
-      // would; nothing here changes /uncorner, so only staff can still release her early — this exemption is
-      // scoped to the corner path only, not the shared corner/uncorner self-target logic above.
+      // 2026-08-03). They pick their own duration like anyone else would; nothing here changes /uncorner,
+      // so only staff can still release them early — this exemption is scoped to the corner path only, not
+      // the shared corner/uncorner self-target logic above.
       const SELF_CORNER_EXEMPT_ID = '1415112053823242250';
       if (member.id === interaction.user.id && member.id !== SELF_CORNER_EXEMPT_ID) {
         return interaction.reply({ content: 'You can’t corner yourself.', flags: MessageFlags.Ephemeral });

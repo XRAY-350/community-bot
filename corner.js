@@ -20,8 +20,8 @@ const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
 // Discord server owner opting themselves in as a cornerable target (2026-08-15): purely cosmetic for them
 // specifically, since the actual guild owner keeps full Discord permissions regardless of stripped roles.
 const PERSONAL_CORNER_OVERRIDES = [
-  { actorId: '1415112053823242250', targetId: '989615671178575972' },   // beautyinelijah -> le_pope_
-  { actorId: '593371777569390602', targetId: '989615671178575972' },    // kayena07 -> le_pope_
+  { actorId: '1415112053823242250', targetId: '989615671178575972' },   // approved actor -> approved target
+  { actorId: '593371777569390602', targetId: '989615671178575972' },    // second approved actor -> same target
   { actorId: '*', targetId: '865843812907089940' },                     // any verified/staff actor -> the server owner (opted in)
 ];
 function canBypassCornerTier(actorId, targetId) {
