@@ -5080,6 +5080,16 @@ async function enforceTierNesting(member) {
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
   try {
     if (newMember.guild.id !== config.guildId) return;
+    // BUG FOUND 2026-08-17 (owner: "the corner on me doesn't strip my admin or mod and doesn't give me the
+    // corner role"): corner()'s single role.set() call fires THIS exact event, and enforceTierNesting reads
+    // opspanel.memberTier(newMember) — which is UNCONDITIONALLY 'owner' for the real Discord server owner
+    // (member.id === guild.ownerId), regardless of which roles they actually hold. So the instant corner
+    // stripped Admin/Mod/Owner down to just the corner role, tier-nesting saw "tier=owner, missing
+    // Mod/Admin" and immediately re-granted both back — same event, ~200ms later, confirmed in the audit
+    // log. Any of the other role-reconciliation below (tribe-membership, MDNI, age-exclusivity) could do
+    // the same to whoever's stripped-role state it doesn't recognize. corner.js owns a cornered member's
+    // roles completely for as long as they're in it — nothing else should be fighting it for control.
+    if (state.getCornered(newMember.id)) return;
     await enforceTierNesting(newMember).catch(e => console.error('[tier-nest]', e.message));
     // Nobody should be able to browse to their own application. A mod+ can see the WHOLE review forum, so
     // removing thread membership isn't enough — archive their own post to the owner-only channel instead
