@@ -3450,6 +3450,36 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
   return { done, skipped, whenPhrase };
 }
 
+// Mirrors cornerMany, for /uncorner's own `also` option (owner, 2026-08-17: "I meant uncornering multiple
+// people at once"). durationMs null = release everyone right now; otherwise schedule the same future release
+// time for all of them. Each target still goes through corner.attemptSeverityChange individually — bulk
+// release doesn't bypass the per-person tiering/override gate, it just runs the same check in a loop.
+async function uncornerMany(guild, actorId, actorTier, userIds, durationMs) {
+  const done = [], scheduled = [], skipped = [], seen = new Set();
+  const releaseAt = durationMs ? Date.now() + durationMs : null;
+  for (const userId of userIds) {
+    if (seen.has(userId)) continue;
+    seen.add(userId);
+    const res = corner.attemptSeverityChange(state, userId, actorId, actorTier, releaseAt ?? 'RELEASE');
+    if (res.notFound) { skipped.push(`<@${userId}> (not in the corner)`); continue; }
+    if (!res.ok) { skipped.push(`<@${userId}> (${res.need ? `needs ${res.need} ${actorTier}s` : 'higher tier, no override'})`); continue; }
+    if (releaseAt) {
+      corner.armTimer(guild, userId, releaseAt);
+      scheduled.push(userId);
+    } else {
+      const r = await corner.uncorner(guild, userId, state);
+      if (r.ok) done.push(userId); else skipped.push(`<@${userId}> (${r.error})`);
+    }
+  }
+  const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
+  if (cornerCh) for (const userId of done) await cornerCh.send(cornerReleasedMessage(userId)).catch(() => {});
+  if (done.length) await logCorner(guild, { emoji: '🔓', title: `RELEASED (×${done.length})`, color: CORNER_GREEN,
+    desc: `${done.map(id => `<@${id}>`).join(', ')}: released, roles restored.\n**By:** <@${actorId}>` });
+  if (scheduled.length) await logCorner(guild, { emoji: '⏳', title: `RELEASE SCHEDULED (×${scheduled.length})`, color: CORNER_AMBER,
+    desc: `${scheduled.map(id => `<@${id}>`).join(', ')}: release scheduled.\n**Release:** ${relPhrase(releaseAt)}\n**By:** <@${actorId}>` });
+  return { done, scheduled, skipped, releaseAt };
+}
+
 async function handleCornerButton(interaction) {
   const [, userId, msStr] = interaction.customId.split(':');   // corner_rel:<userId>:<ms>  or  corner_recorner:<userId>
   const ms = Number(msStr || 0);
@@ -4024,6 +4054,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(`Optional, e.g. release automatically instead of now`).setRequired(false))
+        .addStringOption(o => o.setName('also').setDescription('Release more members too: @mention them or paste IDs, space-separated (same duration)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
@@ -9703,8 +9734,21 @@ client.on('interactionCreate', async (interaction) => {
         durationMs = corner.parseDuration(durStr);
         if (!durationMs) return interaction.reply({ content: copy.corner.badDuration, flags: MessageFlags.Ephemeral });
       }
-      await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
       const actorTier = opspanel.tierOf(interaction);
+      // Multi-release: `also` (named IDs) → release the whole deduped set at once, same duration (or right
+      // now if none given). Mirrors /corner's `also` option.
+      const alsoStr = interaction.options.getString('also');
+      if (alsoStr && alsoStr.trim()) {
+        await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
+        const ids = [user.id, ...new Set(alsoStr.match(/\d{15,}/g) || [])];
+        const { done, scheduled, skipped, releaseAt } = await uncornerMany(guild, interaction.user.id, actorTier, ids, durationMs);
+        const lines = [];
+        if (done.length) lines.push(`✅ Released **${done.length}**: ${done.map(id => `<@${id}>`).join(', ')}`);
+        if (scheduled.length) lines.push(`⏳ Release scheduled <t:${Math.floor(releaseAt / 1000)}:R> for **${scheduled.length}**: ${scheduled.map(id => `<@${id}>`).join(', ')}`);
+        if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
+        return interaction.editReply({ content: lines.join('\n') || 'Nobody to release.', allowedMentions: { parse: [] } });
+      }
+      await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
       if (durationMs) {
         // Schedule a future release (e.g. give an indefinitely-cornered member a release time). The
         // auto-release loop frees them + posts the "time served" embed when it expires.
