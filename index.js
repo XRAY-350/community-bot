@@ -4024,9 +4024,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(`Optional, e.g. release automatically instead of now`).setRequired(false))
-        .setDefaultMemberPermissions(cornerVis),   // always visible, same as /corner (owner, 2026-08-17: a verified
-        // member who's eligible via corner.js's PERSONAL_CORNER_OVERRIDES — e.g. the server owner opted in —
-        // can also /uncorner that same target; the handler enforces everyone else still needs staff/trial
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
       new SlashCommandBuilder().setName('wordfilter').setDescription('Auto-delete messages containing a word/phrase for a period going forward')
@@ -9555,18 +9553,11 @@ client.on('interactionCreate', async (interaction) => {
     // targeting a personally-approved corner target (see corner.js's PERSONAL_CORNER_OVERRIDES, e.g. the
     // server owner opting themselves in) gets in regardless of whether memberCorner is on — "two separate
     // features." Still under the SAME tight limits as memberCorner (checked again below via mCorner).
-    const earlyTargetId = interaction.options.getUser('user')?.id || null;
+    const earlyTargetId = name === 'corner' ? interaction.options.getUser('user')?.id : null;
     const ownerCornerOK = name === 'corner' && !isMod && !trial && isMemberCornerEligibleRole(interaction)
       && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId);
     const memberMayCorner = name === 'corner' && (isMemberCorner(interaction) || ownerCornerOK);
-    // /uncorner (owner, 2026-08-17: "add also to uncorner") — same wildcard-override eligibility as /corner's
-    // ownerCornerOK above, so a verified member allowed to corner an opted-in target (e.g. the server owner)
-    // can also release them. No memberCorner-feature-flag equivalent here — this is the personal-override path
-    // only, not general member-release; attemptSeverityChange's canActSolo(rec.by === actorId) still requires
-    // THEM to have been the one who applied the corner being released.
-    const ownerUncornerOK = name === 'uncorner' && !isMod && !trial && isMemberCornerEligibleRole(interaction)
-      && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId);
-    if (!isMod && !trial && !memberMayCorner && !ownerUncornerOK) {
+    if (!isMod && !trial && !memberMayCorner) {
       // A verified member who WOULD qualify if the feature were on gets told plainly it's off, instead of
       // the generic staff-only message (command visibility no longer hides this from them either way).
       if (name === 'corner' && isMemberCornerEligibleRole(interaction))
