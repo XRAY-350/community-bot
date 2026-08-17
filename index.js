@@ -31,6 +31,7 @@ const whistleblow = require('./whistleblow');
 const reports = require('./reports');
 const modmail = require('./modmail');
 const modapps = require('./modapps');
+const eventorgapps = require('./eventorgapps');
 const langmods = require('./langmods');
 const promote = require('./promote');
 const nestedRoles = require('./nestedRoles');
@@ -3802,6 +3803,12 @@ async function runPanelSetup(interaction, kind, channelId) {
         const cfg = await whistleblow.setup(g, interaction.user.id);
         return interaction.editReply(`✅ Whistleblows now DM **you** (<@${cfg.you}>) and/or the **owner** (<@${cfg.her}>) per the sender’s choice. Members use \`/whistleblow\`.`);
       }
+      case 'eventorg': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        const { forum, apps } = await eventorgapps.setup(g, config);
+        return interaction.editReply(`✅ Event Organizer applications ready: review forum <#${forum.id}> + applicant threads in <#${apps.id}>. Members apply with \`/apply-event-organizer\`.`);
+      }
       case 'dashboard': {
         if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can post the hub panel.', ...eph });
         await interaction.deferReply(eph);
@@ -4200,6 +4207,13 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .addSubcommand(s => s.setName('restore').setDescription('Bring an archived application back as a fresh vote (e.g. reconsider a mini-mod for full Mod)')
           .addUserOption(o => o.setName('user').setDescription('The applicant whose archived application to restore').setRequired(true)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+      new SlashCommandBuilder().setName('apply-event-organizer').setDescription('Apply to become an Event Organizer').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
+      new SlashCommandBuilder().setName('event-organizer-applications').setDescription('Open or close Event Organizer applications (admin)')
+        .addSubcommand(s => s.setName('status').setDescription('Are Event Organizer applications open or closed right now?'))
+        .addSubcommand(s => s.setName('open').setDescription('Reopen Event Organizer applications'))
+        .addSubcommand(s => s.setName('close').setDescription('Close Event Organizer applications; in-flight applications still finish')
+          .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
@@ -6524,6 +6538,10 @@ client.on('interactionCreate', async (interaction) => {
     try { return await modapps.submitFromModal(interaction, config); }
     catch (e) { console.error(`[modapps] modal ${e.message}`); return interaction.reply({ content: 'Could not submit that. Try again.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
+  if (interaction.isModalSubmit?.() && interaction.customId === 'eventorgapp_submit') {
+    try { return await eventorgapps.submitFromModal(interaction); }
+    catch (e) { console.error(`[eventorgapps] modal ${e.message}`); return interaction.reply({ content: 'Could not submit that. Try again.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
+  }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'modapp_pos_langsel') {
     try { return await modapps.handlePositionSelect(interaction); }
     catch (e) { console.error(`[modapps] langsel ${e.message}`); return interaction.reply({ content: 'Could not open that.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
@@ -8163,6 +8181,17 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: 'Only staff (mods+) can do that.', flags: MessageFlags.Ephemeral });
         return await modapps.handleButton(interaction, config);
       }
+      if (id.startsWith('eventorgapp_')) {
+        // Owner, 2026-08-17: staff vote (advisory), admin+ makes the actual call — lower stakes than mod
+        // applications (no moderation power granted), so this doesn't need mod-apps' server-owner-only gate.
+        if (id === 'eventorgapp_accept' || id === 'eventorgapp_deny' || id === 'eventorgapp_undo') {
+          if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
+            return interaction.reply({ content: `Only admins can ${id === 'eventorgapp_undo' ? 'undo' : 'accept or deny'} Event Organizer applications.`, flags: MessageFlags.Ephemeral });
+        }
+        if ((id === 'eventorgapp_up' || id === 'eventorgapp_down') && !eventorgapps.canVote(interaction.member))
+          return interaction.reply({ content: 'Only staff or a current Event Organizer can vote on these.', flags: MessageFlags.Ephemeral });
+        return await eventorgapps.handleButton(interaction, config);
+      }
       if (id === 'rep_reveal') {
         if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can reveal a reporter.', flags: MessageFlags.Ephemeral });
         return await reports.handleButton(interaction);
@@ -8940,6 +8969,39 @@ client.on('interactionCreate', async (interaction) => {
       await ownerlog.log(interaction.guild, { emoji: '🔄', title: 'Mod application restored from archive', color: 0xF1C40F,
         detail: `<@${user.id}> — restored by <@${interaction.user.id}>. Fresh vote in <#${r.reviewThreadId}>.` });
       return interaction.editReply(`🔄 Restored <@${user.id}>'s application (originally applied as ${r.track === 'lang' ? `${r.lang} Mini-Mod` : 'Moderator'}) as a **fresh** review in <#${r.reviewThreadId}> — votes reset to 0, ready to reconsider.`);
+    }
+    return;
+  }
+  if (name === 'apply-event-organizer') {
+    if (!isVerifiedOrStaff(interaction))
+      return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
+    if (!eventorgapps.isConfigured()) return interaction.reply({ content: 'Event Organizer applications aren’t set up on this server yet. Ask an admin to run `/event-organizer-setup`.', flags: MessageFlags.Ephemeral });
+    if (!eventorgapps.applicationsOpen()) return interaction.reply({ content: eventorgapps.closedNotice(), flags: MessageFlags.Ephemeral });
+    try { return await interaction.showModal(eventorgapps.buildModal()); }
+    catch (e) { console.error(`[eventorgapps] showModal ${e.message}`); }
+    return;
+  }
+  if (name === 'event-organizer-applications') {
+    if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
+      return interaction.reply({ content: 'Only admins can open or close Event Organizer applications.', flags: MessageFlags.Ephemeral });
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'status') {
+      const open = eventorgapps.applicationsOpen();
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: open
+        ? '✅ Event Organizer applications are **OPEN**. Members can `/apply-event-organizer`.'
+        : `🚫 Event Organizer applications are **CLOSED**.\nMembers who try to apply see:\n> ${eventorgapps.closedNotice()}` });
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (sub === 'close') {
+      const msg = interaction.options.getString('message');
+      await eventorgapps.setApplicationsOpen(interaction.guild, false, msg);
+      await ownerlog.log(interaction.guild, { emoji: '🚫', title: 'Event Organizer applications CLOSED', color: 0xED4245, detail: `Closed by <@${interaction.user.id}>. New \`/apply-event-organizer\` is turned away; in-flight applications still finish.${msg ? `\nNote to applicants: ${msg}` : ''}` });
+      return interaction.editReply('🚫 Event Organizer applications are now **CLOSED**. New attempts are turned away; applications already under review still finish. Reopen anytime with `/event-organizer-applications open`.');
+    }
+    if (sub === 'open') {
+      await eventorgapps.setApplicationsOpen(interaction.guild, true);
+      await ownerlog.log(interaction.guild, { emoji: '✅', title: 'Event Organizer applications REOPENED', color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> — members can \`/apply-event-organizer\` again.` });
+      return interaction.editReply('✅ Event Organizer applications are now **OPEN**. Members can `/apply-event-organizer` again.');
     }
     return;
   }

@@ -364,7 +364,7 @@ function buildSetup() {
   const embed = new EmbedBuilder().setColor(0x5865F2).setDescription(
     '**⭐ Needs Admin.** One-tap **create-or-repair** for the bot\'s channels + member panels. Each button is safe to press again: it makes the channel/panel if it\'s missing, or tells you it already exists. This replaces the old `*-setup` slash commands.\n\n' +
     '💡 **Suggestions** forum · 💭 **Confessions** + staff log · ✉️ **Mod inbox** · 🚩 **Anon reports** · 📋 **Mod applications**\n' +
-    '🎭 **Role requests** · ⚖️ **Ban appeals** · 🎫 **Strike appeals** · 🕊️ **Whistleblow** recipients (bot-owner) · 🤖 **Member hub** (you pick the channel)')
+    '🎭 **Role requests** · ⚖️ **Ban appeals** · 🎫 **Strike appeals** · 🕊️ **Whistleblow** recipients (bot-owner) · 🤖 **Member hub** (you pick the channel) · 🎪 **Event Organizer applications**')
     .setFooter({ text: copy.guards.needsAdmin });
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_setup:suggest').setEmoji('💡').setLabel('Suggestions').setStyle(ButtonStyle.Secondary),
@@ -378,7 +378,9 @@ function buildSetup() {
     new ButtonBuilder().setCustomId('fops_setup:appealstrike').setEmoji('🎫').setLabel('Strike appeals').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_setup:whistleblow').setEmoji('🕊️').setLabel('Whistleblow').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_setup:dashboard').setEmoji('🤖').setLabel('Member hub').setStyle(ButtonStyle.Secondary));
-  return { content: '## 🧩 FUBU Ops · Setup', embeds: [embed], components: [row1, row2, navRow(pageIdx('Setup'))] };
+  const row3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('fops_setup:eventorg').setEmoji('🎪').setLabel('Event Organizer apps').setStyle(ButtonStyle.Secondary));
+  return { content: '## 🧩 FUBU Ops · Setup', embeds: [embed], components: [row1, row2, row3, navRow(pageIdx('Setup'))] };
 }
 
 function buildDanger() {
