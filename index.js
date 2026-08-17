@@ -3301,6 +3301,29 @@ async function ensureHitSquadRole(guild) {
   hitsquad.setRoleId(role.id);
   return role;
 }
+// The Hit Squad role carries real Discord permission (BypassSlowmode), so anyone holding it OUTSIDE the
+// bot's own tracked activation is a standing, un-timed grant — e.g. an admin drags the role onto someone
+// via Discord's native role UI instead of /hitsquad activate (owner, 2026-08-17: "what about if they do
+// it through the discord ui?"). Strip it on sight; the only legitimate way to hold this role is via
+// activate(), which is state-tracked and auto-reverts regardless of what happens to the role itself.
+async function enforceHitSquadRole(member) {
+  const roleId = hitsquad.getRoleId();
+  if (!roleId || member.user?.bot) return null;
+  if (!member.roles.cache.has(roleId)) return null;
+  if (hitsquad.isSquadMember(member.id)) return null;   // legitimate: added by activate(), still in the active window
+  await member.roles.remove(roleId, 'Hit Squad role held outside a tracked activation').catch(e => console.error('[hitsquad] drift strip:', e.message));
+  return { id: member.id, tag: member.user.tag };
+}
+// Backstop sweep (boot + hourly): catches a manual grant made while the bot was down, or any missed event.
+async function sweepHitSquadRole(guild) {
+  const roleId = hitsquad.getRoleId();
+  if (!roleId) return 0;
+  const role = guild.roles.cache.get(roleId) || await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) return 0;
+  let stripped = 0;
+  for (const m of [...role.members.values()]) { const r = await enforceHitSquadRole(m).catch(() => null); if (r) stripped++; }
+  return stripped;
+}
 const _hitsquadTimer = { t: null };
 async function deactivateHitSquad(guild) {
   if (_hitsquadTimer.t) { clearTimeout(_hitsquadTimer.t); _hitsquadTimer.t = null; }
@@ -4639,6 +4662,8 @@ client.once('ready', async () => {
   // MDNI VERIFIED: the combined role (MDNI + adult age, both) gating the new MDNI NSFW channel. Boot + hourly.
   if (dguild) await sweepMdniVerified(dguild).catch(e => console.error(`[mdni-verified] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniVerified(g)).catch(() => {}), 3600000);
+  if (dguild) await sweepHitSquadRole(dguild).catch(e => console.error(`[hitsquad] boot sweep: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepHitSquadRole(g)).catch(() => {}), 3600000);
 
   // Weekly tribe crown: boot catch-up + hourly check (idempotent — see tribes.dueForWeeklyCrown).
   if (dguild) await processWeeklyCrownIfDue(dguild).catch(e => console.error(`[tribe crown] boot check: ${e.message}`));
@@ -5136,6 +5161,21 @@ async function enforceTierNesting(member) {
   return true;
 }
 
+// Catches a slowmode change made ANY way — /hitsquad slowmode, or a squad member using Discord's native
+// channel-settings UI directly if they happen to independently hold ManageChannels via another role
+// (owner, 2026-08-17: "i was referring to if they change slowmode through the ui"). /hitsquad slowmode
+// already records the original via hitsquad.recordOriginal before it changes it — recordOriginal no-ops on
+// a second touch of the same channel this window, so this is a harmless no-op for THAT path and the real
+// safety net for a native-UI edit the bot command never saw.
+client.on('channelUpdate', (oldChannel, newChannel) => {
+  try {
+    if (!hitsquad.isActive() || newChannel.guild?.id !== config.guildId) return;
+    if ((oldChannel.rateLimitPerUser || 0) !== (newChannel.rateLimitPerUser || 0)) {
+      hitsquad.recordOriginal('slowmode', newChannel.id, null, oldChannel.rateLimitPerUser || 0);
+    }
+  } catch (e) { console.error('[hitsquad] channelUpdate capture:', e.message); }
+});
+
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
   try {
     if (newMember.guild.id !== config.guildId) return;
@@ -5173,6 +5213,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await enforceMdniStaffLock(newMember, { channelId: config.mdniNsfwChannelId }).catch(e => console.error('[mdni-lock-nsfw]', e.message));   // same, second MDNI channel
     await enforceMdniStaffLock(newMember, { channelId: config.mdniVerifiedVcId }).catch(e => console.error('[mdni-lock-vc]', e.message));   // same, MDNI Verified VC
     await enforceMdniVerified(newMember).catch(e => console.error('[mdni-verified]', e.message));   // combined role: MDNI + adult age, both
+    await enforceHitSquadRole(newMember).catch(e => console.error('[hitsquad] drift:', e.message));   // strip a manually-assigned (untracked) Hit Squad role
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
     await enforceTribeMembership(newMember).catch(e => console.error('[tribe-guard]', e.message));   // revert manual tribe-role tampering
@@ -9140,17 +9181,31 @@ client.on('interactionCreate', async (interaction) => {
     if (!squad.length) return interaction.editReply(`Nobody eligible to deputize.${skipped.length ? `\nSkipped: ${skipped.join(', ')}` : ''}`);
     const role = await ensureHitSquadRole(guild).catch(e => { console.error('[hitsquad] role:', e.message); return null; });
     if (!role) return interaction.editReply('Could not create/find the Hit Squad role — check my Manage Roles permission.');
-    for (const m of squad) await m.roles.add(role, `Hit squad activated by ${interaction.user.tag}`).catch(() => {});
+    // State FIRST, role second — enforceHitSquadRole strips the role from anyone it doesn't recognize as an
+    // active squad member, so granting the role before the state exists would race its own drift-guard and
+    // get immediately stripped back off.
     const active = hitsquad.activate(squad.map(m => m.id), interaction.user.id);
+    for (const m of squad) await m.roles.add(role, `Hit squad activated by ${interaction.user.tag}`).catch(() => {});
     armHitSquadTimer(guild, active.expiresAt);
     const mins = Math.round(hitsquad.DURATION_MS / 60000);
+    const untilTs = Math.floor(active.expiresAt / 1000);
+    const briefing = `🔪 **You've been deputized to the Hit Squad by <@${interaction.user.id}>!**\n`
+      + `You have **${mins} minutes** (until <t:${untilTs}:t>, <t:${untilTs}:R>) to cause chaos:\n`
+      + `• \`/corner\` almost anyone — even staff — except each other, the server owner, and <@${interaction.user.id}> (who summoned you). Every corner you land auto-releases exactly when the window ends, whatever duration you set.\n`
+      + `• \`/hitsquad slowmode\` — set slowmode on any channel you can see. Reverts automatically at window end.\n`
+      + `• \`/hitsquad nickname\` — rename someone (same exclusions as cornering). Reverts automatically at window end.\n`
+      + `• You're immune to slowmode yourself, and nobody can corner **you** until the window closes.\n`
+      + `Go cause some chaos. 🔪`;
+    let dmFailed = [];
+    for (const m of squad) await m.send(briefing).catch(() => { dmFailed.push(m.id); });
     await ownerlog.log(guild, { emoji: '🔪', title: 'HIT SQUAD ACTIVATED', color: 0xED4245,
       detail: `${squad.map(m => `<@${m.id}>`).join(', ')} — ${mins}m window — summoned by <@${interaction.user.id}>.` });
     return interaction.editReply({
-      content: `🔪 **HIT SQUAD ACTIVATED** for **${mins} minutes** (until <t:${Math.floor(active.expiresAt / 1000)}:t>): ${squad.map(m => `<@${m.id}>`).join(', ')}\n`
+      content: `🔪 **HIT SQUAD ACTIVATED** for **${mins} minutes** (until <t:${untilTs}:t>): ${squad.map(m => `<@${m.id}>`).join(', ')}\n`
         + `They can \`/corner\` almost anyone — even staff — except each other, the owner, and <@${interaction.user.id}> (who summoned them). `
         + `Every corner they land auto-releases when the window ends, and they can't be cornered themselves until then.`
-        + `${skipped.length ? `\n⚠️ Skipped: ${skipped.join(', ')}` : ''}`,
+        + `${skipped.length ? `\n⚠️ Skipped: ${skipped.join(', ')}` : ''}`
+        + `${dmFailed.length ? `\n📪 Couldn't DM: ${dmFailed.map(id => `<@${id}>`).join(', ')} (they'll still have full squad power, just no heads-up).` : ''}`,
       allowedMentions: { users: [...squad.map(m => m.id), interaction.user.id] },
     });
   }
