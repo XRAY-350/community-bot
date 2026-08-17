@@ -3601,7 +3601,7 @@ function missedRolesNote(missed) {
 // ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
-async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false } = {}) {
+async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null } = {}) {
   const done = [], skipped = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
@@ -3623,7 +3623,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
-    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, opspanel.tierOf(interaction));
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier);
     if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
     else skipped.push(`<@${member.id}> (${r.error})`);
   }
@@ -6883,7 +6883,7 @@ client.on('interactionCreate', async (interaction) => {
       let extraNote = '';
       if (extras.length) {
         const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
-        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { reasonText: reason, allowNamedStaff: true });
+        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { reasonText: reason, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
         extraNote = `\n➕ Also cornered **${done.length}**${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${sweptCount ? ` · swept ${Math.min(mins, 120)}m` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
         if (done.length) await target.channel.send({
           content: `🧹 <@${interaction.user.id}> also sent ${done.map(id => `<@${id}>`).join(', ')} to the corner ${whenPhrase}.`,
@@ -10280,7 +10280,7 @@ client.on('interactionCreate', async (interaction) => {
             if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) { extras.push(mm); seen.add(m.author.id); sweptCount++; }
           }
         }
-        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true });
+        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
         const lines = [];
         if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` (${reasonText})` : ''}`);
         if (sweptCount) lines.push(`🧹 Swept the last ${Math.min(sweepMins, 120)}m of this channel.`);
