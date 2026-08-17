@@ -4581,6 +4581,8 @@ client.once('ready', async () => {
   // Same minor-staff leak on the second MDNI channel (own channelId, same shared function).
   if (dguild) await sweepMdniStaffLock(dguild, config.mdniNsfwChannelId).catch(e => console.error(`[mdni-lock] boot sweep (nsfw): ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.mdniNsfwChannelId)).catch(() => {}), 3600000);
+  if (dguild) await sweepMdniStaffLock(dguild, config.mdniVerifiedVcId).catch(e => console.error(`[mdni-lock] boot sweep (vc): ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.mdniVerifiedVcId)).catch(() => {}), 3600000);
   // MDNI VERIFIED: the combined role (MDNI + adult age, both) gating the new MDNI NSFW channel. Boot + hourly.
   if (dguild) await sweepMdniVerified(dguild).catch(e => console.error(`[mdni-verified] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniVerified(g)).catch(() => {}), 3600000);
@@ -5100,6 +5102,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await enforceMdni(newMember).catch(() => {});   // keep MDNI ⟹ adult on every role change
     await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));   // block minor STAFF from the 18+ channel
     await enforceMdniStaffLock(newMember, { channelId: config.mdniNsfwChannelId }).catch(e => console.error('[mdni-lock-nsfw]', e.message));   // same, second MDNI channel
+    await enforceMdniStaffLock(newMember, { channelId: config.mdniVerifiedVcId }).catch(e => console.error('[mdni-lock-vc]', e.message));   // same, MDNI Verified VC
     await enforceMdniVerified(newMember).catch(e => console.error('[mdni-verified]', e.message));   // combined role: MDNI + adult age, both
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
