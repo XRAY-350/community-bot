@@ -5274,15 +5274,26 @@ client.on('channelUpdate', (oldChannel, newChannel) => {
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
   try {
     if (newMember.guild.id !== config.guildId) return;
+    // MDNI minor-staff lock runs REGARDLESS of cornered status — it's a pure channel-permission member
+    // overwrite (ViewChannel: false), never touches roles, so it can't fight corner.js for role ownership
+    // the way the guard below exists to prevent. BUG FOUND 2026-08-17 (owner: "how was the mod able to see
+    // the mdni channels" — a MINOR mod's Mod role was restored by uncorner(), which fires this exact event
+    // while state.getCornered() is still true (cleared only AFTER the restore); the blanket skip below used
+    // to swallow this call too, so the lock never got reapplied to a minor who'd just regained staff — up to
+    // an hour of real exposure until the next sweep, not caught here because it never ran at all).
+    await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));
+    await enforceMdniStaffLock(newMember, { channelId: config.mdniNsfwChannelId }).catch(e => console.error('[mdni-lock-nsfw]', e.message));
+    await enforceMdniStaffLock(newMember, { channelId: config.mdniVerifiedVcId }).catch(e => console.error('[mdni-lock-vc]', e.message));
     // BUG FOUND 2026-08-17 (owner: "the corner on me doesn't strip my admin or mod and doesn't give me the
     // corner role"): corner()'s single role.set() call fires THIS exact event, and enforceTierNesting reads
     // opspanel.memberTier(newMember) — which is UNCONDITIONALLY 'owner' for the real Discord server owner
     // (member.id === guild.ownerId), regardless of which roles they actually hold. So the instant corner
     // stripped Admin/Mod/Owner down to just the corner role, tier-nesting saw "tier=owner, missing
     // Mod/Admin" and immediately re-granted both back — same event, ~200ms later, confirmed in the audit
-    // log. Any of the other role-reconciliation below (tribe-membership, MDNI, age-exclusivity) could do
-    // the same to whoever's stripped-role state it doesn't recognize. corner.js owns a cornered member's
-    // roles completely for as long as they're in it — nothing else should be fighting it for control.
+    // log. Any of the ROLE-modifying reconciliation below (tribe-membership, MDNI-role, age-exclusivity)
+    // could do the same to whoever's stripped-role state it doesn't recognize. corner.js owns a cornered
+    // member's ROLES completely for as long as they're in it — channel-overwrite-only checks (above) are
+    // exempt since they can't conflict with that; anything that calls .roles.add/.remove stays behind this.
     if (state.getCornered(newMember.id)) return;
     await enforceTierNesting(newMember).catch(e => console.error('[tier-nest]', e.message));
     // Nobody should be able to browse to their own application. A mod+ can see the WHOLE review forum, so
@@ -5304,9 +5315,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
       if (tribe) await removePromotedFromMemberTribe(newMember.guild, newMember, tribe).catch(e => console.error('[tribe-staff-promote]', e.message));
     }
     await enforceMdni(newMember).catch(() => {});   // keep MDNI ⟹ adult on every role change
-    await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));   // block minor STAFF from the 18+ channel
-    await enforceMdniStaffLock(newMember, { channelId: config.mdniNsfwChannelId }).catch(e => console.error('[mdni-lock-nsfw]', e.message));   // same, second MDNI channel
-    await enforceMdniStaffLock(newMember, { channelId: config.mdniVerifiedVcId }).catch(e => console.error('[mdni-lock-vc]', e.message));   // same, MDNI Verified VC
+    // (the 3x enforceMdniStaffLock calls now run unconditionally above, before the cornered-member guard)
     await enforceMdniVerified(newMember).catch(e => console.error('[mdni-verified]', e.message));   // combined role: MDNI + adult age, both
     await enforceHitSquadRole(newMember).catch(e => console.error('[hitsquad] drift:', e.message));   // strip a manually-assigned (untracked) Hit Squad role
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
