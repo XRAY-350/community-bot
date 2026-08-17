@@ -118,18 +118,18 @@ function buildModal(track = 'mod', lang = null) {
     new TextInputBuilder().setCustomId(q.id).setLabel(q.label).setStyle(q.style).setRequired(q.required).setMaxLength(q.max)));
   return m;
 }
-// Step 1 of applying: pick the POSITION (only shown when language mini-mods are configured — otherwise
-// /apply-mod goes straight to the mod modal). Moderator → mod modal; Language mini-mod → language picker.
+// Step 1 of applying: pick the POSITION (only shown when mini-mod scopes are configured — otherwise
+// /apply-mod goes straight to the mod modal). Moderator → mod modal; Mini-mod → scope picker.
 const positionRow = () => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_pos_mod').setEmoji('🛡️').setLabel('Moderator').setStyle(ButtonStyle.Primary).setDisabled(!applicationsOpen('mod')),
-  new ButtonBuilder().setCustomId('modapp_pos_lang').setEmoji('🌐').setLabel('Language mini-mod').setStyle(ButtonStyle.Secondary).setDisabled(!applicationsOpen('lang')));
+  new ButtonBuilder().setCustomId('modapp_pos_lang').setEmoji('🌐').setLabel('Mini-mod').setStyle(ButtonStyle.Secondary).setDisabled(!applicationsOpen('lang')));
 function languageSelectRow() {
   const menu = new StringSelectMenuBuilder().setCustomId('modapp_pos_langsel').setPlaceholder('Which language?')
     .addOptions(langmods.languages().map(l => ({ label: `${l} mini-mod`, value: l, emoji: '🌐' })));
   return new ActionRowBuilder().addComponents(menu);
 }
 // Human label for a post's position (mod vs a specific language mini-mod).
-const positionLabel = (post) => post?.track === 'lang' ? `🌐 Language mini-mod: ${post.lang}` : '🛡️ Moderator';
+const positionLabel = (post) => post?.track === 'lang' ? `🌐 Mini-mod: ${post.lang}` : '🛡️ Moderator';
 
 const voteRow = (up, down, done) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_up').setEmoji('👍').setLabel(String(up)).setStyle(ButtonStyle.Success).setDisabled(!!done),
@@ -726,8 +726,9 @@ async function rerender(guild, reviewThreadId) {
 // Close intake when the team is full: new /apply-mod attempts are turned away, but applications ALREADY
 // under review keep going (the gate is only at the entry + modal submit, never on existing threads).
 // Owner, 2026-08-17: "mini mods and regular mods should have to separate closing/opening states" — the
-// Moderator track and the Language mini-mod track close/open INDEPENDENTLY now (e.g. the mod team can be
-// full while language mini-mod slots stay open, or vice versa), instead of one shared flag closing both.
+// Moderator track and the Mini-mod track close/open INDEPENDENTLY now (e.g. the mod team can be full
+// while mini-mod slots stay open, or vice versa), instead of one shared flag closing both. "Mini-mod"
+// covers every scope langmods.js manages, not just languages — e.g. the LGBTQ+ chat mini-mod too.
 const DEFAULT_CLOSED_NOTICE = '🚫 Applications for that position are currently **closed** right now. Thanks for the interest, and keep an eye out for when they reopen!';
 // Back-compat migration: a pre-per-track config only has the old `applicationsClosed` boolean — treat it
 // as both tracks starting in that same state, once, then always read/write the new shape from then on.
@@ -761,7 +762,7 @@ async function setApplicationsOpen(guild, open, message, track = 'both') {
       const base = 'Apply with /apply-mod. Your application opens as a private thread here that only you + staff can see.';
       const closedBits = [];
       if (tracks.mod) closedBits.push('Moderator');
-      if (tracks.lang) closedBits.push('Language mini-mod');
+      if (tracks.lang) closedBits.push('Mini-mod');
       await ch.setTopic(closedBits.length ? `🚫 CLOSED for: ${closedBits.join(', ')}. ${base}` : base).catch(() => {});
     }
   } catch { /* topic update is best-effort */ }

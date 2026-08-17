@@ -158,7 +158,7 @@ const modapps = {
   sentAnon: '🕵️ Sent to the applicant anonymously. Their reply lands in the thread.',
   untrackedUndo: 'This application is no longer tracked, so there’s nothing to undo.',
   alreadyOpen: 'This application is already open, nothing to undo.',
-  whichLang: '🌐 Which language do you want to help moderate?',
+  whichLang: '🌐 Which one do you want to help moderate?',
 };
 
 const contest = {

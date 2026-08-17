@@ -4182,10 +4182,10 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('status').setDescription('Are mod applications open or closed right now?'))
         .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications: accept new /apply-mod again')
           .addStringOption(o => o.setName('track').setDescription('Which position? (default: both)').setRequired(false)
-            .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Language mini-mod', value: 'lang' })))
+            .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Mini-mod', value: 'lang' })))
         .addSubcommand(s => s.setName('close').setDescription('Close mod applications (team full); in-flight applications still finish')
           .addStringOption(o => o.setName('track').setDescription('Which position? (default: both)').setRequired(false)
-            .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Language mini-mod', value: 'lang' }))
+            .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Mini-mod', value: 'lang' }))
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
@@ -8811,12 +8811,12 @@ client.on('interactionCreate', async (interaction) => {
     if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
       return interaction.reply({ content: 'Only admins can open or close mod applications.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
-    const TRACK_LABEL = { mod: 'Moderator', lang: 'Language mini-mod', both: 'Both tracks' };
+    const TRACK_LABEL = { mod: 'Moderator', lang: 'Mini-mod', both: 'Both tracks' };
     if (sub === 'status') {
       const modOpen = modapps.applicationsOpen('mod'), langOpen = modapps.applicationsOpen('lang');
       const line = (label, open, track) => `${open ? '✅' : '🚫'} **${label}**: ${open ? 'OPEN' : `CLOSED — ${modapps.closedNotice(track)}`}`;
       return interaction.reply({ flags: MessageFlags.Ephemeral, content:
-        `${line('Moderator', modOpen, 'mod')}\n${line('Language mini-mod', langOpen, 'lang')}` });
+        `${line('Moderator', modOpen, 'mod')}\n${line('Mini-mod', langOpen, 'lang')}` });
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const track = interaction.options.getString('track') || 'both';

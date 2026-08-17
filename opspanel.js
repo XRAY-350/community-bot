@@ -321,15 +321,15 @@ function buildConflicts() {
 
 function buildActions() {
   const modapps = require('./modapps');   // lazy — modapps requires opspanel (avoid the circular at load)
-  // Moderator and Language mini-mod applications open/close independently (owner, 2026-08-17) — this quick
-  // button only ever toggles the Moderator track; use /mod-applications open|close track:<...> for the
-  // mini-mod track, or to flip both at once.
+  // Moderator and Mini-mod applications open/close independently (owner, 2026-08-17) — this quick button
+  // only ever toggles the Moderator track; use /mod-applications open|close track:<...> for the mini-mod
+  // track, or to flip both at once.
   const appsOpen = modapps.applicationsOpen('mod');
   const embed = new EmbedBuilder().setColor(0xff453a).setDescription(
     '**⭐ Needs Admin.** (Mods can read this page, but the buttons will show 🔒.)\n\n' +
     '🧹 **Run housekeeping now**: the bot normally tidies up once an hour; this makes it run **right now**: warn or remove overdue unverified members, delete dead verification threads, and flag anyone with both roles. ⚠️ It can **actually remove people**, unless Test Mode is on (see the ⚠️ Danger page).\n' +
     '🔨 **Ban a member**: permanently removes them and blocks them from rejoining. Can\'t be undone here.\n' +
-    `📋 **Mod applications (Moderator track)**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime. Language mini-mod applications open/close separately — use \`/mod-applications\` for that track.`)
+    `📋 **Mod applications (Moderator track)**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime. Mini-mod applications open/close separately — use \`/mod-applications\` for that track.`)
     .setFooter({ text: copy.guards.needsAdmin });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_sweep').setEmoji('🧹').setLabel('Run housekeeping now').setStyle(ButtonStyle.Secondary),
@@ -936,7 +936,7 @@ async function handlePanel(interaction) {
     if (id === 'fops_modapps_toggle') {
       if (!meets(tier, 'admin')) return deny('admin');
       const modapps = require('./modapps');
-      // Moderator-track only — see buildActions' comment. The Language mini-mod track has its own state,
+      // Moderator-track only — see buildActions' comment. The Mini-mod track has its own state,
       // flip it via /mod-applications open|close track:lang.
       const nowOpen = !modapps.applicationsOpen('mod');   // flip current state
       await modapps.setApplicationsOpen(interaction.guild, nowOpen, null, 'mod');
