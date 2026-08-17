@@ -124,7 +124,7 @@ const positionRow = () => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('modapp_pos_mod').setEmoji('🛡️').setLabel('Moderator').setStyle(ButtonStyle.Primary).setDisabled(!applicationsOpen('mod')),
   new ButtonBuilder().setCustomId('modapp_pos_lang').setEmoji('🌐').setLabel('Mini-mod').setStyle(ButtonStyle.Secondary).setDisabled(!applicationsOpen('lang')));
 function languageSelectRow() {
-  const menu = new StringSelectMenuBuilder().setCustomId('modapp_pos_langsel').setPlaceholder('Which language?')
+  const menu = new StringSelectMenuBuilder().setCustomId('modapp_pos_langsel').setPlaceholder('Which one?')
     .addOptions(langmods.languages().map(l => ({ label: `${l} mini-mod`, value: l, emoji: '🌐' })));
   return new ActionRowBuilder().addComponents(menu);
 }
