@@ -3674,11 +3674,11 @@ async function handleCornerButton(interaction) {
     if (!member) return interaction.editReply(copy.common.noMemberInServer);
     // Same tier hierarchy as /corner (own tier or lower, never higher) — see wl_corner's comment above for
     // why this can't be a blanket "no admins ever" block.
-    if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id)) return interaction.editReply('You cannot corner the server owner.');
+    if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction))) return interaction.editReply('You cannot corner the server owner.');
     const recornerActorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
     const recornerTargetTier = opspanel.memberTier(member);
     const recornerTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[recornerTargetTier] || 0;
-    if (recornerTargetRank > recornerActorRank && !corner.canBypassCornerTier(interaction.user.id, member.id)) return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${recornerTargetTier}**).`);
+    if (recornerTargetRank > recornerActorRank && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction))) return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${recornerTargetTier}**).`);
     const r = await corner.corner(guild, member, null, state, interaction.user.id, null, opspanel.tierOf(interaction));
     if (!r.ok) return interaction.editReply(`Failed to re-corner: ${r.error}`);
     try {
@@ -6014,11 +6014,11 @@ async function handleWatchlistButton(interaction) {
     // Same tier hierarchy as /corner and Send-to-corner (own tier or lower, never higher) — this used to be
     // a blanket "no admins/owner ever" block that didn't check the ACTOR's tier, so even the owner couldn't
     // corner an admin from here even though the slash command correctly allows it.
-    if (member.id === interaction.guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id))
+    if (member.id === interaction.guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
       return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
     const wlActorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
     const wlTargetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.memberTier(member)] || 0;
-    if (wlTargetRank > wlActorRank && !corner.canBypassCornerTier(interaction.user.id, member.id))
+    if (wlTargetRank > wlActorRank && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
       return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`, flags: MessageFlags.Ephemeral });
     // Every corner path goes through one form now (owner ruling): open the same duration/reason/sweep modal the
     // right-click uses, keyed to the flagged message from the alert's jump link (blank duration = indefinite).
@@ -6848,7 +6848,7 @@ client.on('interactionCreate', async (interaction) => {
       // Tier hierarchy check (moved here from the context menu so the rule picker can show instantly): you
       // can't corner someone of a higher staff tier than you.
       const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-      if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id))
+      if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
         return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`);
       const ch = await guild.channels.fetch(channelId).catch(() => null);
       const target = ch && await ch.messages.fetch(messageId).catch(() => null);
@@ -8943,7 +8943,7 @@ client.on('interactionCreate', async (interaction) => {
         // BEFORE the strike is recorded, so a blocked corner doesn't leave a half-applied strike.
         const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
         const targetTier = opspanel.memberTier(member);
-        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id))
+        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
           return R(`You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
       }
       const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? `, ${reason}` : ''}` : reason;
@@ -10164,7 +10164,7 @@ client.on('interactionCreate', async (interaction) => {
     // features." Still under the SAME tight limits as memberCorner (checked again below via mCorner).
     const earlyTargetId = name === 'corner' ? interaction.options.getUser('user')?.id : null;
     const ownerCornerOK = name === 'corner' && !isMod && !trial && isMemberCornerEligibleRole(interaction)
-      && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId);
+      && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId, opspanel.tierOf(interaction));
     const memberMayCorner = name === 'corner' && (isMemberCorner(interaction) || ownerCornerOK);
     // Hit squad (owner, 2026-08-17): a named, time-boxed squad may /corner almost anyone — even staff —
     // for the activation window, regardless of the memberCorner feature flag. Corner-only: /uncorner is
@@ -10188,7 +10188,7 @@ client.on('interactionCreate', async (interaction) => {
       // Same "separate from the memberCorner flag" path as the early gate above, now re-checked against
       // the actually-resolved target member (not just the raw option id).
       const mCorner = isMemberCorner(interaction) || (!opspanel.tierOf(interaction) && !isTrialMod(interaction)
-        && isMemberCornerEligibleRole(interaction) && corner.canBypassCornerTier(interaction.user.id, member.id));
+        && isMemberCornerEligibleRole(interaction) && corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)));
       // Belt-and-suspenders re-check of the same gate the caller already applied above (kept in case this
       // block is ever reached another way) — staff/trial-mods always; a verified member only when
       // 'memberCorner' is on. /corner is visible to everyone regardless of the flag, so this can still
@@ -10211,10 +10211,10 @@ client.on('interactionCreate', async (interaction) => {
       const actorRank = RANK[opspanel.tierOf(interaction)] || 0;      // actor's tier (admin if Administrator-perm)
       const targetTier = opspanel.memberTier(member);                 // target's role-only tier
       const targetRank = RANK[targetTier] || 0;
-      if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id)) {
+      if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction))) {
         return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
       }
-      if (targetRank > actorRank && !corner.canBypassCornerTier(interaction.user.id, member.id) && !hitsquad.canBypass(interaction.user.id, member.id)) {
+      if (targetRank > actorRank && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)) && !hitsquad.canBypass(interaction.user.id, member.id)) {
         return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
       }
       const isHitSquadTarget = hitsquad.canBypass(interaction.user.id, member.id);

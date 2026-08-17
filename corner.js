@@ -23,10 +23,19 @@ const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
 const PERSONAL_CORNER_OVERRIDES = [
   { actorId: '1415112053823242250', targetId: '989615671178575972' },   // approved actor -> approved target
   { actorId: '593371777569390602', targetId: '989615671178575972' },    // second approved actor -> same target
-  { actorId: '*', targetId: '865843812907089940' },                     // any verified/staff actor -> the server owner (opted in)
+  { actorId: '*', targetId: '865843812907089940' },                     // any STAFF actor -> the server owner (opted in) — narrowed from any verified member (owner, 2026-08-17: "change the everyone corner to only staff (mod+)")
 ];
-function canBypassCornerTier(actorId, targetId) {
-  return PERSONAL_CORNER_OVERRIDES.some(o => (o.actorId === actorId || o.actorId === '*') && o.targetId === targetId);
+// actorTier: pass the actor's recognized staff tier (opspanel.tierOf/memberTier — 'mod'/'admin'/'owner'/
+// 'botowner'), or null/undefined for a plain verified member. Named overrides (exact actorId match) work
+// regardless of tier; the wildcard '*' entry only matches a STAFF actorTier now — a regular member no
+// longer qualifies for it even though the target opted in to being corner-able by "anyone."
+function canBypassCornerTier(actorId, targetId, actorTier = null) {
+  return PERSONAL_CORNER_OVERRIDES.some(o => {
+    if (o.targetId !== targetId) return false;
+    if (o.actorId === actorId) return true;
+    if (o.actorId === '*') return !!actorTier;
+    return false;
+  });
 }
 // Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
 // tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
@@ -307,7 +316,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // NO owner check at all: the upstream command that opens the modal validates the target, but the modal
   // submit step that actually strips roles trusted the embedded id with no re-check. One guard here closes
   // every entry point, present and future, regardless of what each caller does or forgets to do upstream.
-  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id))) {
+  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id, actorTier))) {
     return { ok: false, error: "you can't corner the server owner." };
   }
   // A current hit-squad member is immune to being cornered (by anyone, staff included) for as long as
