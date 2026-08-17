@@ -4198,7 +4198,7 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('track').setDescription('Which position? (default: both)').setRequired(false)
             .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Mini-mod', value: 'lang' }))
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
-        .addSubcommand(s => s.setName('restore').setDescription('Bring an archived application back as a fresh, votable one (e.g. reconsidering a mini-mod for full Mod)')
+        .addSubcommand(s => s.setName('restore').setDescription('Bring an archived application back as a fresh vote (e.g. reconsider a mini-mod for full Mod)')
           .addUserOption(o => o.setName('user').setDescription('The applicant whose archived application to restore').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
