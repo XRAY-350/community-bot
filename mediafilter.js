@@ -1,67 +1,11 @@
-// mediafilter.js — auto-delete filters for GIFs/attachments, two independent mechanisms:
-//   1) BLANKET toggles (owner, 2026-08-17: "i already use word filter to ban embeds by link but it would
-//      be nice if I could do that natively") — same on/off + optional-duration shape as wordfilter.js.
-//      'gifs' catches ANY GIF link/file, 'attachments' catches ANY uploaded file.
-//   2) SPECIFIC blocklists (owner, 2026-08-17: "i only want to be blocking specific gifs or attachments",
-//      not every one) — block one exact GIF link, or one exact file's content (by hash, so a rename/
-//      re-upload doesn't dodge it). Independent of the blanket toggles; both can be active at once.
-// State lives in the shared state store: meta key 'mediaFilters' = { gifs?: entry, attachments?: entry }
-// for the blanket toggles (entry = { byId, at, expiresAt, count }); meta keys 'blockedGifs' / 'blockedHashes'
-// are arrays of { key|hash, byId, at, expiresAt, count, name? } for the specific blocklists.
-const KEY = 'mediaFilters';
+// mediafilter.js — auto-delete SPECIFIC GIFs/attachments (owner, 2026-08-17: "i only want to be blocking
+// specific gifs or attachements", not every one — a blanket on/off toggle was built first per an earlier,
+// broader ask, then explicitly removed once the actual want was clear). Block one exact GIF link, or one
+// exact file's content by hash (so a rename/re-upload doesn't dodge it).
+// State lives in the shared state store: meta keys 'blockedGifs' / 'blockedHashes', each an array of
+// { key|hash, byId, at, expiresAt, count, name? }.
 const GIF_RE = /(tenor\.com|giphy\.com|klipy\.com|\.gif(\?|$))/i;
 
-function all(state) { return state.getMeta(KEY) || {}; }
-function saveMap(state, map) { state.setMeta(KEY, map); }
-
-// Active (non-expired) entry for a type, or null. Self-cleans an expired entry as a side effect.
-function active(state, type) {
-  const map = all(state);
-  const f = map[type];
-  if (!f) return null;
-  if (f.expiresAt && f.expiresAt <= Date.now()) { delete map[type]; saveMap(state, map); return null; }
-  return f;
-}
-function activeAll(state) { return ['gifs', 'attachments'].map(t => ({ type: t, filter: active(state, t) })).filter(x => x.filter); }
-
-// Arm (or re-arm) a filter. durationMs null = indefinite. Returns {ok, filter, updated}.
-function set(state, type, durationMs, byId) {
-  const map = all(state);
-  const now = Date.now();
-  const updated = !!map[type];
-  map[type] = { byId, at: now, expiresAt: durationMs ? now + durationMs : null, count: (map[type]?.count) || 0 };
-  saveMap(state, map);
-  return { ok: true, updated, filter: map[type] };
-}
-// Stop a filter early. Returns {ok, removed}.
-function clear(state, type) {
-  const map = all(state);
-  if (!map[type]) return { ok: false, error: `no active ${type} filter.` };
-  const removed = map[type];
-  delete map[type];
-  saveMap(state, map);
-  return { ok: true, removed };
-}
-function bump(state, type) { const map = all(state); if (map[type]) { map[type].count = (map[type].count || 0) + 1; saveMap(state, map); } }
-
-const isGifAttachment = att => (att.contentType || '').startsWith('image/gif') || /\.gif$/i.test(att.name || '');
-
-// Which active filter (if any) this message trips: 'gifs' | 'attachments' | null. Bumps that filter's count.
-function check(state, msg) {
-  const attF = active(state, 'attachments');
-  const gifsF = active(state, 'gifs');
-  if (!attF && !gifsF) return null;
-  const hasAttachment = msg.attachments && msg.attachments.size > 0;
-  if (attF && hasAttachment) { bump(state, 'attachments'); return 'attachments'; }
-  if (gifsF) {
-    const byContent = GIF_RE.test(msg.content || '');
-    const byAttachment = hasAttachment && [...msg.attachments.values()].some(isGifAttachment);
-    if (byContent || byAttachment) { bump(state, 'gifs'); return 'gifs'; }
-  }
-  return null;
-}
-
-// ---- specific-GIF / specific-attachment blocklists -------------------------------------------------
 function pruneList(state, key) {
   const now = Date.now();
   const list = state.getMeta(key) || [];
@@ -72,6 +16,8 @@ function pruneList(state, key) {
 const blockedGifs = state => pruneList(state, 'blockedGifs');
 const blockedHashes = state => pruneList(state, 'blockedHashes');
 const normalizeGifUrl = url => String(url || '').trim().toLowerCase();
+
+const isGifAttachment = att => (att.contentType || '').startsWith('image/gif') || /\.gif$/i.test(att.name || '');
 
 function addGif(state, url, durationMs, byId) {
   const key = normalizeGifUrl(url);
@@ -117,16 +63,16 @@ function removeHash(state, hash) {
   return { ok: true, removed };
 }
 
-// GIF-hosting link inside `content`, or null. Broader than GIF_RE's plain test — needs the ACTUAL url
-// substring so a right-click ("Block this GIF") can hand it straight to addGif.
+// GIF-hosting link inside `content`, or null. Needs the ACTUAL url substring (not just a true/false test)
+// so a right-click ("Block this GIF") can hand it straight to addGif.
 const URL_RE = /https?:\/\/\S+/gi;
 function findGifLink(content) {
   const urls = String(content || '').match(URL_RE) || [];
   return urls.find(u => GIF_RE.test(u)) || null;
 }
 
-// Async — checks a message's attachments against the specific-hash blocklist (downloads + hashes each
-// one, so only called when blockedHashes actually has entries). Which specific list (if any) this message
+// Async — checks a message against both blocklists (the hash check downloads + hashes each attachment,
+// so it only does that work when blockedHashes actually has entries). Which list (if any) this message
 // trips: {type:'gif', key} | {type:'attachment', hash} | null. Bumps that entry's count.
 async function checkSpecific(state, msg) {
   const gifs = blockedGifs(state);
@@ -146,5 +92,4 @@ async function checkSpecific(state, msg) {
   return null;
 }
 
-module.exports = { active, activeAll, set, clear, check, isGifAttachment,
-  blockedGifs, blockedHashes, addGif, removeGif, hashUrl, addHash, removeHash, findGifLink, checkSpecific };
+module.exports = { isGifAttachment, blockedGifs, blockedHashes, addGif, removeGif, hashUrl, addHash, removeHash, findGifLink, checkSpecific };
