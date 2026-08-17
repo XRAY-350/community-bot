@@ -26,7 +26,7 @@ const REGISTRY = [
     help: { name: '🤖 Member hub', value: 'Open `/dashboard` for your status, the rules, and every member feature in one place.' } },
   { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'stats', 'ban'], contexts: ['Send to corner', 'Ban'] },   // 'cornered' folded into /panel → Corner page
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
-  { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter', 'mediafilter'] }, // temporary auto-delete of messages containing a set word/phrase, or GIFs/attachments
+  { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter', 'mediafilter'], contexts: ['Block this GIF', 'Block this attachment'] }, // temporary auto-delete of messages containing a set word/phrase, or GIFs/attachments
   { key: 'levelCheck',  audience: 'staff',  built: true,  commands: ['levelcheck'] }, // audit Arcane level roles landing (reads #bot-commands log) + admin resync-fix
   { key: 'tribes',      audience: 'member', built: true,  commands: ['tribe', 'tribe-admin'], // member-run factions: hub/roster/standings/motto + Warden tools + admin create/register (ranks + rivalry to come)
     help: { name: '🏴 Tribes', value: 'Join a tribe with `/request-role`, then `/tribe info`, `/tribe roster`, and `/tribe list` for standings. Leaders set the vibe with `/tribe motto`.' } },

@@ -4098,6 +4098,13 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('remove').setDescription('Stop an active media filter early')
           .addStringOption(o => o.setName('type').setDescription('Which filter to stop').setRequired(true)
             .addChoices({ name: 'GIFs', value: 'gifs' }, { name: 'Attachments', value: 'attachments' })))
+        .addSubcommand(s => s.setName('add-gif').setDescription('Block one specific GIF link (not every GIF)')
+          .addStringOption(o => o.setName('url').setDescription('The GIF link to block').setRequired(true))
+          .addStringOption(o => o.setName('duration').setDescription('How long, e.g. 30m, 2h, 3d (blank = until you remove it)').setRequired(false)))
+        .addSubcommand(s => s.setName('remove-gif').setDescription('Stop blocking a specific GIF link')
+          .addStringOption(o => o.setName('url').setDescription('The GIF link to unblock').setRequired(true)))
+        .addSubcommand(s => s.setName('remove-hash').setDescription('Stop blocking a specific attachment (paste the hash from /mediafilter list)')
+          .addStringOption(o => o.setName('hash').setDescription('The hash to unblock').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
       new SlashCommandBuilder().setName('weights').setDescription('The staff infraction/weight guide: which rule = Corner / Strike (weight) / ban')
         .addBooleanOption(o => o.setName('pin').setDescription('Post it publicly here + pin it (admin only), for a channel trial mods can see').setRequired(false))
@@ -4435,6 +4442,10 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
       new ContextMenuCommandBuilder().setName('Ban').setType(ApplicationCommandType.User)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
+      new ContextMenuCommandBuilder().setName('Block this GIF').setType(ApplicationCommandType.Message)
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
+      new ContextMenuCommandBuilder().setName('Block this attachment').setType(ApplicationCommandType.Message)
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
     ];
     // Only register commands whose feature is enabled (fail-off). Disabled features' commands
     // simply don't appear in the server. (Seeded above, before allCmds was built.)
@@ -6011,6 +6022,11 @@ client.on('messageCreate', async (msg) => {
     if (earlyMember && features.enabled('wordFilter') && !opspanel.memberTier(earlyMember)) {
       const mediaHit = mediafilter.check(state, msg);
       if (mediaHit) { await msg.delete().catch(e => console.error('[mediafilter] delete:', e.message)); return; }
+      // Specific-GIF-link check is cheap (string match); specific-attachment-hash check downloads +
+      // hashes each attachment, so mediafilter.checkSpecific only does that work when the hash list
+      // actually has entries.
+      const specificHit = await mediafilter.checkSpecific(state, msg).catch(e => { console.error('[mediafilter] checkSpecific:', e.message); return null; });
+      if (specificHit) { await msg.delete().catch(e => console.error('[mediafilter] delete:', e.message)); return; }
     }
     if (!msg.content) return;
     const member = earlyMember;
@@ -8190,6 +8206,44 @@ client.on('interactionCreate', async (interaction) => {
     const ok = await manualWatchReport(target, interaction.user).catch(() => false);
     return interaction.reply({ content: ok ? `🚩 Reported <@${target.author.id}> to the mods. An admin can add them to the watchlist from there.` : 'Failed to post the report.', flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
+  if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Block this GIF') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can manage media filters.', flags: MessageFlags.Ephemeral });
+    const target = interaction.targetMessage;
+    if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
+    const link = mediafilter.findGifLink(target.content);
+    if (link) {
+      const r = mediafilter.addGif(state, link, null, interaction.user.id);
+      await logCorner(interaction.guild, { emoji: '🧹', title: r.updated ? 'GIF BLOCK UPDATED' : 'GIF BLOCKED', color: CORNER_AMBER,
+        desc: `Auto-deleting \`${r.entry.key}\` (from a message by <@${target.author.id}>).\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+      return interaction.reply({ content: `🧹 ${r.updated ? 'Updated' : 'Now blocking'} that GIF link.`, flags: MessageFlags.Ephemeral });
+    }
+    const gifAtt = [...(target.attachments?.values() || [])].find(mediafilter.isGifAttachment);
+    if (!gifAtt) return interaction.reply({ content: "Couldn't find a GIF link or file in that message.", flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    let hash; try { hash = await mediafilter.hashUrl(gifAtt.url); } catch (e) { return interaction.editReply(`Failed to fetch that file: ${e.message}`); }
+    const r = mediafilter.addHash(state, hash, null, interaction.user.id, gifAtt.name);
+    await logCorner(interaction.guild, { emoji: '🧹', title: r.updated ? 'GIF BLOCK UPDATED' : 'GIF BLOCKED', color: CORNER_AMBER,
+      desc: `Auto-deleting the GIF file \`${gifAtt.name}\` (from a message by <@${target.author.id}>) by content hash — a rename won't dodge it.\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+    return interaction.editReply(`🧹 ${r.updated ? 'Updated' : 'Now blocking'} that GIF file (matched by content, so a rename won't dodge it).`);
+  }
+  if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Block this attachment') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can manage media filters.', flags: MessageFlags.Ephemeral });
+    const target = interaction.targetMessage;
+    if (!target) return interaction.reply({ content: copy.guards.cantReadMessage, flags: MessageFlags.Ephemeral });
+    const atts = [...(target.attachments?.values() || [])];
+    if (!atts.length) return interaction.reply({ content: "That message has no attachments.", flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const blocked = [];
+    for (const att of atts) {
+      let hash; try { hash = await mediafilter.hashUrl(att.url); } catch (e) { console.error('[mediafilter] hash:', e.message); continue; }
+      mediafilter.addHash(state, hash, null, interaction.user.id, att.name);
+      blocked.push(att.name);
+    }
+    if (!blocked.length) return interaction.editReply('Failed to fetch any of that message\'s attachments.');
+    await logCorner(interaction.guild, { emoji: '🧹', title: `ATTACHMENT${blocked.length > 1 ? 'S' : ''} BLOCKED`, color: CORNER_AMBER,
+      desc: `Auto-deleting ${blocked.map(n => `\`${n}\``).join(', ')} (from a message by <@${target.author.id}>) by content hash — a rename won't dodge it.\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+    return interaction.editReply(`🧹 Now blocking **${blocked.length}** attachment(s) (matched by content, so a rename won't dodge them): ${blocked.map(n => `\`${n}\``).join(', ')}.`);
+  }
   if (interaction.isMessageContextMenuCommand?.() && interaction.commandName === 'Report') {
     // Member-facing: right-click a message → Apps → Report → anonymous report to staff (works anywhere).
     if (!isVerifiedOrStaff(interaction))
@@ -8425,8 +8479,13 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (sub === 'list') {
       const list = mediafilter.activeAll(state);
-      if (!list.length) return interaction.reply({ content: 'No active media filters.', flags: MessageFlags.Ephemeral });
-      const lines = list.map(({ type, filter: f }) => `• **${TYPE_LABEL[type]}** · ${f.expiresAt ? `expires <t:${Math.floor(f.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${f.count || 0}** · by <@${f.byId}>`);
+      const gifs = mediafilter.blockedGifs(state);
+      const hashes = mediafilter.blockedHashes(state);
+      if (!list.length && !gifs.length && !hashes.length) return interaction.reply({ content: 'No active media filters.', flags: MessageFlags.Ephemeral });
+      const lines = [];
+      if (list.length) lines.push('**Blanket:**', ...list.map(({ type, filter: f }) => `• **${TYPE_LABEL[type]}** · ${f.expiresAt ? `expires <t:${Math.floor(f.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${f.count || 0}** · by <@${f.byId}>`));
+      if (gifs.length) lines.push('**Specific GIF links:**', ...gifs.map(e => `• \`${e.key}\` · ${e.expiresAt ? `expires <t:${Math.floor(e.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${e.count || 0}** · by <@${e.byId}>`));
+      if (hashes.length) lines.push('**Specific attachments:**', ...hashes.map(e => `• ${e.name ? `\`${e.name}\` ` : ''}(\`${e.hash.slice(0, 12)}…\`) · ${e.expiresAt ? `expires <t:${Math.floor(e.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${e.count || 0}** · by <@${e.byId}>`));
       return interaction.reply({ content: `🧹 **Active media filters:**\n${lines.join('\n')}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'remove') {
@@ -8436,6 +8495,30 @@ client.on('interactionCreate', async (interaction) => {
       await logCorner(interaction.guild, { emoji: '🧹', title: 'MEDIA FILTER REMOVED', color: CORNER_GREEN,
         desc: `Stopped auto-deleting **${TYPE_LABEL[type]}** (deleted **${r.removed.count || 0}** message(s) while active).\n**By:** <@${interaction.user.id}>` }).catch(() => {});
       return interaction.reply({ content: `✅ Stopped the **${TYPE_LABEL[type]}** filter, it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'add-gif') {
+      const url = (interaction.options.getString('url') || '').trim();
+      const durStr = (interaction.options.getString('duration') || '').trim();
+      let durationMs = null;
+      if (durStr) { durationMs = corner.parseDuration(durStr); if (!durationMs) return interaction.reply({ content: 'Bad duration. Use e.g. `30m`, `2h`, `3d` (or leave it blank for no expiry).', flags: MessageFlags.Ephemeral }); }
+      const r = mediafilter.addGif(state, url, durationMs, interaction.user.id);
+      if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
+      const until = r.entry.expiresAt ? `until <t:${Math.floor(r.entry.expiresAt / 1000)}:f>` : 'until removed (no expiry)';
+      await logCorner(interaction.guild, { emoji: '🧹', title: r.updated ? 'GIF BLOCK UPDATED' : 'GIF BLOCKED', color: CORNER_AMBER,
+        desc: `Auto-deleting \`${r.entry.key}\` ${until}.\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+      return interaction.reply({ content: `🧹 ${r.updated ? 'Updated' : 'Now blocking'} that GIF link ${until}.`, flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'remove-gif') {
+      const url = (interaction.options.getString('url') || '').trim();
+      const r = mediafilter.removeGif(state, url);
+      if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: `✅ Unblocked that GIF link, it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'remove-hash') {
+      const hash = (interaction.options.getString('hash') || '').trim();
+      const r = mediafilter.removeHash(state, hash);
+      if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: `✅ Unblocked that attachment, it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
     }
   }
   if (name === 'pending') {
