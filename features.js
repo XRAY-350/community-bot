@@ -45,6 +45,10 @@ const REGISTRY = [
     help: { name: '📋 `/apply-mod`: apply to be a mod', value: 'Want to help run the place? `/apply-mod` opens a short form (age, timezone, why, experience). It creates a private thread where staff can ask follow-ups and you’ll hear back, nothing is public.' } },
   { key: 'eventOrgApps', audience: 'member', built: true, commands: ['apply-event-organizer', 'event-organizer-applications'],   // event-organizer-setup → /panel Setup, same consolidation as apply-mod-setup
     help: { name: '🎪 `/apply-event-organizer`: apply to run events', value: 'Want to run community events? `/apply-event-organizer` opens a short form (why, availability, an event idea). Staff review it in a private thread; you’ll hear back either way.' } },
+  // Hit squad (owner, 2026-08-17): grants named members temporary corner power against almost anyone,
+  // even staff, for a 10-minute window. Starts DARK — deliberately not on by default given the blast
+  // radius; an admin turns it on with /features when they actually want it live.
+  { key: 'hitsquad', audience: 'core', built: false, commands: ['hitsquad'] },
   { key: 'rolereq',     audience: 'member', built: true,  commands: ['request-role'],   // request-role-setup → /panel Setup
     help: { name: '🎭 `/request-role`: ask for (or drop) a role', value: 'Ask for a casual role, or hand one back. Staff get your request with one-click approve/deny; if approved it’s added (or removed) for you. Cosmetic/interest roles only, not staff or age roles.' } },
   { key: 'roleselect',  audience: 'staff',  built: true,  commands: ['roleselect-role'] }, // #roles picker itself has no command (built by a one-off script); this is just the admin add/remove tool

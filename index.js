@@ -32,6 +32,7 @@ const reports = require('./reports');
 const modmail = require('./modmail');
 const modapps = require('./modapps');
 const eventorgapps = require('./eventorgapps');
+const hitsquad = require('./hitsquad');
 const langmods = require('./langmods');
 const promote = require('./promote');
 const nestedRoles = require('./nestedRoles');
@@ -3287,6 +3288,34 @@ async function logCorner(guild, entry) {
     if (typeof entry !== 'string') await ownerlog.log(guild, { emoji: entry.emoji, title: entry.title, detail: entry.desc, color: entry.color });
   } catch (e) { console.error(`[corner-log] ${e.message}`); }
 }
+
+// ---- Hit squad (owner, 2026-08-17) ------------------------------------------------------------------
+async function ensureHitSquadRole(guild) {
+  let id = hitsquad.getRoleId();
+  let role = id && (guild.roles.cache.get(id) || await guild.roles.fetch(id).catch(() => null));
+  if (role) return role;
+  role = await guild.roles.create({ name: '🔪 Hit Squad', color: 0xED4245, hoist: true, mentionable: false, reason: 'Hit squad (owner request)' });
+  hitsquad.setRoleId(role.id);
+  return role;
+}
+const _hitsquadTimer = { t: null };
+async function deactivateHitSquad(guild) {
+  if (_hitsquadTimer.t) { clearTimeout(_hitsquadTimer.t); _hitsquadTimer.t = null; }
+  const active = hitsquad.peekActive();   // raw record, even a moment past expiresAt — clear() below wipes it
+  const memberIds = active ? active.squadIds : [];
+  hitsquad.clear();
+  const role = hitsquad.getRoleId() && await guild.roles.fetch(hitsquad.getRoleId()).catch(() => null);
+  if (role) for (const id of memberIds) { const m = await guild.members.fetch(id).catch(() => null); if (m) await m.roles.remove(role, 'Hit squad window ended').catch(() => {}); }
+  if (memberIds.length) {
+    await logCorner(guild, { emoji: '🔪', title: 'HIT SQUAD STOOD DOWN', color: 0x99AAB5,
+      desc: `${memberIds.map(id => `<@${id}>`).join(', ')} — window ended, deputized power revoked.` }).catch(() => {});
+  }
+}
+function armHitSquadTimer(guild, expiresAt) {
+  if (_hitsquadTimer.t) clearTimeout(_hitsquadTimer.t);
+  const delay = Math.max(0, expiresAt - Date.now());
+  _hitsquadTimer.t = setTimeout(() => deactivateHitSquad(guild).catch(e => console.error('[hitsquad] deactivate:', e.message)), delay);
+}
 // Optional public punishment feed for the heavier consequences (Melanin's #punishments-log — strikes come
 // from strikes.js, bans from here). Unset on FUBU → no-op. Mirrors logCorner's content-only style so @mentions
 // resolve for everyone. Strikes/bans deliberately live here, not corner-log (which stays corners-only).
@@ -4215,6 +4244,10 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('close').setDescription('Close Event Organizer applications; in-flight applications still finish')
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+      new SlashCommandBuilder().setName('hitsquad').setDescription('Deputize a chaos squad for a 10-minute window (admin)')
+        .addSubcommand(s => s.setName('activate').setDescription('Name who\'s on the squad for the next 10 minutes')
+          .addStringOption(o => o.setName('members').setDescription('@mention or paste IDs, space-separated').setRequired(true)))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
@@ -4643,6 +4676,12 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sealedAutoTick(g)).catch(() => {}), 3600000);
   // Tribe Games (Phase 8): entirely panel-initiated, so just resume an in-flight lobby countdown on boot.
   if (dguild) await reconcileTribeGames(dguild).catch(e => console.error(`[tribegames] boot reconcile: ${e.message}`));
+  // Hit squad: re-arm the auto-revert timer if a window is still live across a restart, or clean up
+  // immediately if the window (or the bot's downtime) already ran past it.
+  if (dguild) {
+    const hs = hitsquad.peekActive();
+    if (hs) { if (hs.expiresAt > Date.now()) armHitSquadTimer(dguild, hs.expiresAt); else await deactivateHitSquad(dguild).catch(e => console.error('[hitsquad] boot reconcile:', e.message)); }
+  }
   // Self-heal: if a tribe's pinned throne panel got deleted (manually, or a pin-cap eviction), repost it —
   // otherwise that tribe silently loses Invite/Banish/Muster/etc. until someone notices.
   if (dguild) {
@@ -9023,6 +9062,47 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
+  if (name === 'hitsquad') {
+    if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
+      return interaction.reply({ content: 'Only admins can activate the hit squad.', flags: MessageFlags.Ephemeral });
+    if (hitsquad.isActive()) {
+      const a = hitsquad.getActive();
+      return interaction.reply({ content: `🔪 The hit squad is already active, <t:${Math.floor(a.expiresAt / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
+    }
+    if (!hitsquad.canActivate(interaction.user.id)) {
+      return interaction.reply({ content: `🔪 You've already used **${hitsquad.DAILY_CAP_PER_PERSON}/${hitsquad.DAILY_CAP_PER_PERSON}** of your activations today. Resets at midnight UTC.`, flags: MessageFlags.Ephemeral });
+    }
+    const raw = interaction.options.getString('members') || '';
+    const ids = [...new Set(raw.match(/\d{15,}/g) || [])];
+    if (!ids.length) return interaction.reply({ content: 'Mention or paste at least one member to deputize.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply();
+    const guild = interaction.guild;
+    const squad = [], skipped = [];
+    for (const id of ids) {
+      if (id === interaction.user.id) { skipped.push(`<@${id}> (you summoned them, can't also be one)`); continue; }
+      if (id === guild.ownerId) { skipped.push(`<@${id}> (server owner)`); continue; }
+      const m = await guild.members.fetch(id).catch(() => null);
+      if (!m) { skipped.push(`\`${id}\` (not in the server)`); continue; }
+      if (m.user.bot) { skipped.push(`<@${id}> (bot)`); continue; }
+      squad.push(m);
+    }
+    if (!squad.length) return interaction.editReply(`Nobody eligible to deputize.${skipped.length ? `\nSkipped: ${skipped.join(', ')}` : ''}`);
+    const role = await ensureHitSquadRole(guild).catch(e => { console.error('[hitsquad] role:', e.message); return null; });
+    if (!role) return interaction.editReply('Could not create/find the Hit Squad role — check my Manage Roles permission.');
+    for (const m of squad) await m.roles.add(role, `Hit squad activated by ${interaction.user.tag}`).catch(() => {});
+    const active = hitsquad.activate(squad.map(m => m.id), interaction.user.id);
+    armHitSquadTimer(guild, active.expiresAt);
+    const mins = Math.round(hitsquad.DURATION_MS / 60000);
+    await ownerlog.log(guild, { emoji: '🔪', title: 'HIT SQUAD ACTIVATED', color: 0xED4245,
+      detail: `${squad.map(m => `<@${m.id}>`).join(', ')} — ${mins}m window — summoned by <@${interaction.user.id}>.` });
+    return interaction.editReply({
+      content: `🔪 **HIT SQUAD ACTIVATED** for **${mins} minutes** (until <t:${Math.floor(active.expiresAt / 1000)}:t>): ${squad.map(m => `<@${m.id}>`).join(', ')}\n`
+        + `They can \`/corner\` almost anyone — even staff — except each other, the owner, and <@${interaction.user.id}> (who summoned them). `
+        + `Every corner they land auto-releases when the window ends, and they can't be cornered themselves until then.`
+        + `${skipped.length ? `\n⚠️ Skipped: ${skipped.join(', ')}` : ''}`,
+      allowedMentions: { users: [...squad.map(m => m.id), interaction.user.id] },
+    });
+  }
   if (name === 'staff') {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can view the census.', flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -9831,7 +9911,11 @@ client.on('interactionCreate', async (interaction) => {
     const ownerCornerOK = name === 'corner' && !isMod && !trial && isMemberCornerEligibleRole(interaction)
       && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId);
     const memberMayCorner = name === 'corner' && (isMemberCorner(interaction) || ownerCornerOK);
-    if (!isMod && !trial && !memberMayCorner) {
+    // Hit squad (owner, 2026-08-17): a named, time-boxed squad may /corner almost anyone — even staff —
+    // for the activation window, regardless of the memberCorner feature flag. Corner-only: /uncorner is
+    // untouched, still staff-only.
+    const isHitSquad = name === 'corner' && hitsquad.isSquadMember(interaction.user.id);
+    if (!isMod && !trial && !memberMayCorner && !isHitSquad) {
       // A verified member who WOULD qualify if the feature were on gets told plainly it's off, instead of
       // the generic staff-only message (command visibility no longer hides this from them either way).
       if (name === 'corner' && isMemberCornerEligibleRole(interaction))
@@ -9854,7 +9938,7 @@ client.on('interactionCreate', async (interaction) => {
       // block is ever reached another way) — staff/trial-mods always; a verified member only when
       // 'memberCorner' is on. /corner is visible to everyone regardless of the flag, so this can still
       // fire for a non-eligible member.
-      if (!opspanel.tierOf(interaction) && !isTrialMod(interaction) && !mCorner)
+      if (!opspanel.tierOf(interaction) && !isTrialMod(interaction) && !mCorner && !hitsquad.isSquadMember(interaction.user.id))
         return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
       // Self-cornering is blocked for everyone EXCEPT this one member (owner-approved standing exception,
       // 2026-08-03). They pick their own duration like anyone else would; nothing here changes /uncorner,
@@ -9875,15 +9959,21 @@ client.on('interactionCreate', async (interaction) => {
       if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id)) {
         return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
       }
-      if (targetRank > actorRank && !corner.canBypassCornerTier(interaction.user.id, member.id)) {
+      if (targetRank > actorRank && !corner.canBypassCornerTier(interaction.user.id, member.id) && !hitsquad.canBypass(interaction.user.id, member.id)) {
         return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
       }
+      const isHitSquadTarget = hitsquad.canBypass(interaction.user.id, member.id);
       const durStr = interaction.options.getString('duration');
       let durationMs = null;
       if (durStr) {
         durationMs = corner.parseDuration(durStr);
         if (!durationMs) return interaction.reply({ content: copy.corner.badDuration, flags: MessageFlags.Ephemeral });
       }
+      // Hit-squad corners: owner, 2026-08-17 — "all corners expire at the end of the window," regardless of
+      // whatever duration was typed (or left blank/indefinite). Force the release to the window's fixed end
+      // time, not a fresh N-minutes-from-now — a corner applied 2 minutes into a 10-minute window still
+      // releases at the 10-minute mark, same as one applied at the last second.
+      if (isHitSquadTarget) durationMs = Math.max(0, hitsquad.getActive().expiresAt - Date.now());
       // Reason: a picked rule and/or a custom typed reason. Show both when present.
       const ruleN = interaction.options.getString('rule');
       const customReason = interaction.options.getString('reason');

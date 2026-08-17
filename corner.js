@@ -5,6 +5,7 @@
 
 const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
+const hitsquad = require('./hitsquad');
 
 // ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
 // /corner already refuses to corner someone of a HIGHER tier than the actor. This closes the mirror
@@ -308,6 +309,13 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // every entry point, present and future, regardless of what each caller does or forgets to do upstream.
   if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id))) {
     return { ok: false, error: "you can't corner the server owner." };
+  }
+  // A current hit-squad member is immune to being cornered (by anyone, staff included) for as long as
+  // their activation window is live (owner, 2026-08-17: "they can't be cornered during the window") — same
+  // central choke point every entry point already funnels through, so this can't be dodged via a path that
+  // forgot to check it.
+  if (hitsquad.isSquadMember(member.id)) {
+    return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
   }
   // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
   // use PUT semantics computed off the LOCAL cache — a stale/partial member (e.g. from a message event,
