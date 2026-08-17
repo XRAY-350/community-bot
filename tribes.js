@@ -546,6 +546,28 @@ function cosignFounding(founderId, cosignerId) {
 }
 function clearFoundingRequest(founderId) { const s = load(); if (s.foundingRequests) delete s.foundingRequests[founderId]; save(s); }
 
+// A leader-initiated disband needs EVERY current leader to agree before it goes through (owner, 2026-08-17:
+// "If a leader does the command/button each leader must agree with it before it goes through"). The owner/
+// bot-owner may disband any tribe directly, no agreement needed — that gate lives in index.js, not here.
+// Keyed by tribe key (one pending request per tribe); the initiator counts as already agreed.
+function startDisbandRequest(key, initiatorId) {
+  const s = load(); if (!s.disbandRequests) s.disbandRequests = {};
+  s.disbandRequests[key] = { initiatorId, agreed: [initiatorId], createdAt: Date.now() };
+  save(s); return s.disbandRequests[key];
+}
+function getDisbandRequest(key) { return (load().disbandRequests || {})[key] || null; }
+function setDisbandMessage(key, channelId, messageId) {
+  const s = load(); const r = s.disbandRequests && s.disbandRequests[key]; if (!r) return;
+  r.channelId = channelId; r.messageId = messageId; save(s);
+}
+// Returns the updated request, or null if this leader already agreed (no-op) or there's no pending request.
+function agreeToDisband(key, userId) {
+  const s = load(); const r = s.disbandRequests && s.disbandRequests[key]; if (!r) return null;
+  if (r.agreed.includes(userId)) return null;
+  r.agreed.push(userId); save(s); return r;
+}
+function clearDisbandRequest(key) { const s = load(); if (s.disbandRequests) delete s.disbandRequests[key]; save(s); }
+
 // ---- Member-founded tribe (owner 2026-08-05): ONE regular member may found ONE tribe, backed by 9 cosigns
 // from members (or trial mods) — no mod/admin/owner. Only one such petition, and one such tribe, at a time
 // server-wide. Kept in its OWN state (single object, not keyed by founder) so it never touches the mod path.
@@ -857,6 +879,7 @@ module.exports = { load, save, all, get, getByRole, resolve, memberTribe, inAnyT
   hasUnlock, addUnlock, removeUnlock, addStrongholdTier,
   startMuster, getMuster, setMusterMessage, joinMuster, closeMuster,
   startFoundingRequest, getFoundingRequest, setFoundingMessage, cosignFounding, clearFoundingRequest,
+  startDisbandRequest, getDisbandRequest, setDisbandMessage, agreeToDisband, clearDisbandRequest,
   MEMBER_FOUND_COSIGNS, MEMBER_FOUND_EXPIRY_MS, getMemberFounding, getMemberFoundedTribeKey, startMemberFounding,
   cosignMemberFounding, setMemberFoundingMessage, clearMemberFounding, setMemberFoundedTribe,
   setEntranceGate, getEntranceGate, clearEntranceGate,

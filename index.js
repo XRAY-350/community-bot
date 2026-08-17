@@ -573,7 +573,8 @@ function tribeThronePanel(tribe) {
       ? new ButtonBuilder().setCustomId(`tribethrone_allybreak:${k}`).setEmoji('💔').setLabel('Break Alliance').setStyle(ButtonStyle.Secondary)
       : new ButtonBuilder().setCustomId(`tribethrone_alliance:${k}`).setEmoji('🤝').setLabel('Propose Alliance').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tribethrone_allygift:${k}`).setEmoji('🎁').setLabel('Gift Treasury to Ally').setStyle(ButtonStyle.Secondary).setDisabled(!ally),
-    new ButtonBuilder().setCustomId(`tribethrone_clearthrone:${k}`).setEmoji('🧹').setLabel('Clear Throne').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId(`tribethrone_clearthrone:${k}`).setEmoji('🧹').setLabel('Clear Throne').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`tribethrone_disband:${k}`).setEmoji('💥').setLabel('Disband').setStyle(ButtonStyle.Danger));
   // Recognition + depth row (member-facing) — each button gated by its own feature flag. Discord caps a message
   // at 5 rows and a row at 5 buttons; Trophies, Hall of Fame, Quests, Relics, Prestige is exactly 5 when all on.
   const rows = [memberRow, leaderRow1, leaderRow2, leaderRow3];
@@ -1156,6 +1157,98 @@ function countModLeaders(guild, tribe) {
   if (!role) return { count: 0, leaders: [] };
   const leaders = [...role.members.values()].filter(m => ['mod', 'admin', 'owner'].includes(opspanel.memberTier(m)));
   return { count: leaders.length, leaders };
+}
+// EVERY current holder of a tribe's leader role, regardless of staff tier (a member-founded tribe's
+// co-leaders are regular members) — used by the disband-agreement flow, unlike countModLeaders above which
+// only counts staff-tier leaders for the mod-tribe minimum-leaders rule.
+function currentTribeLeaders(guild, tribe) {
+  const role = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
+  return role ? [...role.members.keys()] : [];
+}
+// Single source of truth for actually tearing a tribe down (owner, 2026-08-17: "add the disband command").
+// Deletes its channels + roles (best-effort per resource), drops the state record, and refreshes the #roles
+// tribe picker so it stops showing as a pledge option. Shared by the auto-disband-pending flow, the direct
+// owner/bot-owner command, and the leader-agreement flow — one place, not three copies of the same deletes.
+async function executeTribeDisband(guild, tribe, byId, extraNote = '') {
+  const deleted = [];
+  for (const chId of [tribe.throneId, tribe.hallId, tribe.vcId, tribe.text2Id, tribe.vc2Id, tribe.categoryId].filter(Boolean)) {
+    const ch = await guild.channels.fetch(chId).catch(() => null);
+    if (ch) { await ch.delete(`Tribe disbanded by <@${byId}>`).catch(() => {}); deleted.push(chId); }
+  }
+  for (const rId of [tribe.roleId, tribe.leaderRoleId, tribe.staffRankRoleId, ...((tribe.ranks || []).map(r => r.roleId))].filter(Boolean)) {
+    const role = await guild.roles.fetch(rId).catch(() => null);
+    if (role) await role.delete(`Tribe disbanded by <@${byId}>`).catch(() => {});
+  }
+  tribes.removeTribe(tribe.key);
+  if (config.rolesChannelId) await roleselect.refreshTribeBlock(guild, config.rolesChannelId).catch(() => {});
+  await ownerlog.log(guild, { emoji: '💥', title: 'Tribe DISBANDED', color: 0xED4245,
+    detail: `**${tribe.shortName || tribe.name}** was dissolved by <@${byId}>${extraNote ? ` ${extraNote}` : ''}. ${deleted.length} channel(s) + its roles deleted.` }).catch(() => {});
+  return deleted.length;
+}
+// True once EVERY current leader-role holder has clicked Agree — membership is re-checked live (not just
+// the count at request time), so someone stepping down as leader mid-request doesn't leave a phantom
+// "still waiting" slot, and a new leader added mid-request is correctly required to agree too.
+function disbandFullyAgreed(guild, tribe, req) {
+  const leaders = currentTribeLeaders(guild, tribe);
+  return leaders.length > 0 && leaders.every(id => req.agreed.includes(id));
+}
+function disbandAgreeRow(key) {
+  return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`tribedisband_agree:${key}`).setEmoji('💥').setLabel('Agree to disband').setStyle(ButtonStyle.Danger));
+}
+function disbandRequestContent(guild, tribe, req) {
+  const leaders = currentTribeLeaders(guild, tribe);
+  const agreedHere = leaders.filter(id => req.agreed.includes(id));
+  return `## 💥 Disband request: ${tribe.emoji || '🏴'} ${tribe.shortName || tribe.name}\n`
+    + `Started by <@${req.initiatorId}>. **Every current leader must agree** before this goes through — this deletes the tribe's roles and channels, and cannot be undone.\n`
+    + `Agreed (${agreedHere.length}/${leaders.length}): ${agreedHere.length ? agreedHere.map(id => `<@${id}>`).join(', ') : '_none yet_'}\n`
+    + `${leaders.filter(id => !req.agreed.includes(id)).length ? `Waiting on: ${leaders.filter(id => !req.agreed.includes(id)).map(id => `<@${id}>`).join(', ')}` : ''}`;
+}
+// Kicks off (or, for a leader who isn't owner-tier, continues) a tribe disband. Shared by the /tribe-admin
+// disband command and the throne panel's Disband button — same confirm/agreement flow either way.
+async function beginTribeDisbandFlow(interaction, t) {
+  const guild = interaction.guild;
+  // Admin+ (which already always includes the real Discord server owner, regardless of roles — see
+  // opspanel.memberTier) gets the direct path, same gate as every other /tribe-admin subcommand and the
+  // existing auto-disband-pending confirm button. Anyone else falls through to the leader-agreement flow.
+  if (canWLAdmin(interaction)) {
+    return interaction.reply({
+      content: `⚠️ **Disband ${t.emoji || '🏴'} ${t.shortName || t.name}?** This deletes its roles and channels — cannot be undone.`,
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tribedisbandcmd_confirm:${t.key}`).setEmoji('💥').setLabel('Confirm Disband').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`tribedisbandcmd_cancel:${t.key}`).setEmoji('✖️').setLabel('Cancel').setStyle(ButtonStyle.Secondary))],
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  if (!tribes.isLeader(interaction.member, t))
+    return interaction.reply({ content: `Only **${t.shortName || t.name}**’s ${tribes.leaderTitle(t)}, an admin, or the server owner can disband it.`, flags: MessageFlags.Ephemeral });
+  const existing = tribes.getDisbandRequest(t.key);
+  if (existing) {
+    if (existing.agreed.includes(interaction.user.id))
+      return interaction.reply({ content: `You’ve already agreed. Waiting on the rest of **${t.shortName || t.name}**’s leaders.`, flags: MessageFlags.Ephemeral });
+    const updated = tribes.agreeToDisband(t.key, interaction.user.id);
+    if (disbandFullyAgreed(guild, t, updated)) {
+      await interaction.reply({ content: `💥 All leaders agreed — disbanding **${t.shortName || t.name}** now...`, flags: MessageFlags.Ephemeral });
+      const msgRef = updated.channelId && updated.messageId ? await (await guild.channels.fetch(updated.channelId).catch(() => null))?.messages.fetch(updated.messageId).catch(() => null) : null;
+      tribes.clearDisbandRequest(t.key);
+      await executeTribeDisband(guild, t, interaction.user.id, '(all leaders agreed)');
+      if (msgRef) await msgRef.edit({ content: `💥 **${t.shortName || t.name}** has been disbanded — all leaders agreed.`, components: [] }).catch(() => {});
+      return;
+    }
+    await interaction.reply({ content: `✅ Agreement recorded. Still waiting on other leaders of **${t.shortName || t.name}**.`, flags: MessageFlags.Ephemeral });
+    if (existing.channelId && existing.messageId) {
+      const ch = await guild.channels.fetch(existing.channelId).catch(() => null);
+      const msg = ch && await ch.messages.fetch(existing.messageId).catch(() => null);
+      if (msg) await msg.edit({ content: disbandRequestContent(guild, t, updated), components: [disbandAgreeRow(t.key)] }).catch(() => {});
+    }
+    return;
+  }
+  return interaction.reply({
+    content: `⚠️ **Request to disband ${t.emoji || '🏴'} ${t.shortName || t.name}?** All of its current leaders must agree before it happens. This deletes its roles and channels — cannot be undone.`,
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tribedisbandreq_start:${t.key}`).setEmoji('💥').setLabel('Request Disband').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`tribedisbandreq_cancel:${t.key}`).setEmoji('✖️').setLabel('Cancel').setStyle(ButtonStyle.Secondary))],
+    flags: MessageFlags.Ephemeral,
+  });
 }
 // Keep each tribe's rank ladder ordered (owner, 2026-08-04: ranks climb ascending, rank4 + General above the
 // member role). Permutes ONLY the tribe's own 6 roles (rank1-4, member, General) among the position-slots
@@ -4416,6 +4509,8 @@ client.once('ready', async () => {
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true))
           .addUserOption(o => o.setName('member').setDescription('The new leader (also joins the tribe if not already in it)').setRequired(true))
           .addUserOption(o => o.setName('replacing').setDescription('Optional: an existing leader to step down at the same time').setRequired(false)))
+        .addSubcommand(s => s.setName('disband').setDescription('Dissolve a tribe: deletes its roles + channels, cannot be undone')
+          .addStringOption(o => o.setName('tribe').setDescription('Which tribe').setRequired(true).setAutocomplete(true)))
         // arena/sealed-arena/trial/points/title/staffrank-set retired 2026-08-10 — folded into /tribe panel
         // (the "Launch an event" select for the first three; the Settings modal for the last three, though
         // Settings is scoped to the CALLER'S OWN tribe via canManageTribe, narrower than these commands' old
@@ -7263,6 +7358,10 @@ client.on('interactionCreate', async (interaction) => {
       const n = await clearThroneMessages(interaction.guild, tribe.throneId);
       return interaction.editReply(`🧹 Cleared **${n}** message(s) from the throne. The pinned panel + 📖 Paths & Attributes reference stay put.`);
     }
+    // Deliberately NOT in isLeaderTool above — its own bespoke gate inside beginTribeDisbandFlow (admin+
+    // direct, or a genuine tribe leader via the agreement flow) is narrower than canManageTribe's blanket
+    // "any staff who's also a member of this tribe" allowance.
+    if (act === 'disband') return beginTribeDisbandFlow(interaction, tribe);
     if (act === 'roster') {
       const members = tribes.roster(interaction.guild, tribe);
       const showTitle = features.enabled('achievements');
@@ -7913,19 +8012,54 @@ client.on('interactionCreate', async (interaction) => {
     }
     // Confirm disband — delete channels + roles, then drop the record. Best-effort per resource.
     await interaction.deferUpdate();
-    const deleted = [];
-    for (const chId of [tribe.throneId, tribe.hallId, tribe.vcId, tribe.text2Id, tribe.vc2Id, tribe.categoryId].filter(Boolean)) {
-      const ch = await interaction.guild.channels.fetch(chId).catch(() => null);
-      if (ch) { await ch.delete(`Tribe disbanded by ${interaction.user.tag}`).catch(() => {}); deleted.push(chId); }
-    }
-    for (const rId of [tribe.roleId, tribe.leaderRoleId, tribe.staffRankRoleId, ...((tribe.ranks || []).map(r => r.roleId))].filter(Boolean)) {
-      const role = await interaction.guild.roles.fetch(rId).catch(() => null);
-      if (role) await role.delete(`Tribe disbanded by ${interaction.user.tag}`).catch(() => {});
-    }
-    tribes.removeTribe(tribe.key);
-    if (config.rolesChannelId) await roleselect.refreshTribeBlock(interaction.guild, config.rolesChannelId).catch(() => {});
-    await ownerlog.log(interaction.guild, { emoji: '💥', title: 'Tribe DISBANDED', color: 0xED4245, detail: `**${tribe.shortName || tribe.name}** was dissolved by <@${interaction.user.id}> (mod-tribe leader requirement unmet). ${deleted.length} channel(s) + its roles deleted.` }).catch(() => {});
+    await executeTribeDisband(interaction.guild, tribe, interaction.user.id, '(mod-tribe leader requirement unmet)');
     return interaction.editReply({ content: `💥 **${tribe.shortName || tribe.name}** has been disbanded by <@${interaction.user.id}>. Its roles and channels are gone.`, components: [] }).catch(() => {});
+  }
+  // ---- Manual disband: /tribe-admin disband + the throne's Disband button (owner, 2026-08-17) ----------
+  if (interaction.isButton?.() && (interaction.customId.startsWith('tribedisbandcmd_confirm:') || interaction.customId.startsWith('tribedisbandcmd_cancel:'))) {
+    const [act, tribeKey] = interaction.customId.split(':');
+    const t = tribes.get(tribeKey);
+    if (!t) return interaction.update({ content: '_(That tribe no longer exists.)_', components: [] }).catch(() => {});
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only an admin (or the server owner) can decide this.', flags: MessageFlags.Ephemeral });
+    if (act === 'tribedisbandcmd_cancel') return interaction.update({ content: `Cancelled — **${t.shortName || t.name}** was not disbanded.`, components: [] }).catch(() => {});
+    await interaction.deferUpdate();
+    await executeTribeDisband(interaction.guild, t, interaction.user.id);
+    return interaction.editReply({ content: `💥 **${t.shortName || t.name}** has been disbanded by <@${interaction.user.id}>. Its roles and channels are gone.`, components: [] }).catch(() => {});
+  }
+  if (interaction.isButton?.() && (interaction.customId.startsWith('tribedisbandreq_start:') || interaction.customId.startsWith('tribedisbandreq_cancel:'))) {
+    const [act, tribeKey] = interaction.customId.split(':');
+    const t = tribes.get(tribeKey);
+    if (!t) return interaction.update({ content: '_(That tribe no longer exists.)_', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, t)) return interaction.reply({ content: `Only **${t.shortName || t.name}**’s ${tribes.leaderTitle(t)} can do this.`, flags: MessageFlags.Ephemeral });
+    if (act === 'tribedisbandreq_cancel') return interaction.update({ content: `Cancelled — no disband request was started for **${t.shortName || t.name}**.`, components: [] }).catch(() => {});
+    await interaction.deferUpdate();
+    const req = tribes.startDisbandRequest(t.key, interaction.user.id);
+    if (disbandFullyAgreed(interaction.guild, t, req)) {   // single-leader tribe — the initiator IS every leader
+      await interaction.editReply({ content: `💥 You’re **${t.shortName || t.name}**’s only leader — disbanding now...`, components: [] }).catch(() => {});
+      tribes.clearDisbandRequest(t.key);
+      await executeTribeDisband(interaction.guild, t, interaction.user.id, '(sole leader agreed)');
+      return interaction.editReply(`💥 **${t.shortName || t.name}** has been disbanded. Its roles and channels are gone.`);
+    }
+    const postCh = t.throneId ? await interaction.guild.channels.fetch(t.throneId).catch(() => null) : null;
+    const posted = postCh ? await postCh.send({ content: disbandRequestContent(interaction.guild, t, req), components: [disbandAgreeRow(t.key)] }).catch(() => null) : null;
+    if (posted) tribes.setDisbandMessage(t.key, posted.channel.id, posted.id);
+    return interaction.editReply({ content: `💥 Disband request posted${posted ? ` in <#${posted.channelId}>` : ''}. Waiting on the rest of **${t.shortName || t.name}**’s leaders.`, components: [] }).catch(() => {});
+  }
+  if (interaction.isButton?.() && interaction.customId.startsWith('tribedisband_agree:')) {
+    const tribeKey = interaction.customId.split(':')[1];
+    const t = tribes.get(tribeKey);
+    if (!t) return interaction.update({ content: '_(That tribe no longer exists.)_', components: [] }).catch(() => {});
+    if (!tribes.isLeader(interaction.member, t)) return interaction.reply({ content: `Only one of **${t.shortName || t.name}**’s leaders can agree to this.`, flags: MessageFlags.Ephemeral });
+    const req = tribes.getDisbandRequest(t.key);
+    if (!req) return interaction.update({ content: '_(This disband request is no longer active.)_', components: [] }).catch(() => {});
+    const updated = tribes.agreeToDisband(t.key, interaction.user.id) || req;   // already-agreed clicker just re-renders
+    if (disbandFullyAgreed(interaction.guild, t, updated)) {
+      await interaction.update({ content: `💥 All leaders agreed — disbanding **${t.shortName || t.name}** now...`, components: [] }).catch(() => {});
+      tribes.clearDisbandRequest(t.key);
+      await executeTribeDisband(interaction.guild, t, interaction.user.id, '(all leaders agreed)');
+      return interaction.editReply(`💥 **${t.shortName || t.name}** has been disbanded — all leaders agreed.`).catch(() => {});
+    }
+    return interaction.update({ content: disbandRequestContent(interaction.guild, t, updated), components: [disbandAgreeRow(t.key)] }).catch(() => {});
   }
   if (interaction.isButton?.() && interaction.customId.startsWith('tribeshop_teardown:')) {
     const [, tribeKey, unlockKey] = interaction.customId.split(':');
@@ -9594,11 +9728,12 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'tribe-admin') {
     const sub = interaction.options.getSubcommand();
-    // 'create' has its own looser gate (admins, PLUS mods founding their own tribe); 'set-leader' is
-    // gated inside its own handler (a tribe's OWN leader can use it, not just admins). Every other
-    // subcommand (register/points/title/ranks/grant/challenge-*) stays admin-only, unchanged.
+    // 'create' has its own looser gate (admins, PLUS mods founding their own tribe); 'set-leader' and
+    // 'disband' are gated inside their own handlers (a tribe's OWN leader can use them, not just admins —
+    // disband via beginTribeDisbandFlow, same as the throne button). Every other subcommand
+    // (register/points/title/ranks/grant/challenge-*) stays admin-only, unchanged.
     const modSelfFounding = sub === 'create' && opspanel.tierOf(interaction) === 'mod';
-    if (!['set-leader', 'arena'].includes(sub) && !canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
+    if (!['set-leader', 'arena', 'disband'].includes(sub) && !canWLAdmin(interaction) && !modSelfFounding) return interaction.reply({ content: 'Only admins can create or register tribes.', flags: MessageFlags.Ephemeral });
     if (sub === 'hub-setup') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await ensureTribesHub(interaction.guild, config);
@@ -9737,6 +9872,11 @@ client.on('interactionCreate', async (interaction) => {
       if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throneSend(throne, { content: `## ${t.emoji || '🏴'} New ${tribes.leaderTitle(t)}\n<@${newLeader.id}> now leads **${t.shortName || t.name}**.${stepDownNote}`, allowedMentions: { users: [newLeader.id] } }).catch(() => {}); }
       await refreshThronePanel(interaction.guild, tribes.get(t.key)).catch(() => {});
       return interaction.editReply(`👑 <@${newLeader.id}> is now a ${tribes.leaderTitle(t)} of **${t.shortName || t.name}**.${stepDownNote}${reqNote}`);
+    }
+    if (sub === 'disband') {
+      const t = tribes.resolve(interaction.options.getString('tribe'));
+      if (!t) return interaction.reply({ content: 'No tribe matches that. Check Standings in #tribes-hub.', flags: MessageFlags.Ephemeral });
+      return beginTribeDisbandFlow(interaction, t);
     }
     if (sub === 'points') {
       const t = tribes.resolve(interaction.options.getString('tribe'));
