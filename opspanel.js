@@ -321,16 +321,19 @@ function buildConflicts() {
 
 function buildActions() {
   const modapps = require('./modapps');   // lazy — modapps requires opspanel (avoid the circular at load)
-  const appsOpen = modapps.applicationsOpen();
+  // Moderator and Language mini-mod applications open/close independently (owner, 2026-08-17) — this quick
+  // button only ever toggles the Moderator track; use /mod-applications open|close track:<...> for the
+  // mini-mod track, or to flip both at once.
+  const appsOpen = modapps.applicationsOpen('mod');
   const embed = new EmbedBuilder().setColor(0xff453a).setDescription(
     '**⭐ Needs Admin.** (Mods can read this page, but the buttons will show 🔒.)\n\n' +
     '🧹 **Run housekeeping now**: the bot normally tidies up once an hour; this makes it run **right now**: warn or remove overdue unverified members, delete dead verification threads, and flag anyone with both roles. ⚠️ It can **actually remove people**, unless Test Mode is on (see the ⚠️ Danger page).\n' +
     '🔨 **Ban a member**: permanently removes them and blocks them from rejoining. Can\'t be undone here.\n' +
-    `📋 **Mod applications**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime.`)
+    `📋 **Mod applications (Moderator track)**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime. Language mini-mod applications open/close separately — use \`/mod-applications\` for that track.`)
     .setFooter({ text: copy.guards.needsAdmin });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_sweep').setEmoji('🧹').setLabel('Run housekeeping now').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('fops_modapps_toggle').setEmoji(appsOpen ? '🚫' : '✅').setLabel(appsOpen ? 'Close mod applications' : 'Reopen mod applications').setStyle(appsOpen ? ButtonStyle.Danger : ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('fops_modapps_toggle').setEmoji(appsOpen ? '🚫' : '✅').setLabel(appsOpen ? 'Close Moderator applications' : 'Reopen Moderator applications').setStyle(appsOpen ? ButtonStyle.Danger : ButtonStyle.Success),
     new ButtonBuilder().setCustomId('fops_ban').setEmoji('🔨').setLabel('Ban a member').setStyle(ButtonStyle.Danger));
   return { content: '## 🔨 FUBU Ops · Actions', embeds: [embed], components: [row, navRow(pageIdx('Actions'))] };
 }
@@ -933,10 +936,12 @@ async function handlePanel(interaction) {
     if (id === 'fops_modapps_toggle') {
       if (!meets(tier, 'admin')) return deny('admin');
       const modapps = require('./modapps');
-      const nowOpen = !modapps.applicationsOpen();   // flip current state
-      await modapps.setApplicationsOpen(interaction.guild, nowOpen);
-      try { require('./ownerlog').log(interaction.guild, { emoji: nowOpen ? '✅' : '🚫', title: nowOpen ? 'Mod applications REOPENED' : 'Mod applications CLOSED', color: nowOpen ? 0x57F287 : 0xED4245, detail: `${nowOpen ? 'Reopened' : 'Closed'} via dashboard by <@${interaction.user.id}>.${nowOpen ? '' : ' In-flight applications still finish.'}` }); } catch { /* ownerlog best-effort */ }
-      await interaction.editReply(nowOpen ? '✅ Mod applications are now **OPEN**. Members can `/apply-mod`.' : '🚫 Mod applications are now **CLOSED** (team full). Applications already under review still finish.');
+      // Moderator-track only — see buildActions' comment. The Language mini-mod track has its own state,
+      // flip it via /mod-applications open|close track:lang.
+      const nowOpen = !modapps.applicationsOpen('mod');   // flip current state
+      await modapps.setApplicationsOpen(interaction.guild, nowOpen, null, 'mod');
+      try { require('./ownerlog').log(interaction.guild, { emoji: nowOpen ? '✅' : '🚫', title: nowOpen ? 'Mod applications REOPENED (Moderator)' : 'Mod applications CLOSED (Moderator)', color: nowOpen ? 0x57F287 : 0xED4245, detail: `${nowOpen ? 'Reopened' : 'Closed'} via dashboard by <@${interaction.user.id}>.${nowOpen ? '' : ' In-flight applications still finish.'}` }); } catch { /* ownerlog best-effort */ }
+      await interaction.editReply(nowOpen ? '✅ **Moderator** applications are now **OPEN**. Members can `/apply-mod`.' : '🚫 **Moderator** applications are now **CLOSED** (team full). Applications already under review still finish.');
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_freshmodal') {

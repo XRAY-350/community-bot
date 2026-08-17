@@ -4180,8 +4180,12 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('mod-applications').setDescription('Open or close mod applications when the team is full (admin)')
         .addSubcommand(s => s.setName('status').setDescription('Are mod applications open or closed right now?'))
-        .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications: accept new /apply-mod again'))
+        .addSubcommand(s => s.setName('open').setDescription('Reopen mod applications: accept new /apply-mod again')
+          .addStringOption(o => o.setName('track').setDescription('Which position? (default: both)').setRequired(false)
+            .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Language mini-mod', value: 'lang' })))
         .addSubcommand(s => s.setName('close').setDescription('Close mod applications (team full); in-flight applications still finish')
+          .addStringOption(o => o.setName('track').setDescription('Which position? (default: both)').setRequired(false)
+            .addChoices({ name: 'Both', value: 'both' }, { name: 'Moderator', value: 'mod' }, { name: 'Language mini-mod', value: 'lang' }))
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
@@ -8789,11 +8793,16 @@ client.on('interactionCreate', async (interaction) => {
     if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
     if (!modapps.isConfigured()) return interaction.reply({ content: 'Mod applications aren’t set up on this server yet. Ask an admin to set it up in **/panel → 🧩 Setup**.', flags: MessageFlags.Ephemeral });
-    if (!modapps.applicationsOpen()) return interaction.reply({ content: modapps.closedNotice(), flags: MessageFlags.Ephemeral });
     // If language mini-mods are set up, ask which position first; otherwise go straight to the mod modal.
+    // Owner, 2026-08-17: mini-mod and regular mod applications now open/close independently — don't turn
+    // someone away here just because ONE track is closed; the position picker (and its per-track re-check
+    // in modapps.js) is what actually enforces which track they land in.
     if (features.enabled('langMiniMod') && langmods.isConfigured()) {
+      if (!modapps.applicationsOpen('mod') && !modapps.applicationsOpen('lang'))
+        return interaction.reply({ content: modapps.closedNotice('mod'), flags: MessageFlags.Ephemeral });
       return interaction.reply({ content: 'What are you applying for?', components: [modapps.positionRow()], flags: MessageFlags.Ephemeral });
     }
+    if (!modapps.applicationsOpen('mod')) return interaction.reply({ content: modapps.closedNotice('mod'), flags: MessageFlags.Ephemeral });
     try { return await interaction.showModal(modapps.buildModal()); }
     catch (e) { console.error(`[modapps] showModal ${e.message}`); }
     return;
@@ -8802,23 +8811,25 @@ client.on('interactionCreate', async (interaction) => {
     if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
       return interaction.reply({ content: 'Only admins can open or close mod applications.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
+    const TRACK_LABEL = { mod: 'Moderator', lang: 'Language mini-mod', both: 'Both tracks' };
     if (sub === 'status') {
-      const open = modapps.applicationsOpen();
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: open
-        ? '✅ Mod applications are **OPEN**. Members can `/apply-mod`.'
-        : `🚫 Mod applications are **CLOSED**.\nMembers who try to apply see:\n> ${modapps.closedNotice()}` });
+      const modOpen = modapps.applicationsOpen('mod'), langOpen = modapps.applicationsOpen('lang');
+      const line = (label, open, track) => `${open ? '✅' : '🚫'} **${label}**: ${open ? 'OPEN' : `CLOSED — ${modapps.closedNotice(track)}`}`;
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content:
+        `${line('Moderator', modOpen, 'mod')}\n${line('Language mini-mod', langOpen, 'lang')}` });
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const track = interaction.options.getString('track') || 'both';
     if (sub === 'close') {
       const msg = interaction.options.getString('message');
-      await modapps.setApplicationsOpen(interaction.guild, false, msg);
-      await ownerlog.log(interaction.guild, { emoji: '🚫', title: 'Mod applications CLOSED', color: 0xED4245, detail: `Closed by <@${interaction.user.id}> (team full). New \`/apply-mod\` is turned away; in-flight applications still finish.${msg ? `\nNote to applicants: ${msg}` : ''}` });
-      return interaction.editReply(`🚫 Mod applications are now **CLOSED**. New \`/apply-mod\` attempts are turned away; applications already under review still finish. Reopen anytime with \`/mod-applications open\`.`);
+      await modapps.setApplicationsOpen(interaction.guild, false, msg, track);
+      await ownerlog.log(interaction.guild, { emoji: '🚫', title: `Mod applications CLOSED (${TRACK_LABEL[track]})`, color: 0xED4245, detail: `Closed by <@${interaction.user.id}> (team full). New \`/apply-mod\` for ${TRACK_LABEL[track]} is turned away; in-flight applications still finish.${msg ? `\nNote to applicants: ${msg}` : ''}` });
+      return interaction.editReply(`🚫 **${TRACK_LABEL[track]}** mod applications are now **CLOSED**. New \`/apply-mod\` attempts for that track are turned away; applications already under review still finish. Reopen anytime with \`/mod-applications open\`.`);
     }
     if (sub === 'open') {
-      await modapps.setApplicationsOpen(interaction.guild, true);
-      await ownerlog.log(interaction.guild, { emoji: '✅', title: 'Mod applications REOPENED', color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> — members can \`/apply-mod\` again.` });
-      return interaction.editReply('✅ Mod applications are now **OPEN**. Members can `/apply-mod` again.');
+      await modapps.setApplicationsOpen(interaction.guild, true, null, track);
+      await ownerlog.log(interaction.guild, { emoji: '✅', title: `Mod applications REOPENED (${TRACK_LABEL[track]})`, color: 0x57F287, detail: `Reopened by <@${interaction.user.id}> — members can \`/apply-mod\` for ${TRACK_LABEL[track]} again.` });
+      return interaction.editReply(`✅ **${TRACK_LABEL[track]}** mod applications are now **OPEN**. Members can \`/apply-mod\` again.`);
     }
     return;
   }

@@ -121,8 +121,8 @@ function buildModal(track = 'mod', lang = null) {
 // Step 1 of applying: pick the POSITION (only shown when language mini-mods are configured — otherwise
 // /apply-mod goes straight to the mod modal). Moderator → mod modal; Language mini-mod → language picker.
 const positionRow = () => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('modapp_pos_mod').setEmoji('🛡️').setLabel('Moderator').setStyle(ButtonStyle.Primary),
-  new ButtonBuilder().setCustomId('modapp_pos_lang').setEmoji('🌐').setLabel('Language mini-mod').setStyle(ButtonStyle.Secondary));
+  new ButtonBuilder().setCustomId('modapp_pos_mod').setEmoji('🛡️').setLabel('Moderator').setStyle(ButtonStyle.Primary).setDisabled(!applicationsOpen('mod')),
+  new ButtonBuilder().setCustomId('modapp_pos_lang').setEmoji('🌐').setLabel('Language mini-mod').setStyle(ButtonStyle.Secondary).setDisabled(!applicationsOpen('lang')));
 function languageSelectRow() {
   const menu = new StringSelectMenuBuilder().setCustomId('modapp_pos_langsel').setPlaceholder('Which language?')
     .addOptions(langmods.languages().map(l => ({ label: `${l} mini-mod`, value: l, emoji: '🌐' })));
@@ -175,15 +175,14 @@ function answersFromEmbed(e) {
 async function submitFromModal(interaction, config) {
   const c = loadConfig();
   if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: copy.modapps.notSetup, flags: MessageFlags.Ephemeral });
-  if (c.applicationsClosed === true) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
-  const state = loadState();
-  if (Object.values(state.posts).find(p => p.applicantId === interaction.user.id && p.status === 'open'))
-    return interaction.reply({ content: copy.modapps.alreadyApplied, flags: MessageFlags.Ephemeral });
-
   // Which position? customId is 'modapp_submit' (Moderator) or 'modapp_submit:lang:<Language>'.
   const idParts = (interaction.customId || '').split(':');
   const track = idParts[1] === 'lang' ? 'lang' : 'mod';
   const lang = track === 'lang' ? idParts[2] : null;
+  if (!applicationsOpen(track)) return interaction.reply({ content: closedNotice(track), flags: MessageFlags.Ephemeral });
+  const state = loadState();
+  if (Object.values(state.posts).find(p => p.applicantId === interaction.user.id && p.status === 'open'))
+    return interaction.reply({ content: copy.modapps.alreadyApplied, flags: MessageFlags.Ephemeral });
   const answers = {}; for (const q of QUESTIONS) { try { answers[q.id] = interaction.fields.getTextInputValue(q.id); } catch { answers[q.id] = ''; } }
   const member = interaction.member;
   const pun = punishment(member, config);
@@ -440,17 +439,17 @@ async function handleButton(interaction, config) {
   // Re-check the closed gate here too — a stale position picker (opened while apps were open, clicked after
   // they closed) shouldn't reach the form. Turn them away up front instead of after they've typed it all.
   if (id === 'modapp_pos_mod') {
-    if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
+    if (!applicationsOpen('mod')) return interaction.reply({ content: closedNotice('mod'), flags: MessageFlags.Ephemeral });
     return interaction.showModal(buildModal('mod'));
   }
   if (id === 'modapp_pos_lang') {
-    if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
+    if (!applicationsOpen('lang')) return interaction.reply({ content: closedNotice('lang'), flags: MessageFlags.Ephemeral });
     return interaction.update({ content: copy.modapps.whichLang, components: [languageSelectRow()] });
   }
 }
 // The language dropdown chosen → open the mini-mod modal for that language.
 async function handlePositionSelect(interaction) {
-  if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
+  if (!applicationsOpen('lang')) return interaction.reply({ content: closedNotice('lang'), flags: MessageFlags.Ephemeral });
   return interaction.showModal(buildModal('lang', interaction.values?.[0]));
 }
 
@@ -726,20 +725,44 @@ async function rerender(guild, reviewThreadId) {
 // --- applications open/closed intake toggle ------------------------------------------------------
 // Close intake when the team is full: new /apply-mod attempts are turned away, but applications ALREADY
 // under review keep going (the gate is only at the entry + modal submit, never on existing threads).
-const DEFAULT_CLOSED_NOTICE = '🚫 Mod applications are currently **closed**. The team is full right now. Thanks for the interest, and keep an eye out for when they reopen!';
-function applicationsOpen() { return loadConfig().applicationsClosed !== true; }
-function closedNotice() { const n = (loadConfig().closedNotice || '').trim(); return n || DEFAULT_CLOSED_NOTICE; }
-async function setApplicationsOpen(guild, open, message) {
+// Owner, 2026-08-17: "mini mods and regular mods should have to separate closing/opening states" — the
+// Moderator track and the Language mini-mod track close/open INDEPENDENTLY now (e.g. the mod team can be
+// full while language mini-mod slots stay open, or vice versa), instead of one shared flag closing both.
+const DEFAULT_CLOSED_NOTICE = '🚫 Applications for that position are currently **closed** right now. Thanks for the interest, and keep an eye out for when they reopen!';
+// Back-compat migration: a pre-per-track config only has the old `applicationsClosed` boolean — treat it
+// as both tracks starting in that same state, once, then always read/write the new shape from then on.
+function closedTracks() {
   const c = loadConfig();
-  c.applicationsClosed = !open;
-  if (typeof message === 'string' && message.trim()) c.closedNotice = message.trim();
+  if (c.closedTracks) return c.closedTracks;
+  return { mod: c.applicationsClosed === true, lang: c.applicationsClosed === true };
+}
+function applicationsOpen(track = 'mod') { return closedTracks()[track] !== true; }
+function closedNotice(track = 'mod') {
+  const c = loadConfig();
+  const n = (c.closedNotices?.[track] || c.closedNotice || '').trim();
+  return n || DEFAULT_CLOSED_NOTICE;
+}
+async function setApplicationsOpen(guild, open, message, track = 'both') {
+  const c = loadConfig();
+  const tracks = closedTracks();
+  const affected = track === 'both' ? ['mod', 'lang'] : [track];
+  for (const t of affected) tracks[t] = !open;
+  c.closedTracks = tracks;
+  delete c.applicationsClosed;   // fully migrated onto closedTracks from here on
+  if (typeof message === 'string' && message.trim()) {
+    c.closedNotices = c.closedNotices || {};
+    for (const t of affected) c.closedNotices[t] = message.trim();
+  }
   saveConfig(c);
   // reflect the state on the applicant forum's topic so it's visible at a glance
   try {
     const ch = c.appsChannelId && await guild.channels.fetch(c.appsChannelId).catch(() => null);
     if (ch && ch.setTopic) {
       const base = 'Apply with /apply-mod. Your application opens as a private thread here that only you + staff can see.';
-      await ch.setTopic(open ? base : `🚫 Applications are CLOSED (team full). ${base}`).catch(() => {});
+      const closedBits = [];
+      if (tracks.mod) closedBits.push('Moderator');
+      if (tracks.lang) closedBits.push('Language mini-mod');
+      await ch.setTopic(closedBits.length ? `🚫 CLOSED for: ${closedBits.join(', ')}. ${base}` : base).catch(() => {});
     }
   } catch { /* topic update is best-effort */ }
   return { open };
