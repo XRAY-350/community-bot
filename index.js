@@ -607,6 +607,30 @@ function tribePathsReference(tribe) {
   });
   return { content: lines.join('\n').slice(0, 3900), allowedMentions: { parse: [] } };
 }
+// Post/refresh the lore & paths reference in a tribe's throne — EDIT in place, not resend, same pattern as
+// refreshThronePanel. BUG FIXED 2026-08-17: postThroneGuide used to unconditionally `throne.send()` a new
+// copy of this every time it ran (tribe creation, AND the boot self-heal below whenever the pinned panel
+// went briefly unfetchable) — since the message's id was never persisted anywhere, there was no way to find
+// the old one to edit or remove it, so every repost left the previous lore message stranded, still pinned,
+// just going stale. Now tracked via tribe.loreMessageId, with a pin-content-signature backfill (the ": Paths
+// & Attributes" suffix every lore title shares) for tribes whose old stray copies predate this fix.
+async function ensureLoreReference(guild, throne, tribe) {
+  const refPayload = tribePathsReference(tribe);
+  if (!refPayload) return null;
+  let msg = tribe.loreMessageId ? await throne.messages.fetch(tribe.loreMessageId).catch(() => null) : null;
+  if (!msg) {
+    const pins = await throne.messages.fetchPins().catch(() => null);
+    msg = pins && pins.items.map(p => p.message).find(m => m.content.includes(': Paths & Attributes'));
+  }
+  if (msg) {
+    if (tribe.loreMessageId !== msg.id) tribes.update(tribe.key, { loreMessageId: msg.id });
+    await msg.edit(refPayload).catch(() => {});
+    return msg;
+  }
+  const refMsg = await throne.send(refPayload).catch(() => null);
+  if (refMsg) { await refMsg.pin().catch(() => {}); tribes.update(tribe.key, { loreMessageId: refMsg.id }); }
+  return refMsg;
+}
 // Post + pin the panel in a tribe's throne. Best-effort (missing throne, send failure, or a pin failure —
 // e.g. the channel already has 50 pins — all fail silently rather than blocking tribe creation on it).
 async function postThroneGuide(guild, tribe) {
@@ -615,11 +639,7 @@ async function postThroneGuide(guild, tribe) {
   if (!throne) return null;
   const msg = await throne.send(tribeThronePanel(tribe)).catch(() => null);
   if (msg) { await msg.pin().catch(() => {}); tribes.update(tribe.key, { panelMessageId: msg.id }); }
-  const refPayload = tribePathsReference(tribe);
-  if (refPayload) {
-    const refMsg = await throne.send(refPayload).catch(() => null);
-    if (refMsg) await refMsg.pin().catch(() => {});
-  }
+  await ensureLoreReference(guild, throne, tribe);
   return msg;
 }
 // Re-render the already-posted/pinned Throne Hub — call after anything that changes what it shows (motto,
@@ -4600,8 +4620,11 @@ client.once('ready', async () => {
       } else {
         // Panel exists — refresh its CONTENT too (buttons/text change with code deploys; a repost only
         // triggers if the message is gone entirely, which would otherwise leave every tribe's panel stuck
-        // on whatever was live the day it was first posted).
+        // on whatever was live the day it was first posted). Same self-heal for the lore reference,
+        // independently of the panel — ensureLoreReference finds/edits its own message by id or pin
+        // signature rather than blindly reposting.
         await msg.edit(tribeThronePanel(t)).catch(() => {});
+        await ensureLoreReference(dguild, throne, t).catch(() => {});
       }
     }
   }
@@ -7486,6 +7509,10 @@ client.on('interactionCreate', async (interaction) => {
     if (hallId) {
       const ch = await interaction.guild.channels.fetch(hallId).catch(() => null);
       if (ch) await ch.send({ content: `# 📖 ${fresh.lore.title}\n${myth.slice(0, 1800)}\n\n**Paths:** ${fresh.lore.pathNames.join(' · ')}`, allowedMentions: { parse: [] } }).catch(() => {});
+    }
+    if (fresh.throneId) {
+      const throne = await interaction.guild.channels.fetch(fresh.throneId).catch(() => null);
+      if (throne) await ensureLoreReference(interaction.guild, throne, fresh).catch(() => {});
     }
     return interaction.editReply(`📖 Lore set for **${fresh.shortName || fresh.name}**. Paths: ${fresh.lore.pathNames.join(', ')}. Rank roles created/renamed to match.`);
   }
