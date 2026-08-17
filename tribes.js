@@ -809,7 +809,11 @@ function breakAlliance(keyA, keyB) {
 // (owner picked all three tiers): a shortfall first ALERTS with a grace window, then FREEZES the tribe's
 // perks (war/alliances/shop) if unfixed, then queues DISBAND. State lives on tribe.leaderEnforce so it
 // survives restarts; the sweep in index.js drives the transitions and clears it instantly on recovery.
-const MIN_MOD_LEADERS = 3;
+// Configurable per-deployment (owner, 2026-08-17: Melanin already lets a mod found a tribe solo — see
+// config.modFoundingCosignsRequired — so requiring 3 leaders to KEEP it standing afterward made a
+// solo-founded tribe start the freeze/disband countdown immediately. FUBU keeps the original 3; Melanin's
+// env overrides this down to 1 (just the founder) to match its own founding rule.
+const MIN_MOD_LEADERS = Number(process.env.MIN_MOD_LEADERS) || 3;
 // One grace window from the moment a shortfall is detected. Perks FREEZE at the HALFWAY point (owner,
 // 2026-08-04) and the tribe goes disband-pending at the end if still short.
 const LEADER_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
