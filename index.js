@@ -3293,8 +3293,11 @@ async function logCorner(guild, entry) {
 async function ensureHitSquadRole(guild) {
   let id = hitsquad.getRoleId();
   let role = id && (guild.roles.cache.get(id) || await guild.roles.fetch(id).catch(() => null));
-  if (role) return role;
-  role = await guild.roles.create({ name: '🔪 Hit Squad', color: 0xED4245, hoist: true, mentionable: false, reason: 'Hit squad (owner request)' });
+  // BypassSlowmode is the real, narrow Discord permission for this (not ManageMessages/ManageChannels —
+  // those also grant message-delete/channel-edit, more chaos than intended). Patched onto an EXISTING role
+  // too, so a role created before this feature shipped still gets it without manual re-creation.
+  if (role) { if (!role.permissions.has(PermissionsBitField.Flags.BypassSlowmode)) await role.setPermissions([PermissionsBitField.Flags.BypassSlowmode], 'Hit squad: slowmode immunity').catch(() => {}); return role; }
+  role = await guild.roles.create({ name: '🔪 Hit Squad', color: 0xED4245, hoist: true, mentionable: false, permissions: [PermissionsBitField.Flags.BypassSlowmode], reason: 'Hit squad (owner request)' });
   hitsquad.setRoleId(role.id);
   return role;
 }
@@ -3303,12 +3306,22 @@ async function deactivateHitSquad(guild) {
   if (_hitsquadTimer.t) { clearTimeout(_hitsquadTimer.t); _hitsquadTimer.t = null; }
   const active = hitsquad.peekActive();   // raw record, even a moment past expiresAt — clear() below wipes it
   const memberIds = active ? active.squadIds : [];
+  const reverts = hitsquad.peekReverts();
   hitsquad.clear();
   const role = hitsquad.getRoleId() && await guild.roles.fetch(hitsquad.getRoleId()).catch(() => null);
   if (role) for (const id of memberIds) { const m = await guild.members.fetch(id).catch(() => null); if (m) await m.roles.remove(role, 'Hit squad window ended').catch(() => {}); }
-  if (memberIds.length) {
+  // Revert whatever settings they changed (owner: "whatever settings they change should also revert at
+  // the end of the period") — one entry per (kind, targetId), recorded with its ORIGINAL value the first
+  // time it was touched this window.
+  for (const r of reverts) {
+    try {
+      if (r.kind === 'slowmode') { const ch = await guild.channels.fetch(r.targetId).catch(() => null); if (ch) await ch.setRateLimitPerUser(r.value, 'Hit squad window ended — reverting slowmode'); }
+      else if (r.kind === 'nickname') { const m = await guild.members.fetch(r.targetId).catch(() => null); if (m) await m.setNickname(r.value, 'Hit squad window ended — reverting nickname'); }
+    } catch (e) { console.error(`[hitsquad] revert ${r.kind} ${r.targetId}:`, e.message); }
+  }
+  if (memberIds.length || reverts.length) {
     await logCorner(guild, { emoji: '🔪', title: 'HIT SQUAD STOOD DOWN', color: 0x99AAB5,
-      desc: `${memberIds.map(id => `<@${id}>`).join(', ')} — window ended, deputized power revoked.` }).catch(() => {});
+      desc: `${memberIds.map(id => `<@${id}>`).join(', ')} — window ended, deputized power revoked.${reverts.length ? ` Reverted ${reverts.length} change(s).` : ''}` }).catch(() => {});
   }
 }
 function armHitSquadTimer(guild, expiresAt) {
@@ -4244,10 +4257,17 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('close').setDescription('Close Event Organizer applications; in-flight applications still finish')
           .addStringOption(o => o.setName('message').setDescription('Optional custom note shown to members who try to apply').setRequired(false).setMaxLength(400)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
-      new SlashCommandBuilder().setName('hitsquad').setDescription('Deputize a chaos squad for a 10-minute window (admin)')
-        .addSubcommand(s => s.setName('activate').setDescription('Name who\'s on the squad for the next 10 minutes')
+      new SlashCommandBuilder().setName('hitsquad').setDescription('Hit squad: activate (admin), or squad-member chaos powers during the window')
+        .addSubcommand(s => s.setName('activate').setDescription('Admin: name who\'s on the squad for the next 10 minutes')
           .addStringOption(o => o.setName('members').setDescription('@mention or paste IDs, space-separated').setRequired(true)))
-        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
+        .addSubcommand(s => s.setName('slowmode').setDescription('Squad only: set slowmode on a channel you can see (reverts at window end)')
+          .addChannelOption(o => o.setName('channel').setDescription('Which channel').setRequired(true))
+          .addIntegerOption(o => o.setName('seconds').setDescription('Slowmode in seconds, 0-21600 (0 = off)').setRequired(true).setMinValue(0).setMaxValue(21600)))
+        .addSubcommand(s => s.setName('nickname').setDescription('Squad only: change someone\'s nickname (reverts at window end)')
+          .addUserOption(o => o.setName('user').setDescription('Who to rename').setRequired(true))
+          .addStringOption(o => o.setName('nickname').setDescription('New nickname, max 32 characters').setRequired(true).setMaxLength(32)))
+        .setDefaultMemberPermissions(null),   // always visible; the handler gates activate to admin+ and the
+        // other two to a currently-active squad member — matches /corner's cornerVis convention
       new SlashCommandBuilder().setName('staff').setDescription('Staff roster: each tier’s count + members (@ · username · user id)')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageRoles),
       new SlashCommandBuilder().setName('promote-trial').setDescription('Open a promotion vote for a trial mod (posts in mod-announcements)')
@@ -9063,6 +9083,37 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
   if (name === 'hitsquad') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'slowmode' || sub === 'nickname') {
+      if (!hitsquad.isSquadMember(interaction.user.id))
+        return interaction.reply({ content: 'Only a currently-active hit squad member can do that.', flags: MessageFlags.Ephemeral });
+      const guild = interaction.guild;
+      if (sub === 'slowmode') {
+        const channel = interaction.options.getChannel('channel');
+        const seconds = interaction.options.getInteger('seconds');
+        const ch = channel && await guild.channels.fetch(channel.id).catch(() => null);
+        if (!ch || typeof ch.setRateLimitPerUser !== 'function') return interaction.reply({ content: 'That channel doesn’t support slowmode.', flags: MessageFlags.Ephemeral });
+        if (!ch.permissionsFor(interaction.member)?.has(PermissionsBitField.Flags.ViewChannel))
+          return interaction.reply({ content: 'You can only set slowmode on a channel you can actually see.', flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        hitsquad.recordOriginal('slowmode', ch.id, null, ch.rateLimitPerUser || 0);
+        await ch.setRateLimitPerUser(seconds, `Hit squad chaos by ${interaction.user.tag}`).catch(e => console.error('[hitsquad] slowmode:', e.message));
+        return interaction.editReply(`🔪 Slowmode on <#${ch.id}> set to **${seconds}s**. Reverts to **${ch.rateLimitPerUser || 0}s** when the window ends.`);
+      }
+      // nickname
+      const target = interaction.options.getUser('user');
+      const nick = interaction.options.getString('nickname');
+      if (!hitsquad.isValidTarget(interaction.user.id, target.id))
+        return interaction.reply({ content: 'Can’t target a fellow squad member or whoever summoned you.', flags: MessageFlags.Ephemeral });
+      if (target.id === guild.ownerId) return interaction.reply({ content: 'Can’t rename the server owner.', flags: MessageFlags.Ephemeral });
+      const tm = await guild.members.fetch(target.id).catch(() => null);
+      if (!tm) return interaction.reply({ content: 'That member is not in the server.', flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      hitsquad.recordOriginal('nickname', tm.id, null, tm.nickname);
+      await tm.setNickname(nick, `Hit squad chaos by ${interaction.user.tag}`).catch(e => { console.error('[hitsquad] nickname:', e.message); });
+      return interaction.editReply(`🔪 <@${tm.id}> renamed to **${nick}**. Reverts to their real nickname when the window ends.`);
+    }
+    // activate
     if (!['admin', 'owner', 'botowner'].includes(opspanel.tierOf(interaction)))
       return interaction.reply({ content: 'Only admins can activate the hit squad.', flags: MessageFlags.Ephemeral });
     if (hitsquad.isActive()) {

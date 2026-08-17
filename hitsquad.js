@@ -45,15 +45,35 @@ function getRoleId() { return load().roleId || null; }
 function setRoleId(id) { const s = load(); s.roleId = id; save(s); }
 
 function isSquadMember(userId) { const a = getActive(); return !!(a && a.squadIds.includes(userId)); }
-// Can `actorId` bypass the normal corner tier-gate against `targetId`, via an active hit-squad grant?
-// Owner protection is untouched — this is only ever consulted at the RANK-comparison gate, never the
-// separate `member.id === guild.ownerId` guard, so the owner stays uncorner-able regardless of this.
-function canBypass(actorId, targetId) {
+// Shared target-exclusion rule for EVERY hit-squad power, not just cornering: can't touch a fellow squad
+// member, whoever summoned them, or (for corner specifically) the owner — the owner exclusion is enforced
+// separately by corner.js's own guard, not here, since nickname/slowmode have no "owner" concept to protect.
+function isValidTarget(actorId, targetId) {
   const a = getActive();
   if (!a || !a.squadIds.includes(actorId)) return false;
   if (a.squadIds.includes(targetId)) return false;   // can't hit a fellow squad member
   if (targetId === a.summonerId) return false;        // can't hit whoever summoned them
   return true;
 }
+// Can `actorId` bypass the normal corner tier-gate against `targetId`, via an active hit-squad grant?
+// Owner protection is untouched — this is only ever consulted at the RANK-comparison gate, never the
+// separate `member.id === guild.ownerId` guard, so the owner stays uncorner-able regardless of this.
+const canBypass = isValidTarget;
 
-module.exports = { DAILY_CAP_PER_PERSON, DURATION_MS, dailyCountFor, isActive, getActive, peekActive, canActivate, activate, clear, getRoleId, setRoleId, isSquadMember, canBypass };
+// ---- generic "whatever they change, revert it at window end" ledger --------------------------------
+// One entry per (kind, targetId) touched this window, recording the ORIGINAL value the first time it's
+// touched (a second change to the same channel/member during the window does NOT overwrite the recorded
+// original — we want to restore what it was before the window, not what it was mid-chaos).
+function recordOriginal(kind, targetId, key, value) {
+  const s = load();
+  if (!s.active) return;
+  s.active.reverts = s.active.reverts || [];
+  if (s.active.reverts.some(r => r.kind === kind && r.targetId === targetId && r.key === key)) return;
+  s.active.reverts.push({ kind, targetId, key, value });
+  save(s);
+}
+// Raw revert list regardless of expiry (mirrors peekActive) — cleanup needs this even a moment past the
+// window's technical end.
+function peekReverts() { const a = peekActive(); return (a && a.reverts) || []; }
+
+module.exports = { DAILY_CAP_PER_PERSON, DURATION_MS, dailyCountFor, isActive, getActive, peekActive, canActivate, activate, clear, getRoleId, setRoleId, isSquadMember, isValidTarget, canBypass, recordOriginal, peekReverts };
