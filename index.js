@@ -20,6 +20,7 @@ const { ensureMembers } = require('./memberCache');
 const opspanel = require('./opspanel');
 const watchlist = require('./watchlist');
 const wordfilter = require('./wordfilter');
+const mediafilter = require('./mediafilter');
 const amongus = require('./amongus');
 const tribes = require('./tribes');
 const pubdash = require('./pubdash');
@@ -4088,6 +4089,16 @@ client.once('ready', async () => {
         .addSubcommand(s => s.setName('remove').setDescription('Stop an active word filter early')
           .addStringOption(o => o.setName('word').setDescription('The filtered word/phrase to stop').setRequired(true)))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
+      new SlashCommandBuilder().setName('mediafilter').setDescription('Auto-delete GIFs and/or attachments for a period going forward')
+        .addSubcommand(s => s.setName('add').setDescription('Start auto-deleting a media type')
+          .addStringOption(o => o.setName('type').setDescription('What to auto-delete').setRequired(true)
+            .addChoices({ name: 'GIFs (tenor/giphy links + .gif files)', value: 'gifs' }, { name: 'Attachments (any uploaded file)', value: 'attachments' }))
+          .addStringOption(o => o.setName('duration').setDescription('How long, e.g. 30m, 2h, 3d (blank = until you remove it)').setRequired(false)))
+        .addSubcommand(s => s.setName('list').setDescription('Show the active media filters'))
+        .addSubcommand(s => s.setName('remove').setDescription('Stop an active media filter early')
+          .addStringOption(o => o.setName('type').setDescription('Which filter to stop').setRequired(true)
+            .addChoices({ name: 'GIFs', value: 'gifs' }, { name: 'Attachments', value: 'attachments' })))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
       new SlashCommandBuilder().setName('weights').setDescription('The staff infraction/weight guide: which rule = Corner / Strike (weight) / ban')
         .addBooleanOption(o => o.setName('pin').setDescription('Post it publicly here + pin it (admin only), for a channel trial mods can see').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods+ can pull the guide anywhere
@@ -5993,8 +6004,16 @@ client.on('messageCreate', async (msg) => {
       try { if (await modapps.relayApplicantReply(msg, config)) return; }
       catch (e) { console.error('[modapps] relay:', e.message); }
     }
+    // Media filter (GIFs / attachments) runs BEFORE the content guard below — most attachment-only or
+    // GIF-only messages have no text content at all, so waiting for that guard would let every one of
+    // them slip straight past a filter meant to catch exactly that.
+    const earlyMember = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
+    if (earlyMember && features.enabled('wordFilter') && !opspanel.memberTier(earlyMember)) {
+      const mediaHit = mediafilter.check(state, msg);
+      if (mediaHit) { await msg.delete().catch(e => console.error('[mediafilter] delete:', e.message)); return; }
+    }
     if (!msg.content) return;
-    const member = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
+    const member = earlyMember;
     if (!member) return;
     // Tribe Tides: +1 for a message in a tribe's hall (or a bought 2nd text channel), capped once per
     // tideCooldownMs (60s default, 45s with the Faster Tides shop unlock) per member. Records their join-time
@@ -8387,6 +8406,36 @@ client.on('interactionCreate', async (interaction) => {
       await logCorner(interaction.guild, { emoji: '🧹', title: 'WORD FILTER REMOVED', color: CORNER_GREEN,
         desc: `Stopped auto-deleting \`${r.removed.word}\` (deleted **${r.removed.count || 0}** message(s) while active).\n**By:** <@${interaction.user.id}>` }).catch(() => {});
       return interaction.reply({ content: `✅ Stopped the filter for \`${r.removed.word}\`, it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
+    }
+  }
+  if (name === 'mediafilter') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can manage media filters.', flags: MessageFlags.Ephemeral });
+    const sub = interaction.options.getSubcommand();
+    const TYPE_LABEL = { gifs: 'GIFs', attachments: 'Attachments' };
+    if (sub === 'add') {
+      const type = interaction.options.getString('type');
+      const durStr = (interaction.options.getString('duration') || '').trim();
+      let durationMs = null;
+      if (durStr) { durationMs = corner.parseDuration(durStr); if (!durationMs) return interaction.reply({ content: 'Bad duration. Use e.g. `30m`, `2h`, `3d` (or leave it blank for no expiry).', flags: MessageFlags.Ephemeral }); }
+      const r = mediafilter.set(state, type, durationMs, interaction.user.id);
+      const until = r.filter.expiresAt ? `until <t:${Math.floor(r.filter.expiresAt / 1000)}:f> (<t:${Math.floor(r.filter.expiresAt / 1000)}:R>)` : 'until removed (no expiry)';
+      await logCorner(interaction.guild, { emoji: '🧹', title: r.updated ? 'MEDIA FILTER UPDATED' : 'MEDIA FILTER ADDED', color: CORNER_AMBER,
+        desc: `Auto-deleting **${TYPE_LABEL[type]}** ${until}.\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+      return interaction.reply({ content: `🧹 ${r.updated ? 'Updated' : 'Now auto-deleting'} **${TYPE_LABEL[type]}** ${until}. (Staff are exempt.)`, flags: MessageFlags.Ephemeral });
+    }
+    if (sub === 'list') {
+      const list = mediafilter.activeAll(state);
+      if (!list.length) return interaction.reply({ content: 'No active media filters.', flags: MessageFlags.Ephemeral });
+      const lines = list.map(({ type, filter: f }) => `• **${TYPE_LABEL[type]}** · ${f.expiresAt ? `expires <t:${Math.floor(f.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${f.count || 0}** · by <@${f.byId}>`);
+      return interaction.reply({ content: `🧹 **Active media filters:**\n${lines.join('\n')}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'remove') {
+      const type = interaction.options.getString('type');
+      const r = mediafilter.clear(state, type);
+      if (!r.ok) return interaction.reply({ content: `❌ ${r.error}`, flags: MessageFlags.Ephemeral });
+      await logCorner(interaction.guild, { emoji: '🧹', title: 'MEDIA FILTER REMOVED', color: CORNER_GREEN,
+        desc: `Stopped auto-deleting **${TYPE_LABEL[type]}** (deleted **${r.removed.count || 0}** message(s) while active).\n**By:** <@${interaction.user.id}>` }).catch(() => {});
+      return interaction.reply({ content: `✅ Stopped the **${TYPE_LABEL[type]}** filter, it deleted **${r.removed.count || 0}** message(s).`, flags: MessageFlags.Ephemeral });
     }
   }
   if (name === 'pending') {
