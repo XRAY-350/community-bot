@@ -47,8 +47,20 @@ function memberTier(member) {
   // owner — one without the other — is not recognized). The Discord SERVER owner is always owner regardless.
   const ownerCombo = OWNER_ROLE_IDS.some(id => roles.has(id)) && !!(member.permissions && member.permissions.has(PermissionsBitField.Flags.Administrator));
   if ((member.guild && member.id === member.guild.ownerId) || ownerCombo) return 'owner';
-  if (roles.has(ADMIN_ROLE_ID)) return 'admin';
-  if (roles.has(MOD_ROLE_ID)) return 'mod';
+  // A cornered member's live roles are STRIPPED (the jail mechanism, not a demotion) — so checking live
+  // roles alone would see a jailed mod as a regular member. Fall back to the pre-corner role snapshot
+  // corner.js stored, so a mod/admin keeps being recognized as staff the whole time they're cornered,
+  // exactly as if they still held the role — until an actual bot demote command changes it (owner,
+  // 2026-08-18: "A mod should always be considered whatever their level is even in the corner unless
+  // demoted through the bot"). demote-mod/demote-admin edit this same stored snapshot for a cornered
+  // target, since target.roles.remove() is a no-op on a role they don't currently hold.
+  let effRoles = roles;
+  try {
+    const rec = D && D.state && D.state.getCornered(member.id);
+    if (rec && Array.isArray(rec.roles)) { const set = new Set(rec.roles); effRoles = { has: id => set.has(id) }; }
+  } catch { /* fall through to live roles */ }
+  if (effRoles.has(ADMIN_ROLE_ID)) return 'admin';
+  if (effRoles.has(MOD_ROLE_ID)) return 'mod';
   return null;
 }
 // ACTOR authority tier — who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server

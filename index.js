@@ -3616,6 +3616,41 @@ function missedRolesNote(missed) {
   if (!missed || !missed.length) return '';
   return `\n⚠️ **${missed.length} role(s) couldn't be auto-restored** (deleted, above my role, or managed): ${missed.map(id => `<@&${id}>`).join(', ')}. Add them back manually if still needed.`;
 }
+// Does a member effectively hold a role right now, seeing through a corner's role strip? A cornered
+// member's live roles don't have it (jailed, not demoted), so check the pre-corner snapshot instead —
+// mirrors opspanel.memberTier's own corner fallback (owner, 2026-08-18: staff level persists through the
+// corner unless an actual bot demote command changes it).
+function holdsRoleEffective(member, roleId) {
+  const rec = state.getCornered(member.id);
+  if (rec && Array.isArray(rec.roles)) return rec.roles.includes(roleId);
+  return member.roles.cache.has(roleId);
+}
+// Remove a role from a member who may currently be cornered: strip it live (harmless no-op if they don't
+// hold it right now) AND, if cornered, remove it from the stored snapshot too — otherwise release would
+// silently hand the "demoted" role right back.
+async function removeRoleEffective(member, roleId, reason) {
+  const ok = await member.roles.remove(roleId, reason).then(() => true).catch(() => false);
+  const rec = state.getCornered(member.id);
+  if (rec && Array.isArray(rec.roles) && rec.roles.includes(roleId)) {
+    rec.roles = rec.roles.filter(id => id !== roleId);
+    state.setCornered(member.id, rec);
+    return true;   // the snapshot edit is what actually matters while cornered
+  }
+  return ok;
+}
+// Add a role to a member who may currently be cornered: grant it live if not cornered, or add it to the
+// stored snapshot (so it's there on release) if they are — adding a real role to a jailed member would
+// just get stripped back off by the corner's own permission overwrite.
+async function addRoleEffective(member, roleId, reason) {
+  const rec = state.getCornered(member.id);
+  if (rec && Array.isArray(rec.roles)) {
+    if (rec.roles.includes(roleId)) return true;
+    rec.roles = [...rec.roles, roleId];
+    state.setCornered(member.id, rec);
+    return true;
+  }
+  return member.roles.add(roleId, reason).then(() => true).catch(() => false);
+}
 
 // Corner a LIST of members in one action — shared by /corner's `also`, the dashboard multi-pick, and the
 // Bulk corner (sweep / dashboard "Corner several" / /corner also). Per-target guards: skip self, bots, and
@@ -9507,10 +9542,10 @@ client.on('interactionCreate', async (interaction) => {
     if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured. Run `/panel` → 🧩 Setup → 📋 Mod apps first.', flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
-    if (!target.roles.cache.has(roleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Trial Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (!holdsRoleEffective(target, roleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Trial Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason');
-    const ok = await target.roles.remove(roleId, `Trial Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
+    const ok = await removeRoleEffective(target, roleId, `Trial Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`);
     return interaction.editReply(ok
       ? `✅ Removed the **Trial Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
       : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Trial Mod**.').catch(() => {});
@@ -9523,22 +9558,27 @@ client.on('interactionCreate', async (interaction) => {
     if (!config.modRoleId) return interaction.reply({ content: 'No Mod role is configured.', flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
-    if (!target.roles.cache.has(config.modRoleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (!holdsRoleEffective(target, config.modRoleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     // Admins/owners hold Mod via tier nesting (owner⊇admin⊇mod) — stripping it here would just get
     // auto-restored on the next role-change sweep. Point at the right command instead of silently no-op'ing.
+    // opspanel.memberTier sees through a corner's role strip, so this still correctly blocks demoting a
+    // cornered admin/owner's Mod via this command too.
     const targetTier = opspanel.memberTier(target);
     if (targetTier === 'admin' || targetTier === 'owner')
       return interaction.reply({ content: `<@${target.id}> holds Mod through being an **${targetTier === 'owner' ? 'Owner' : 'Admin'}** — use \`/demote-admin\` (or remove their Owner role directly) instead; removing Mod alone would just be auto-restored by tier nesting.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason');
-    const ok = await target.roles.remove(config.modRoleId, `Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
+    // Effective remove: also edits the corner snapshot if they're currently cornered, so a demote actually
+    // sticks instead of being a no-op on a role they don't currently hold (owner, 2026-08-18: staff level
+    // persists through the corner, but a real bot demote must still be able to change it).
+    const ok = await removeRoleEffective(target, config.modRoleId, `Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`);
     if (!ok) return interaction.editReply('❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Mod**.').catch(() => {});
     // Demoting a Mod steps them down to Trial Mod, not straight to nothing (owner, 2026-08-17: "demote
     // should make trial mod") — best-effort; a missing/unconfigured Trial Mod role just skips this part.
     const trialRoleId = modapps.loadConfig().trialModRoleId;
     let trialOk = false;
-    if (trialRoleId && !target.roles.cache.has(trialRoleId))
-      trialOk = await target.roles.add(trialRoleId, `Stepped down to Trial Mod by ${interaction.user.tag}`).then(() => true).catch(() => false);
+    if (trialRoleId && !holdsRoleEffective(target, trialRoleId))
+      trialOk = await addRoleEffective(target, trialRoleId, `Stepped down to Trial Mod by ${interaction.user.tag}`);
     return interaction.editReply(
       `✅ Removed the **Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
       + (trialRoleId ? (trialOk ? ' Stepped down to **Trial Mod**.' : ' ⚠️ Couldn’t add **Trial Mod** — check the role/hierarchy.') : ' (No Trial Mod role configured, so they weren’t stepped down to it.)')
@@ -9553,14 +9593,19 @@ client.on('interactionCreate', async (interaction) => {
     const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
     if (target.id === interaction.guild.ownerId) return interaction.reply({ content: 'You can’t demote the server owner.', flags: MessageFlags.Ephemeral });
-    if (!target.roles.cache.has(config.adminRoleId)) return interaction.reply({ content: `<@${target.id}> isn’t an **Admin**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (!holdsRoleEffective(target, config.adminRoleId)) return interaction.reply({ content: `<@${target.id}> isn’t an **Admin**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     // Owners hold Admin via tier nesting (owner⊇admin) — stripping it here would just get auto-restored.
+    // opspanel.memberTier sees through a corner's role strip, so this still correctly blocks demoting a
+    // cornered owner's Admin via this command too.
     const targetTier = opspanel.memberTier(target);
     if (targetTier === 'owner')
       return interaction.reply({ content: `<@${target.id}> holds Admin through an **Owner** role — remove that role directly in Discord instead; \`/demote-admin\` alone would just be auto-restored by tier nesting.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason');
-    const ok = await target.roles.remove(config.adminRoleId, `Admin demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
+    // Effective remove: also edits the corner snapshot if they're currently cornered, so a demote actually
+    // sticks instead of being a no-op on a role they don't currently hold (owner, 2026-08-18: staff level
+    // persists through the corner, but a real bot demote must still be able to change it).
+    const ok = await removeRoleEffective(target, config.adminRoleId, `Admin demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`);
     if (!ok) return interaction.editReply('❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Admin**.').catch(() => {});
     // Demoting an Admin steps them down to Mod, not straight to nothing (owner, 2026-08-17: full step-down
     // ladder, same as /demote-mod → Trial Mod). They likely already hold Mod via tier-nesting (auto-granted
@@ -9569,7 +9614,7 @@ client.on('interactionCreate', async (interaction) => {
     // admin, this Mod grant was only nested, strip it") doesn't immediately undo the step-down.
     let modOk = false;
     if (config.modRoleId) {
-      modOk = await target.roles.add(config.modRoleId, `Stepped down to Mod by ${interaction.user.tag}`).then(() => true).catch(() => false);
+      modOk = await addRoleEffective(target, config.modRoleId, `Stepped down to Mod by ${interaction.user.tag}`);
       if (modOk) nestedRoles.clear(target.id, config.modRoleId);
     }
     return interaction.editReply(
