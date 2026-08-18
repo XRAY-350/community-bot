@@ -28,6 +28,16 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-18 15:52 — Watchlist: narrower strict watch for mods, both deployments configured
+
+`opspanel`-tier watched members now get keyword-only strict scanning (no AI behavioral read) and
+are skipped entirely inside the mod category (`config.modCategoryId`, `MOD_CATEGORY_ID` env override).
+FUBU's "Mod Activities" category (`1516233713250471976`) was already the config default. Melanin's
+equivalent, "STAFF CHATS" (`1534385817999376434`), is now set via `MOD_CATEGORY_ID` in
+`/home/Administrator/.melanin_env` on bots-vm (env-only, not in git) — found by listing Melanin's
+categories for the hidden-from-@everyone one, per the owner's note that almost every FUBU channel
+has a Melanin equivalent. `melanin-bot` restarted to pick it up.
+
 ## 2026-08-18 15:29 — Corner joke-flag system, tier-persists-through-corner fix, dead-command sweep, live watchlist AI, tribe announcement posted
 
 Big session, several independent fixes/features. All deployed to both `community-bot` and
