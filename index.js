@@ -3663,6 +3663,20 @@ async function uncornerMany(guild, actorId, actorTier, userIds, durationMs) {
 }
 
 async function handleCornerButton(interaction) {
+  // corner_markjoke:<userId>:<0|1> — the joke check-in prompt after /corner (ephemeral, only the actor who
+  // ran the command sees it, so no separate mod gate needed here — modClicked() below would wrongly exclude
+  // a trial mod, who's allowed to see and use their own prompt).
+  if (interaction.customId.startsWith('corner_markjoke:')) {
+    const [, userId, jokeStr] = interaction.customId.split(':');
+    const joke = jokeStr === '1';
+    const ok = corner.setJoke(state, userId, joke);
+    return interaction.update({
+      content: ok
+        ? (joke ? `😂 Marked as a joke — <@${userId}>'s release tier lock is waived.` : `🔒 Marked as real — the normal release tier lock applies to <@${userId}>.`)
+        : `That corner already ended — nothing to change.`,
+      components: [],
+    }).catch(() => {});
+  }
   const [, userId, msStr] = interaction.customId.split(':');   // corner_rel:<userId>:<ms>  or  corner_recorner:<userId>
   const ms = Number(msStr || 0);
   if (!modClicked(interaction)) return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
@@ -10372,6 +10386,23 @@ client.on('interactionCreate', async (interaction) => {
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
         desc: `<@${user.id}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${interaction.user.id}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+      // Joke check-in (staff corners only — not the member-corner or hit-squad paths, where a joke flag on
+      // the uncorner tier lock is meaningless): staff-on-staff defaulted to joke (waiving the release tier
+      // lock) and asks if it's actually serious; staff-on-a-regular-member defaulted to real and asks the
+      // opposite way (owner, 2026-08-18: "The same ephemeral will pop up on regular corners of a staff on a
+      // normal member and ask if this is a joke ... with the staff one it'll be like, is this serious?").
+      if ((isMod || trial) && !mCorner && !isHitSquadTarget) {
+        const promptText = r.joke
+          ? `😂 Staff-on-staff, so this was treated as a **joke** by default — the release tier lock is waived, anyone can let ${user} out early. Is this actually serious?`
+          : `Was cornering ${user} a **joke**? (Default: real — the normal release tier lock stays in place.)`;
+        await interaction.followUp({
+          content: promptText,
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:0`).setEmoji('🔒').setLabel(r.joke ? "No, it's real" : 'No (default)').setStyle(r.joke ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:1`).setEmoji('😂').setLabel(r.joke ? 'Keep as joke' : 'Yes, mark as joke').setStyle(r.joke ? ButtonStyle.Secondary : ButtonStyle.Primary))],
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+      }
       return interaction.editReply(`🚫 Sent ${user} to the corner ${modWhen}${reasonText ? ` (${reasonText})` : ''}. Stripped **${r.stripped}** role(s).`);
     } else {
       const inCorner = interaction.channelId === config.cornerChannelId;

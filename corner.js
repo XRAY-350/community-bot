@@ -6,6 +6,7 @@
 const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
 const hitsquad = require('./hitsquad');
+const opspanel = require('./opspanel');
 
 // ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
 // /corner already refuses to corner someone of a HIGHER tier than the actor. This closes the mirror
@@ -33,7 +34,11 @@ function canBypassCornerTier(actorId, targetId, actorTier = null) {
   return PERSONAL_CORNER_OVERRIDES.some(o => {
     if (o.targetId !== targetId) return false;
     if (o.actorId === actorId) return true;
-    if (o.actorId === '*') return !!actorTier;
+    // The wildcard entry (currently just the server owner opting in) requires admin+ specifically, not any
+    // staff tier — narrowed from "any staff" (owner, 2026-08-18: "the ability for people to corner me as
+    // the owner should be admin/owner"), so a plain mod no longer qualifies even though they still can't
+    // corner an admin/owner under the normal tier rule either way.
+    if (o.actorId === '*') return (RANK[actorTier] || 0) >= RANK.admin;
     return false;
   });
 }
@@ -64,6 +69,7 @@ function isLowering(rec, newReleaseAt) {
 // acting on an owner-applied corner specifically (owner, 2026-08-14: admins no longer need a 3-admin
 // override vote to act on an owner's corner — botowner-applied corners are unaffected, still gated).
 function canActSolo(rec, actorId, actorTier) {
+  if (rec.joke) return true;   // joke corner — release/lowering gate is waived entirely, any tier can act solo
   if (rec.by === actorId) return true;
   if (actorTier === 'admin' && (rec.appliedByRank || 0) === RANK.owner) return true;
   return (RANK[actorTier] || 0) >= (rec.appliedByRank || 0);
@@ -373,7 +379,14 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   };
   const strip = rolesToStrip(guild, member);
   // Persist BEFORE mutating roles so a mid-way failure is still recoverable via /uncorner.
-  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0 });
+  // joke: staff-on-staff corners default to "joke" (owner, 2026-08-18: "All cornering of staff on other
+  // staff should be treated as a joke unless specified otherwise") — waives the release/lowering tier gate
+  // below (canActSolo) for THIS corner instance, flippable afterward via the "mark as real" follow-up
+  // prompt index.js shows right after. actorTier truthy already implies a recognized staff actor (trial
+  // mods pass null here and can't reach a staff target anyway, so no separate trial check is needed).
+  const targetIsStaff = !!(opspanel.memberTier(member) || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId)));
+  const joke = !!actorTier && targetIsStaff;
+  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke });
   try {
     // ONE atomic role.set() instead of a separate remove() then add() (owner-reported, 2026-08-12: "cornered
     // people are still getting tribe roles back"). Two separate calls fired two separate guildMemberUpdate
@@ -395,7 +408,7 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
-  return { ok: true, stripped: strip.length, repeatCount };
+  return { ok: true, stripped: strip.length, repeatCount, joke };
 }
 
 // Release a member: remove the corner role and restore the roles we stripped.
@@ -473,6 +486,16 @@ async function releaseExpired(guild, state) {
   return released;
 }
 
+// Flip an active corner's joke flag (the "mark as real" / "mark as joke" follow-up prompt). Returns false
+// if the member isn't currently cornered (prompt is stale — e.g. they were already released).
+function setJoke(state, userId, joke) {
+  const rec = state.getCornered(userId);
+  if (!rec) return false;
+  rec.joke = !!joke;
+  state.setCornered(userId, rec);
+  return true;
+}
+
 module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
-  setReleaseHandler, armTimer, clearTimer, rearmAll,
+  setReleaseHandler, armTimer, clearTimer, rearmAll, setJoke,
   RANK, canBypassCornerTier, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };
