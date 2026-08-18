@@ -5729,7 +5729,12 @@ async function watchlistAlert(msg, hits, opts = {}) {
   // When the LAB is active the AI moves OUT of the public log entirely — the watch-log reverts to plain
   // keyword flags and every AI verdict is posted (gradable) in the private admin lab channel instead.
   let smartNote = null;
-  if (features.enabled('smartWatch') && !features.enabled('smartWatchLab')) {
+  if (opts.aiVerdict) {
+    // Caller already ran the judge (the no-keyword behavioral read) — reuse its verdict instead of paying
+    // for a second API call.
+    const v = opts.aiVerdict;
+    smartNote = `🤖 behavioral read (no keyword): ${v.reason} _(conf ${v.confidence.toFixed(2)}${v.likelyRule ? `, Rule ${v.likelyRule}` : ''})_`;
+  } else if (features.enabled('smartWatch') && !features.enabled('smartWatchLab')) {
     try {
       const d = await smartwatch.evaluate(opts.scope || 'strict', msg, hits);
       if (d.ran && d.suppress) return;                 // live mode, high-confidence benign → don't post
@@ -5740,7 +5745,7 @@ async function watchlistAlert(msg, hits, opts = {}) {
   const embed = new EmbedBuilder().setColor(opts.color ?? 0xED4245).setTitle(opts.title || '🚨 Watchlist match')
     .setDescription(`<@${msg.author.id}> (\`${msg.author.tag}\`) ${opts.verb || 'matched a strict watchlist term'} in <#${msg.channel.id}>.`)
     .addFields(
-      { name: 'Matched', value: (hits.map(h => `\`${h}\``).join(', ') || '-').slice(0, 1024) },
+      { name: 'Matched', value: (hits.map(h => `\`${h}\``).join(', ') || (opts.aiOnly ? '_(AI behavioral read, no keyword)_' : '-')).slice(0, 1024) },
       { name: 'What they said (saved copy)', value: (msg.content || (atts.length ? '_(no text, see mirrored attachment)_' : '-')).slice(0, 1024) },
       { name: 'Original', value: `[jump to it](${msg.url}) · this report keeps a copy even if they delete it`, inline: true })
     .setFooter({ text: `user ${msg.author.id}` }).setTimestamp(new Date());
@@ -5758,6 +5763,11 @@ async function watchlistAlert(msg, hits, opts = {}) {
     new ButtonBuilder().setCustomId(`wl_strike:${msg.author.id}`).setEmoji('⚠️').setLabel('Strike').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`wl_corner:${msg.author.id}`).setEmoji('⛓️').setLabel('Corner').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`wl_dismiss:${msg.author.id}`).setEmoji('🗑️').setLabel('Dismiss').setStyle(ButtonStyle.Secondary))];
+  // A no-keyword AI catch has nothing on the term list to point at by default — offer a one-click way to
+  // recommend the word/phrase that should have matched, straight from the real incident (owner, 2026-08-18:
+  // "that way it can recommend words to add").
+  if (opts.offerAddTerm) components.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`wl_addterm:${msg.author.id}`).setEmoji('➕').setLabel('Add term').setStyle(ButtonStyle.Secondary)));
   const pingRoleId = opts.pingRoleId || config.modRoleId;
   const ping = (opts.ping !== false && pingRoleId) ? `<@&${pingRoleId}>` : undefined;
   const mentions = { roles: (opts.ping !== false && pingRoleId) ? [pingRoleId] : [] };
@@ -6026,6 +6036,14 @@ async function handleWatchlistButton(interaction) {
     if (!ref) return interaction.reply({ content: 'Couldn’t locate the flagged message to corner from. Use `/corner @them` or right-click the message.', flags: MessageFlags.Ephemeral });
     return interaction.showModal(cornerReasonModal(userId, ref.channelId, ref.messageId, null, isTrialMod(interaction)));
   }
+  if (action === 'wl_addterm') {
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can add watchlist terms.', flags: MessageFlags.Ephemeral });
+    const modal = new ModalBuilder().setCustomId(`wl_addterm_modal:${userId}`).setTitle('Recommend a term to add');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('term').setLabel('Word/phrase to add').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('scope').setLabel('strict or loose (default strict)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(6)));
+    return interaction.showModal(modal);
+  }
   if (action === 'wl_ban') { // legacy direct-ban buttons on older reports
     return interaction.update({ components: [banConfirmRow(userId, 'Confirm ban')] }).catch(() => {});
   }
@@ -6287,15 +6305,27 @@ client.on('messageCreate', async (msg) => {
     if (watchlist.isWatched(member.id)) {
       const strict = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])];
       const hits = strict.length ? watchlist.matchTerms(msg.content, strict) : [];
+      // A watched member who's ALSO staff must never see their own hit — route to the admin-only
+      // channel (MODS excluded) with an admin ping instead of the normal mod-visible one (owner,
+      // 2026-08-08: "I don't want them to know when they're caught").
+      const staffTarget = !!opspanel.memberTier(member);
+      const routeOpts = staffTarget
+        ? { scope: 'strict', channelId: config.adminAnnounceChannelId, pingRoleId: config.adminRoleId }
+        : { scope: 'strict' };
       if (hits.length) {
-        // A watched member who's ALSO staff must never see their own hit — route to the admin-only
-        // channel (MODS excluded) with an admin ping instead of the normal mod-visible one (owner,
-        // 2026-08-08: "I don't want them to know when they're caught").
-        const staffTarget = !!opspanel.memberTier(member);
-        await watchlistAlert(msg, hits, staffTarget
-          ? { scope: 'strict', channelId: config.adminAnnounceChannelId, pingRoleId: config.adminRoleId }
-          : { scope: 'strict' });
+        await watchlistAlert(msg, hits, routeOpts);
         return;   // strict wins - one report per message
+      }
+      // FULL BEHAVIORAL COVERAGE, live (was lab-only sandbox — owner, 2026-08-18: "that wasn't supposed to
+      // be a lab only feature, it was supposed to go live as well ... it can recommend words to add"): even
+      // with no keyword hit, the judge reads EVERY message from a watchlisted member — small, deliberately-
+      // watched population — and a genuine surface posts through the SAME routing as a keyword hit.
+      if (features.enabled('smartWatch')) {
+        const d = await smartwatch.evaluate('strict', msg, []).catch(e => { console.error('[smartwatch] behavioral:', e.message); return { ran: false }; });
+        if (d.ran && d.verdict && d.verdict.surface) {
+          await watchlistAlert(msg, [], { ...routeOpts, aiOnly: true, aiVerdict: d.verdict, offerAddTerm: true });
+          return;
+        }
       }
     }
     // Everyone EXCEPT staff → the day-to-day #watch-log (no ping). WELFARE (support) takes priority over LOOSE.
@@ -6895,6 +6925,15 @@ client.on('interactionCreate', async (interaction) => {
     } catch (e) { console.error(`[corner-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not corner.') : interaction.reply({ content: 'Could not corner.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('wl_addterm_modal:')) {
+    if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can add watchlist terms.', flags: MessageFlags.Ephemeral });
+    const term = (interaction.fields.getTextInputValue('term') || '').trim();
+    let scope = (interaction.fields.getTextInputValue('scope') || '').trim().toLowerCase();
+    if (scope !== 'loose') scope = 'strict';
+    if (!term) return interaction.reply({ content: 'No term given.', flags: MessageFlags.Ephemeral });
+    if (scope === 'loose') watchlist.addLoose(term); else watchlist.addTerm(term);
+    return interaction.reply({ content: `➕ Added \`${term}\` to the **${scope}** watchlist by <@${interaction.user.id}>.`, flags: MessageFlags.Ephemeral });
+  }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('strike_reason:')) {
     if (!canBan(interaction)) return interaction.reply({ content: copy.guards.staffOnlyStrike, flags: MessageFlags.Ephemeral });
     try {
