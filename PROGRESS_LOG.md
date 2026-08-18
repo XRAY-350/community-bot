@@ -28,6 +28,34 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-18 16:51 — Simplified MDNI: general gates on age brackets, retired MDNI Verified role
+
+Prompted by comparing the new age-bracket-gated Adults area against the older MDNI setup. Changes:
+
+- **`general` (the base MDNI channel) now gates on `adultAgeRoleIds` directly**, not the MDNI opt-in
+  role — matches the new Adults area's pattern. MDNI role's overwrite removed from that channel.
+- **`general-nsfw`/`nsfw-vc` still require the MDNI opt-in** (owner: "keep the gating but only on
+  general-nsfw/nsfw-vc") — but now gate on the plain `mdniRoleId` directly instead of the derived
+  "MDNI Verified" role. **Retired `enforceMdniVerified`/`sweepMdniVerified`** (index.js) and their
+  boot/hourly/real-time call sites — the combined role only ever existed because Discord can't
+  express "requires role A AND role B" natively; gating on plain MDNI alone is exactly as strong,
+  since `enforceMdni` already continuously strips MDNI from anyone without a confirmed adult age
+  role. `config.mdniVerifiedRoleId` removed. The now-fully-unused `🔞 𝗠𝗗𝗡𝗜 𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗` Discord role
+  itself was NOT deleted (nothing grants/checks it anymore, but deleting the role is a separate,
+  easily-reversed step — do it whenever, no rush).
+- **Registration lock relaxed for MDNI**: `enforceRegistrationLock` no longer reverts a self-toggle
+  of the MDNI role for anyone who currently holds an adult age bracket role (owner: "remove the
+  registration lock for mdni for people who hold an 18+ role") — MDNI is now a free-standing
+  preference for confirmed adults, not a one-time choice locked at verification. The age-bracket
+  lock itself is unchanged; only the MDNI half was relaxed, and only for adults (impossible for a
+  non-adult to hold it anyway, since `enforceMdni` strips it).
+- Melanin needed no changes — its own env already notes "Adults space is age-gated, not an MDNI
+  space" and has no MDNI-verified/NSFW/VC config at all.
+- Deployed to both bots, restarted clean. Live permission overwrites updated on FUBU via one-off
+  script (created + deleted per usual pattern); verified via a fresh force-fetch read after an
+  initial verify attempt gave a false negative from stale cache (a `channels.fetch(id)` without
+  `{force:true}` can return pre-edit cached state even in a brand-new client connection).
+
 ## 2026-08-18 16:25 — Ported Melanin's Adults area to FUBU (live server change, no code)
 
 New `🔞 ᴀᴅᴜʟᴛs` category on FUBU, modeled on Melanin's 9-channel Adults area, built and confirmed

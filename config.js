@@ -140,16 +140,16 @@ const config = {
   // MDNI (18+) enforcement: the MDNI role must be backed by an ADULT age role. Onboarding lets a minor
   // self-select MDNI with no age check, so the bot strips it from anyone lacking an adult age role.
   mdniEnforce: bool('MDNI_ENFORCE', true),
-  mdniRoleId: opt('MDNI_ROLE_ID', '1519408206370308197'),                    // 𝗠𝗗𝗡𝗜 (18+ opt-in, onboarding)
-  mdniChannelId: opt('MDNI_CHANNEL_ID', '1531720395357687868'),              // 🔞┆ᴍᴅɴɪ (the gated 18+ channel)
+  mdniRoleId: opt('MDNI_ROLE_ID', '1519408206370308197'),                    // 𝗠𝗗𝗡𝗜 (18+ opt-in, onboarding; kept as a free-standing preference for confirmed adults, no longer gates the base channel)
+  mdniChannelId: opt('MDNI_CHANNEL_ID', '1531720395357687868'),              // 🔞┆ɢᴇɴᴇʀᴀʟ (owner, 2026-08-18: gated on adultAgeRoleIds directly now, not the MDNI opt-in)
   minorAgeRoleId: opt('MINOR_AGE_ROLE_ID', '1516185172213628989'),           // ✰ • 16-17
   adultAgeRoleIds: opt('ADULT_AGE_ROLE_IDS', '1516185300492222618,1516185358415433739,1516209186839466113').split(',').map(s => s.trim()).filter(Boolean), // 18-21 / 21-25 / 25-30+
-  // Second, stricter 18+ space (owner, 2026-08-16): NSFW-flagged, requires MDNI AND a confirmed adult age
-  // role TOGETHER. Discord can't express role-AND at the permission layer (every allow is OR'd), so the
-  // bot auto-manages a combined role instead — see enforceMdniVerified/sweepMdniVerified in index.js.
-  mdniVerifiedRoleId: opt('MDNI_VERIFIED_ROLE_ID', '1538353267493437460'),  // 🔞 𝗠𝗗𝗡𝗜 𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗 (auto-managed, MDNI + adult age)
-  mdniNsfwChannelId: opt('MDNI_NSFW_CHANNEL_ID', '1538353269146128545'),    // 🔞┆ᴍᴅɴɪ-ɴsꜰᴡ (nsfw:true, gated on mdniVerifiedRoleId)
-  mdniVerifiedVcId: opt('MDNI_VERIFIED_VC_ID', '1538955040868532355'),      // 🔞┆ᴍᴅɴɪ-ᴠᴄ (voice, gated on mdniVerifiedRoleId — same overwrites as mdniNsfwChannelId)
+  // Second, stricter 18+ space: NSFW/age-restricted-flagged, gated on the plain MDNI role directly (owner,
+  // 2026-08-18: retired the separate "MDNI Verified" combined role — holding MDNI already implies adult,
+  // since enforceMdni continuously strips it from anyone without an adult age role, so gating on MDNI alone
+  // is exactly as strong as the old "requires both" without a second role to keep in sync).
+  mdniNsfwChannelId: opt('MDNI_NSFW_CHANNEL_ID', '1538353269146128545'),    // 🔞┆ɢᴇɴᴇʀᴀʟ-ɴsꜰᴡ (age-restricted, gated on mdniRoleId)
+  mdniVerifiedVcId: opt('MDNI_VERIFIED_VC_ID', '1538955040868532355'),      // 📞┆ɴsꜰᴡ-ᴠᴄ (age-restricted, gated on mdniRoleId — same overwrites as mdniNsfwChannelId)
   // Mod-dashboard channel — its non-pinned messages get tidied weekly (the pinned panel stays).
   dashboardChannelId: opt('DASHBOARD_CHANNEL_ID', '1531087673760944331'),
 

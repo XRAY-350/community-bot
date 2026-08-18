@@ -4833,9 +4833,6 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.mdniNsfwChannelId)).catch(() => {}), 3600000);
   if (dguild) await sweepMdniStaffLock(dguild, config.mdniVerifiedVcId).catch(e => console.error(`[mdni-lock] boot sweep (vc): ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.mdniVerifiedVcId)).catch(() => {}), 3600000);
-  // MDNI VERIFIED: the combined role (MDNI + adult age, both) gating the new MDNI NSFW channel. Boot + hourly.
-  if (dguild) await sweepMdniVerified(dguild).catch(e => console.error(`[mdni-verified] boot sweep: ${e.message}`));
-  setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniVerified(g)).catch(() => {}), 3600000);
   if (dguild) await sweepHitSquadRole(dguild).catch(e => console.error(`[hitsquad] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepHitSquadRole(g)).catch(() => {}), 3600000);
 
@@ -5157,41 +5154,11 @@ async function sweepMdniStaffLock(guild, channelId = config.mdniChannelId) {
   return n;
 }
 
-// MDNI VERIFIED (owner, 2026-08-16): a second, stricter 18+ channel needs BOTH MDNI and an adult age role —
-// Discord can't express that AND at the permission layer (every role allow is OR'd), so the bot auto-manages
-// a combined role instead, granted/revoked the instant either prerequisite changes. The new channel gates on
-// this role alone, which is exactly as strong as "requires both" since the role can't exist without both.
-async function enforceMdniVerified(member) {
-  if (!config.mdniVerifiedRoleId || !config.mdniRoleId || member.user?.bot) return null;
-  const hasMdni = member.roles.cache.has(config.mdniRoleId);
-  const hasAdult = config.adultAgeRoleIds.some(id => member.roles.cache.has(id));
-  const qualifies = hasMdni && hasAdult;
-  const has = member.roles.cache.has(config.mdniVerifiedRoleId);
-  if (qualifies && !has) {
-    await member.roles.add(config.mdniVerifiedRoleId, 'MDNI + adult age role both confirmed').catch(e => console.error('[mdni-verified] add:', e.message));
-    return { id: member.id, tag: member.user.tag, granted: true };
-  }
-  if (!qualifies && has) {
-    await member.roles.remove(config.mdniVerifiedRoleId, 'no longer holds both MDNI and an adult age role').catch(e => console.error('[mdni-verified] remove:', e.message));
-    return { id: member.id, tag: member.user.tag, granted: false };
-  }
-  return null;
-}
-// Backstop sweep (boot + hourly): re-check every current MDNI holder AND every current combined-role holder
-// (covers both directions — someone newly qualifying, and someone who lost an age role but kept the grant).
-async function sweepMdniVerified(guild) {
-  if (!config.mdniVerifiedRoleId || !config.mdniRoleId) return;
-  await ensureMembers(guild);
-  const mdniRole = guild.roles.cache.get(config.mdniRoleId) || await guild.roles.fetch(config.mdniRoleId).catch(() => null);
-  const verifiedRole = guild.roles.cache.get(config.mdniVerifiedRoleId) || await guild.roles.fetch(config.mdniVerifiedRoleId).catch(() => null);
-  const seen = new Set(); let granted = 0, revoked = 0;
-  for (const m of [...(mdniRole?.members.values() || []), ...(verifiedRole?.members.values() || [])]) {
-    if (seen.has(m.id)) continue; seen.add(m.id);
-    const r = await enforceMdniVerified(m);
-    if (r?.granted) granted++; else if (r && !r.granted) revoked++;
-  }
-  if (granted || revoked) console.log(`[mdni-verified] sweep: granted ${granted}, revoked ${revoked}`);
-}
+// MDNI VERIFIED — RETIRED (owner, 2026-08-18): the combined role existed only because Discord can't
+// express "requires BOTH role A and role B" at the permission layer. Once general-nsfw/nsfw-vc gate on
+// the plain MDNI role directly, that's exactly as strong as "requires both" anyway, since enforceMdni()
+// (above) already continuously strips MDNI from anyone without an adult age role — holding MDNI already
+// IMPLIES adult. The derived role added a second role to keep in sync for no remaining benefit.
 
 // Only one age bracket at a time. Nothing previously enforced this — a member could hold multiple age
 // roles simultaneously (whatever assigned them, e.g. the old external selector, had no exclusivity check).
@@ -5240,7 +5207,12 @@ async function enforceRegistrationLock(member, notify = true) {
   const lock = locks[member.id];
   const curAge = currentAgeRole(member);
   const curMdni = !!(config.mdniRoleId && member.roles.cache.has(config.mdniRoleId));
-  if (curAge === lock.ageRoleId && curMdni === lock.mdni) return;   // matches the locked baseline — nothing to do
+  // MDNI is now a free-standing preference, not a one-time registration choice, for anyone who's already a
+  // confirmed adult (owner, 2026-08-18: "remove the registration lock for mdni for people who hold an 18+
+  // role") — they can toggle it anytime with no revert. A non-adult holding it is impossible anyway
+  // (enforceMdni strips it), so this only ever relaxes the check for people it was never protecting against.
+  const mdniLocked = !config.adultAgeRoleIds.some(id => member.roles.cache.has(id));
+  if (curAge === lock.ageRoleId && (curMdni === lock.mdni || !mdniLocked)) return;   // matches the locked baseline — nothing to do
 
   // WHO changed it decides everything. Only a member re-picking their OWN registration is blocked. A mod/
   // admin (or the bot) changing it is a deliberate OVERRIDE → accept it as the new locked baseline so staff
@@ -5265,7 +5237,7 @@ async function enforceRegistrationLock(member, notify = true) {
         ? `**Age:** they tried to switch to **${roleName(curAge)}** → restored **${roleName(lock.ageRoleId) || 'their original bracket'}**`
         : `**Age:** they tried to clear their age bracket → restored **${roleName(lock.ageRoleId) || 'their original bracket'}**`);
     }
-    if (curMdni !== lock.mdni) {
+    if (curMdni !== lock.mdni && mdniLocked) {
       if (curMdni) await member.roles.remove(config.mdniRoleId, 'Registration lock: MDNI can’t change after verification').catch(() => {});
       else await member.roles.add(config.mdniRoleId, 'Registration lock: restoring original MDNI choice').catch(() => {});
       changes.push(`**MDNI:** they tried to turn it **${curMdni ? 'ON' : 'OFF'}** → restored`);
@@ -5395,7 +5367,6 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     }
     await enforceMdni(newMember).catch(() => {});   // keep MDNI ⟹ adult on every role change
     // (the 3x enforceMdniStaffLock calls now run unconditionally above, before the cornered-member guard)
-    await enforceMdniVerified(newMember).catch(e => console.error('[mdni-verified]', e.message));   // combined role: MDNI + adult age, both
     await enforceHitSquadRole(newMember).catch(e => console.error('[hitsquad] drift:', e.message));   // strip a manually-assigned (untracked) Hit Squad role
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
