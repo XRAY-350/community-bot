@@ -10392,14 +10392,17 @@ client.on('interactionCreate', async (interaction) => {
       // opposite way (owner, 2026-08-18: "The same ephemeral will pop up on regular corners of a staff on a
       // normal member and ask if this is a joke ... with the staff one it'll be like, is this serious?").
       if ((isMod || trial) && !mCorner && !isHitSquadTarget) {
+        // One button only — the flip OUT of the default, not a two-way chooser. Not clicking it just
+        // leaves the default (joke for staff-on-staff, real for staff-on-a-member) standing.
         const promptText = r.joke
-          ? `😂 Staff-on-staff, so this was treated as a **joke** by default — the release tier lock is waived, anyone can let ${user} out early. Is this actually serious?`
-          : `Was cornering ${user} a **joke**? (Default: real — the normal release tier lock stays in place.)`;
+          ? `😂 Staff-on-staff, so this was treated as a **joke** by default — the release tier lock is waived, anyone can let ${user} out early.`
+          : `Cornering ${user} was treated as **real** by default — the normal release tier lock stays in place.`;
+        const flipBtn = r.joke
+          ? new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:0`).setEmoji('🔒').setLabel("No, it's real").setStyle(ButtonStyle.Danger)
+          : new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:1`).setEmoji('😂').setLabel('It was a joke').setStyle(ButtonStyle.Secondary);
         await interaction.followUp({
           content: promptText,
-          components: [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:0`).setEmoji('🔒').setLabel(r.joke ? "No, it's real" : 'No (default)').setStyle(r.joke ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:1`).setEmoji('😂').setLabel(r.joke ? 'Keep as joke' : 'Yes, mark as joke').setStyle(r.joke ? ButtonStyle.Secondary : ButtonStyle.Primary))],
+          components: [new ActionRowBuilder().addComponents(flipBtn)],
           flags: MessageFlags.Ephemeral,
         }).catch(() => {});
       }
