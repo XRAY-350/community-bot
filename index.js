@@ -6382,28 +6382,36 @@ client.on('messageCreate', async (msg) => {
     // Strict ENCOMPASSES loose — a watchlisted member is matched against strict + loose combined, so you
     // only ever add strict-ONLY extras to the strict list (every loose term is auto-included here).
     if (watchlist.isWatched(member.id)) {
-      const strict = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])];
-      const hits = strict.length ? watchlist.matchTerms(msg.content, strict) : [];
       // A watched member who's ALSO staff must never see their own hit — route to the admin-only
       // channel (MODS excluded) with an admin ping instead of the normal mod-visible one (owner,
       // 2026-08-08: "I don't want them to know when they're caught").
       const staffTarget = !!opspanel.memberTier(member);
-      const routeOpts = staffTarget
-        ? { scope: 'strict', channelId: config.adminAnnounceChannelId, pingRoleId: config.adminRoleId }
-        : { scope: 'strict' };
-      if (hits.length) {
-        await watchlistAlert(msg, hits, routeOpts);
-        return;   // strict wins - one report per message
-      }
-      // FULL BEHAVIORAL COVERAGE, live (was lab-only sandbox — owner, 2026-08-18: "that wasn't supposed to
-      // be a lab only feature, it was supposed to go live as well ... it can recommend words to add"): even
-      // with no keyword hit, the judge reads EVERY message from a watchlisted member — small, deliberately-
-      // watched population — and a genuine surface posts through the SAME routing as a keyword hit.
-      if (features.enabled('smartWatch')) {
-        const d = await smartwatch.evaluate('strict', msg, []).catch(e => { console.error('[smartwatch] behavioral:', e.message); return { ran: false }; });
-        if (d.ran && d.verdict && d.verdict.surface) {
-          await watchlistAlert(msg, [], { ...routeOpts, aiOnly: true, aiVerdict: d.verdict, offerAddTerm: true });
-          return;
+      // A watched MOD gets a narrower strict watch than a regular member (owner, 2026-08-19: "Strict for
+      // mods on the watchlist should only be the keywords and only outside of the mod category") — staff
+      // need to be able to talk freely in mod-only channels, and don't get the fuller AI behavioral read
+      // regular watched members do. Skip entirely for a mod's message inside the mod category.
+      const skipMod = staffTarget && config.modCategoryId && msg.channel.parentId === config.modCategoryId;
+      if (!skipMod) {
+        const strict = [...new Set([...watchlist.loadTerms(), ...watchlist.loadLoose()])];
+        const hits = strict.length ? watchlist.matchTerms(msg.content, strict) : [];
+        const routeOpts = staffTarget
+          ? { scope: 'strict', channelId: config.adminAnnounceChannelId, pingRoleId: config.adminRoleId }
+          : { scope: 'strict' };
+        if (hits.length) {
+          await watchlistAlert(msg, hits, routeOpts);
+          return;   // strict wins - one report per message
+        }
+        // FULL BEHAVIORAL COVERAGE, live (was lab-only sandbox — owner, 2026-08-18: "that wasn't supposed
+        // to be a lab only feature, it was supposed to go live as well ... it can recommend words to add"):
+        // even with no keyword hit, the judge reads EVERY message from a watchlisted REGULAR member — small,
+        // deliberately-watched population. A watched MOD is keyword-only (see skipMod comment above), never
+        // gets this AI behavioral read.
+        if (!staffTarget && features.enabled('smartWatch')) {
+          const d = await smartwatch.evaluate('strict', msg, []).catch(e => { console.error('[smartwatch] behavioral:', e.message); return { ran: false }; });
+          if (d.ran && d.verdict && d.verdict.surface) {
+            await watchlistAlert(msg, [], { ...routeOpts, aiOnly: true, aiVerdict: d.verdict, offerAddTerm: true });
+            return;
+          }
         }
       }
     }

@@ -115,6 +115,7 @@ const config = {
   modAnnounceChannelId: opt('MOD_ANNOUNCE_CHANNEL_ID', '1526926690637578362'), // strict watchlist alerts + ban buttons
   awardsAnnounceChannelId: opt('AWARDS_ANNOUNCE_CHANNEL_ID', ''), // weekly peer-vote reminder + results — a real "general" channel, set per-guild
   watchLogChannelId: opt('WATCH_LOG_CHANNEL_ID', '1531382379342729428'), // loose day-to-day monitor reports (mod-only, no ping)
+  modCategoryId: opt('MOD_CATEGORY_ID', '1516233713250471976'), // "Mod Activities" category - staff-only channels excluded from strict watchlist scanning of a watched mod
   deletionLogChannelId: opt('DELETION_LOG_CHANNEL_ID', '1538530956401447033'), // deleted-message re-uploads — split from watch-log (owner, 2026-08-16), same permission shape
   propagandaForumId: opt('PROPAGANDA_FORUM_ID', '1536421958449893477'), // per-tribe forum tags; propagandaDailyIfDue reads reactions from here
   // Admin-only alert channel — MODS explicitly excluded (owner, 2026-08-08: watched staff members must not
