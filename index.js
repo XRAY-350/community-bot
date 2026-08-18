@@ -8807,7 +8807,15 @@ client.on('interactionCreate', async (interaction) => {
       const lines = [];
       if (gifs.length) lines.push('**Specific GIF links:**', ...gifs.map(e => `• \`${e.key}\` · ${e.expiresAt ? `expires <t:${Math.floor(e.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${e.count || 0}** · by <@${e.byId}>`));
       if (hashes.length) lines.push('**Specific attachments:**', ...hashes.map(e => `• ${e.name ? `\`${e.name}\` ` : ''}(\`${e.hash.slice(0, 12)}…\`) · ${e.expiresAt ? `expires <t:${Math.floor(e.expiresAt / 1000)}:R>` : 'no expiry'} · deleted **${e.count || 0}** · by <@${e.byId}>`));
-      return interaction.reply({ content: `🧹 **Active media filters:**\n${lines.join('\n')}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      // A long block list blew past Discord's 2000-char plain-content cap (raw DiscordAPIError, no reply
+      // ever sent — this was the actual "list doesn't work" bug). An embed gives 4096 for its description;
+      // still truncate defensively so even that can never overflow.
+      let body = lines.join('\n');
+      let truncated = false;
+      if (body.length > 3900) { body = body.slice(0, 3900); truncated = true; }
+      const emb = new EmbedBuilder().setColor(0xE7AC4E).setTitle('🧹 Active media filters')
+        .setDescription(body + (truncated ? '\n_…truncated, too many entries to show at once._' : ''));
+      return interaction.reply({ embeds: [emb], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
     if (sub === 'add-gif') {
       const url = (interaction.options.getString('url') || '').trim();
