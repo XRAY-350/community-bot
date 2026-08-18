@@ -28,6 +28,26 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-18 16:25 — Ported Melanin's Adults area to FUBU (live server change, no code)
+
+New `🔞 ᴀᴅᴜʟᴛs` category on FUBU, modeled on Melanin's 9-channel Adults area, built and confirmed
+hidden first (owner: "keep it hidden until it's done") before revealing. Final structure:
+
+- **general / general-nsfw / nsfw-vc** = FUBU's PRE-EXISTING MDNI / MDNI-NSFW / MDNI-VC channels
+  (same channel IDs — `config.mdniChannelId`/`mdniNsfwChannelId`/`mdniVerifiedVcId` need no changes),
+  reparented into the new category and renamed. Their existing permission overwrites were left
+  untouched throughout — no visibility change for anyone who could already see them.
+- **rules, photos, venting, debates, adult voice, gaming (text), gaming voice** = new channels.
+  Rules content ported from Melanin's `🔞┆RULES` channel (posted + pinned, em dash swapped for a
+  comma). Gaming was briefly 2 text channels per Melanin's split, corrected to 1 text + 1 voice per
+  the owner's actual intent ("we only need one gaming chat and 1 gaming vc").
+- Permissions: the 7 new channels use FUBU's existing age-bracket roles (18-21/21-25/25-30+ can
+  view, 16-17 and Cornered blocked, same as MDNI) — NOT the `nsfw`/age-restricted platform flag,
+  which the owner deliberately restricted to only `general-nsfw` and `nsfw-vc` ("that way if people
+  don't want to verify with discord they don't have to").
+- No `config.js`/bot code changes at all — this was pure live Discord structure + one content post,
+  done via one-off scratchpad scripts (created, used, deleted per the usual pattern).
+
 ## 2026-08-18 15:52 — Watchlist: narrower strict watch for mods, both deployments configured
 
 `opspanel`-tier watched members now get keyword-only strict scanning (no AI behavioral read) and
