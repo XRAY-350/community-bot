@@ -144,12 +144,19 @@ const config = {
   mdniChannelId: opt('MDNI_CHANNEL_ID', '1531720395357687868'),              // 🔞┆ɢᴇɴᴇʀᴀʟ (owner, 2026-08-18: gated on adultAgeRoleIds directly now, not the MDNI opt-in)
   minorAgeRoleId: opt('MINOR_AGE_ROLE_ID', '1516185172213628989'),           // ✰ • 16-17
   adultAgeRoleIds: opt('ADULT_AGE_ROLE_IDS', '1516185300492222618,1516185358415433739,1516209186839466113').split(',').map(s => s.trim()).filter(Boolean), // 18-21 / 21-25 / 25-30+
-  // Second, stricter 18+ space: NSFW/age-restricted-flagged, gated on the plain MDNI role directly (owner,
-  // 2026-08-18: retired the separate "MDNI Verified" combined role — holding MDNI already implies adult,
-  // since enforceMdni continuously strips it from anyone without an adult age role, so gating on MDNI alone
-  // is exactly as strong as the old "requires both" without a second role to keep in sync).
-  mdniNsfwChannelId: opt('MDNI_NSFW_CHANNEL_ID', '1538353269146128545'),    // 🔞┆ɢᴇɴᴇʀᴀʟ-ɴsꜰᴡ (age-restricted, gated on mdniRoleId)
-  mdniVerifiedVcId: opt('MDNI_VERIFIED_VC_ID', '1538955040868532355'),      // 📞┆ɴsꜰᴡ-ᴠᴄ (age-restricted, gated on mdniRoleId — same overwrites as mdniNsfwChannelId)
+  mdniNsfwChannelId: opt('MDNI_NSFW_CHANNEL_ID', '1538353269146128545'),    // 🔞┆ɢᴇɴᴇʀᴀʟ-ɴsꜰᴡ (age-restricted, gated on mdniVerifiedRoleId)
+  mdniVerifiedVcId: opt('MDNI_VERIFIED_VC_ID', '1538955040868532355'),      // 📞┆ɴsꜰᴡ-ᴠᴄ (age-restricted, gated on mdniVerifiedRoleId — same overwrites as mdniNsfwChannelId)
+  // Adult Verified (owner, 2026-08-18): auto-managed combined role, Verified + adult age bracket, both.
+  // Gates the whole Adults area. Replaced an earlier per-member-overwrite lock design that would have
+  // scaled with (members × channels) and hit Discord's per-channel overwrite cap; a role scales with
+  // membership only, same shape as the MDNI-Verified role this pattern was originally built for.
+  adultVerifiedRoleId: opt('ADULT_VERIFIED_ROLE_ID', '1539335835848278066'),  // 🔒 Adult Verified
+  // MDNI Verified v2 (FUBU only — Melanin has no MDNI concept): one level up from Adult Verified, ALSO
+  // requires the MDNI opt-in. Gates general-nsfw/nsfw-vc. (A same-named role existed before 2026-08-18,
+  // keyed on the raw adult age bracket instead of Adult Verified — retired same day for being redundant
+  // with plain MDNI gating, then reinstated same day once it turned out the raw age bracket didn't
+  // imply Verified after all. This is a fresh role instance, not the same Discord role id.)
+  mdniVerifiedRoleId: opt('MDNI_VERIFIED_ROLE_ID', '1539335837295190026'),   // 🔞 MDNI Verified
   // Mod-dashboard channel — its non-pinned messages get tidied weekly (the pinned panel stays).
   dashboardChannelId: opt('DASHBOARD_CHANNEL_ID', '1531087673760944331'),
 

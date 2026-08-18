@@ -28,6 +28,42 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-18 18:43 — Age-gated channels actually require Verified now (took 3 iterations)
+
+Reported: unverified members could see Melanin's Adults area just by holding an age-bracket role
+(age roles were self-selectable pre-verification, e.g. via Discord onboarding, with no check that
+holding one requires being Verified). Landed on a role-based fix after two false starts:
+
+1. **First attempt**: strip the age role from anyone unverified who held one. WRONG — owner corrected
+   it: "People should be allowed to hold age roles when they join, we just have to make sure they
+   can't access the channels because of their unverified status." This had already stripped roles
+   from ~6 FUBU + 117 Melanin members before being caught; all restored afterward (117/118 restored
+   automatically, 1 Melanin user not found by username, likely left/renamed).
+2. **Second attempt**: a member-level `ViewChannel: false` overwrite per age-gated channel for anyone
+   unverified-but-age-bracketed (mirrors `enforceMdniStaffLock`'s pattern). Owner caught the real
+   problem before it shipped: Discord caps overwrites per channel, and with 100+ members already in
+   this exact state on Melanin alone, this design scales with (members × channels) and would blow
+   through that cap as the community grows.
+3. **Final design**: a new auto-managed **Adult Verified** role (Verified + adult age bracket, both —
+   same "Discord can't express role-AND" workaround as the old MDNI-Verified role, just checking
+   different prerequisites) gates the whole Adults area on both servers. FUBU's `general-nsfw`/
+   `nsfw-vc` also got a fresh **MDNI Verified** role (Adult Verified + MDNI opt-in) — a NEW role
+   instance, not the one retired earlier today, since the old one's logic (MDNI alone implies adult)
+   no longer holds once age roles don't imply Verified. `enforceAdultVerified`/`sweepAdultVerified`
+   and `enforceMdniVerified2`/`sweepMdniVerified2` (index.js) manage them, real-time + boot/hourly.
+
+**Real deploy gotcha hit twice**: both role-to-channel permission swaps (FUBU's, then Melanin's) got
+silently reverted by `permguard`'s 20-minute drift sweep because the swap script didn't call
+`permguard.blessChannel()` afterward — same class of mistake as earlier today's MDNI-Verified
+retirement. Caught via direct spot-checks (`haniii101` on FUBU, `dada068639` on Melanin) rather than
+trusting the initial "looks done" state. Both are now blessed and confirmed holding via a fresh
+force-fetch. **Lesson reinforced**: any live permission-overwrite edit in this repo needs an
+immediate `permguard.blessChannel()` call, or the very next 20-minute sweep undoes it.
+
+Backfilled `Adult Verified`/`MDNI Verified` for every currently-qualifying member on both guilds
+(85 FUBU, 0 Melanin needed it after the permguard-revert fix — everyone else already had it from
+real-time enforcement or the first backfill pass).
+
 ## 2026-08-18 16:51 — Simplified MDNI: general gates on age brackets, retired MDNI Verified role
 
 Prompted by comparing the new age-bracket-gated Adults area against the older MDNI setup. Changes:

@@ -4949,12 +4949,16 @@ client.once('ready', async () => {
     for (const m of dguild.members.cache.values()) await enforceAgeExclusivity(m).catch(() => {});
     const seeded = await sweepRegistrationLocks(dguild).catch(e => { console.error(`[registration-lock] boot sweep: ${e.message}`); return 0; });
     console.log(`[registration-lock] boot sweep: ${seeded} member(s) grandfathered in`);
+    await sweepAdultVerified(dguild).catch(e => console.error(`[adult-verified] boot sweep: ${e.message}`));
+    await sweepMdniVerified2(dguild).catch(e => console.error(`[mdni-verified2] boot sweep: ${e.message}`));
   }
   setInterval(async () => {
     const g = await client.guilds.fetch(config.guildId).catch(() => null);
     if (!g) return;
     await ensureMembers(g);
     for (const m of g.members.cache.values()) await enforceAgeExclusivity(m).catch(() => {});
+    await sweepAdultVerified(g).catch(e => console.error(`[adult-verified] hourly sweep: ${e.message}`));
+    await sweepMdniVerified2(g).catch(e => console.error(`[mdni-verified2] hourly sweep: ${e.message}`));
   }, 3600000);
 });
 
@@ -5178,6 +5182,84 @@ async function enforceAgeExclusivity(member, oldMember) {
   console.log(`[age-exclusivity] ${member.user.tag} held ${held.length} age roles — kept ${keep}, stripped ${strip.join(',')}${ambiguous ? ' (ambiguous, picked first)' : ''}`);
   return { keep, strip, ambiguous };
 }
+// Holding an age bracket role does NOT require being Verified — an external role-selector (Discord
+// onboarding) can hand one out before verification, and that's fine to allow (owner, 2026-08-18: "People
+// should be allowed to hold age roles when they join, we just have to make sure they can't access the
+// channels because of their unverified status"). What needs fixing is ACCESS: an unverified member
+// holding an adult bracket role could still see the age-gated Adults area, since the age role's
+// channel-level ALLOW combines with (and beats) a same-tier role DENY on Unverified — Discord can't
+// express "age role AND verified" any more than it could "staff AND adult" (see enforceMdniStaffLock).
+// A member-level deny (the earlier fix) DOES beat a role allow, but doesn't scale: Discord caps
+// overwrites per channel, and an influx of new members would blow through it (owner, 2026-08-18: "Is
+// there a limit on personal overrides? An influx of people would blow through that limit" — correct).
+// Same fix shape as the just-retired MDNI-Verified role: an auto-managed combined role that can't exist
+// without both prerequisites, gating channels directly — one role grant per member, not one overwrite
+// per member per channel, so it scales with membership instead of with (members × channels).
+async function enforceAdultVerified(member) {
+  if (!config.adultVerifiedRoleId || !config.verifiedRoleId || member.user?.bot) return null;
+  const isVerified = member.roles.cache.has(config.verifiedRoleId);
+  const isAdult = config.adultAgeRoleIds.some(id => member.roles.cache.has(id));
+  const qualifies = isVerified && isAdult;
+  const has = member.roles.cache.has(config.adultVerifiedRoleId);
+  if (qualifies && !has) {
+    await member.roles.add(config.adultVerifiedRoleId, 'Verified + adult age role both confirmed').catch(e => console.error('[adult-verified] add:', e.message));
+    return { id: member.id, tag: member.user.tag, granted: true };
+  }
+  if (!qualifies && has) {
+    await member.roles.remove(config.adultVerifiedRoleId, 'no longer holds both Verified and an adult age role').catch(e => console.error('[adult-verified] remove:', e.message));
+    return { id: member.id, tag: member.user.tag, granted: false };
+  }
+  return null;
+}
+// Backstop (boot + hourly): re-check every current adult-bracket holder AND every current Adult-Verified
+// holder (covers both directions — newly qualifying, or losing an age role but keeping the grant).
+async function sweepAdultVerified(guild) {
+  if (!config.adultVerifiedRoleId || !config.verifiedRoleId) return;
+  await ensureMembers(guild);
+  const seen = new Set(); let granted = 0, revoked = 0;
+  const roleIds = [...config.adultAgeRoleIds, config.adultVerifiedRoleId];
+  for (const id of roleIds) {
+    const role = guild.roles.cache.get(id) || await guild.roles.fetch(id).catch(() => null);
+    if (!role) continue;
+    for (const m of [...role.members.values()]) {
+      if (seen.has(m.id)) continue; seen.add(m.id);
+      const r = await enforceAdultVerified(m);
+      if (r?.granted) granted++; else if (r && !r.granted) revoked++;
+    }
+  }
+  if (granted || revoked) console.log(`[adult-verified] sweep: granted ${granted}, revoked ${revoked}`);
+}
+// FUBU only (Melanin has no MDNI concept): the second, stricter combined role — MDNI opt-in ON TOP OF
+// Adult Verified. Same shape, one level up. Gates general-nsfw/nsfw-vc.
+async function enforceMdniVerified2(member) {
+  if (!config.mdniEnforce || !config.mdniVerifiedRoleId || !config.adultVerifiedRoleId || !config.mdniRoleId || member.user?.bot) return null;
+  const hasMdni = member.roles.cache.has(config.mdniRoleId);
+  const hasAdultVerified = member.roles.cache.has(config.adultVerifiedRoleId);
+  const qualifies = hasMdni && hasAdultVerified;
+  const has = member.roles.cache.has(config.mdniVerifiedRoleId);
+  if (qualifies && !has) {
+    await member.roles.add(config.mdniVerifiedRoleId, 'MDNI + Adult Verified both confirmed').catch(e => console.error('[mdni-verified2] add:', e.message));
+    return { id: member.id, tag: member.user.tag, granted: true };
+  }
+  if (!qualifies && has) {
+    await member.roles.remove(config.mdniVerifiedRoleId, 'no longer holds both MDNI and Adult Verified').catch(e => console.error('[mdni-verified2] remove:', e.message));
+    return { id: member.id, tag: member.user.tag, granted: false };
+  }
+  return null;
+}
+async function sweepMdniVerified2(guild) {
+  if (!config.mdniEnforce || !config.mdniVerifiedRoleId || !config.adultVerifiedRoleId || !config.mdniRoleId) return;
+  await ensureMembers(guild);
+  const seen = new Set(); let granted = 0, revoked = 0;
+  const mdniRole = guild.roles.cache.get(config.mdniRoleId) || await guild.roles.fetch(config.mdniRoleId).catch(() => null);
+  const verifiedRole = guild.roles.cache.get(config.mdniVerifiedRoleId) || await guild.roles.fetch(config.mdniVerifiedRoleId).catch(() => null);
+  for (const m of [...(mdniRole?.members.values() || []), ...(verifiedRole?.members.values() || [])]) {
+    if (seen.has(m.id)) continue; seen.add(m.id);
+    const r = await enforceMdniVerified2(m);
+    if (r?.granted) granted++; else if (r && !r.granted) revoked++;
+  }
+  if (granted || revoked) console.log(`[mdni-verified2] sweep: granted ${granted}, revoked ${revoked}`);
+}
 
 // Age bracket + MDNI are a ONE-TIME choice made "during registration" (Rule 3) — not something to keep
 // re-picking. The moment a member is first observed as Verified, their current age role + MDNI status is
@@ -5369,6 +5451,8 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     // (the 3x enforceMdniStaffLock calls now run unconditionally above, before the cornered-member guard)
     await enforceHitSquadRole(newMember).catch(e => console.error('[hitsquad] drift:', e.message));   // strip a manually-assigned (untracked) Hit Squad role
     await enforceAgeExclusivity(newMember, oldMember).catch(e => console.error('[age-exclusivity]', e.message));
+    await enforceAdultVerified(newMember).catch(e => console.error('[adult-verified]', e.message));
+    await enforceMdniVerified2(newMember).catch(e => console.error('[mdni-verified2]', e.message));
     await enforceRegistrationLock(newMember).catch(e => console.error('[registration-lock]', e.message));
     await enforceTribeMembership(newMember).catch(e => console.error('[tribe-guard]', e.message));   // revert manual tribe-role tampering
     if (!config.unverifiedRoleId || !oldMember || oldMember.partial) return;
