@@ -10371,7 +10371,12 @@ client.on('interactionCreate', async (interaction) => {
       }
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
-      await interaction.deferReply({ flags: inCorner ? MessageFlags.Ephemeral : undefined });
+      // Always defer ephemeral now (was public unless inCorner) — Discord only honors a followup's own
+      // ephemeral flag when the INITIAL response was ephemeral too; otherwise it silently posts the
+      // followup publicly, which is why the joke-check-in prompt below was visible/clickable to everyone
+      // instead of just the actor. The public in-channel ack (when not run in the corner channel) is now
+      // sent as its own plain channel message instead, so it's unaffected by this.
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
       if (!r.ok) {
         if (r.error === 'gated') {
@@ -10399,9 +10404,18 @@ client.on('interactionCreate', async (interaction) => {
       // lock) and asks if it's actually serious; staff-on-a-regular-member defaulted to real and asks the
       // opposite way (owner, 2026-08-18: "The same ephemeral will pop up on regular corners of a staff on a
       // normal member and ask if this is a joke ... with the staff one it'll be like, is this serious?").
+      const ackText = `🚫 Sent ${user} to the corner ${modWhen}${reasonText ? ` (${reasonText})` : ''}. Stripped **${r.stripped}** role(s).`;
+      // The public ack (previously the interaction reply itself when not run in the corner channel) is now
+      // a plain channel message — "the one that was already there" stays visible in-channel exactly as
+      // before, it's just sent a different way so the interaction's own response can stay ephemeral.
+      if (!inCorner) await interaction.channel.send({ content: ackText, allowedMentions: { parse: [] } }).catch(() => {});
+      await interaction.editReply(ackText);   // message #1 — private copy of the ack, always
       if ((isMod || trial) && !mCorner && !isHitSquadTarget) {
-        // One button only — the flip OUT of the default, not a two-way chooser. Not clicking it just
-        // leaves the default (joke for staff-on-staff, real for staff-on-a-member) standing.
+        // Message #2 — the joke check-in, its own separate ephemeral followup. Now genuinely private:
+        // Discord only honors a followup's ephemeral flag when the INITIAL response was ephemeral too
+        // (it was public whenever run outside the corner channel), which is why this was visible/clickable
+        // to everyone before. One button only — the flip OUT of the default, not a two-way chooser; not
+        // clicking it just leaves the default (joke for staff-on-staff, real for staff-on-a-member) standing.
         const promptText = r.joke
           ? `😂 Staff-on-staff, so this was treated as a **joke** by default — the release tier lock is waived, anyone can let ${user} out early.`
           : `Cornering ${user} was treated as **real** by default — the normal release tier lock stays in place.`;
@@ -10412,9 +10426,9 @@ client.on('interactionCreate', async (interaction) => {
           content: promptText,
           components: [new ActionRowBuilder().addComponents(flipBtn)],
           flags: MessageFlags.Ephemeral,
-        }).catch(() => {});
+        }).catch(e => console.error('[corner] joke prompt followUp:', e.message));
       }
-      return interaction.editReply(`🚫 Sent ${user} to the corner ${modWhen}${reasonText ? ` (${reasonText})` : ''}. Stripped **${r.stripped}** role(s).`);
+      return;
     } else {
       const inCorner = interaction.channelId === config.cornerChannelId;
       const durStr = interaction.options.getString('duration');
