@@ -3323,6 +3323,27 @@ function servedSuffix(servedMs) {
   return (features.enabled('timeServed') && servedMs) ? ` · in for **${humanDur(servedMs)}**` : '';
 }
 
+// Shared joke check-in prompt — every corner entry point that funnels a staff actor through an interaction
+// calls this after a fresh corner.corner() succeeds. `joke` is that call's returned `.joke` (undefined for
+// a re-corner/update on an already-cornered member, which carries no fresh default to confirm — skip it).
+// REQUIRES the interaction's initial response to already be ephemeral, or Discord silently makes this
+// followup public (the exact bug fixed on /corner itself — see its deferReply comment).
+async function jokeCheckIn(interaction, targetUserId, joke) {
+  if (joke === undefined) return;
+  const promptText = joke
+    ? `😂 Staff-on-staff, so this was treated as a **joke** by default — the release tier lock is waived, anyone can let <@${targetUserId}> out early.`
+    : `Cornering <@${targetUserId}> was treated as **real** by default — the normal release tier lock stays in place.`;
+  const flipBtn = joke
+    ? new ButtonBuilder().setCustomId(`corner_markjoke:${targetUserId}:0`).setEmoji('🔒').setLabel("No, it's real").setStyle(ButtonStyle.Danger)
+    : new ButtonBuilder().setCustomId(`corner_markjoke:${targetUserId}:1`).setEmoji('😂').setLabel('It was a joke').setStyle(ButtonStyle.Secondary);
+  await interaction.followUp({
+    content: promptText,
+    components: [new ActionRowBuilder().addComponents(flipBtn)],
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  }).catch(e => console.error('[corner] joke prompt followUp:', e.message));
+}
+
 function cornerSentMessage(userId, whenPhrase, reason, actorId) {
   return {
     // Hybrid: big rendered header in message CONTENT (headers don't render inside embeds), with the
@@ -3572,7 +3593,7 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
   await target.reply({ content: `⛓️ This message got <@${member.id}> sent to the corner ${whenPhrase} by <@${actorId}>${reason ? ` (${reason})` : ''}.`, allowedMentions: { users: [member.id] } }).catch(e => console.error('[corner-msg] reply on original failed:', e.message));
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (via message)', color: CORNER_RED,
     desc: `<@${member.id}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'} for a message.\n**By:** <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}\n**Message:** ${target.url}` });
-  return { ok: true, stripped: r.stripped };
+  return { ok: true, stripped: r.stripped, joke: r.joke };
 }
 
 // Release a member whose timed corner has come due + announce "time served". Called by the per-corner
@@ -3602,7 +3623,7 @@ function missedRolesNote(missed) {
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
 async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null } = {}) {
-  const done = [], skipped = [], seen = new Set();
+  const done = [], skipped = [], jokes = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
   const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
@@ -3624,12 +3645,14 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
     const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier);
-    if (r.ok) { done.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
+    if (r.ok) { done.push(member.id); if (r.joke) jokes.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
     else skipped.push(`<@${member.id}> (${r.error})`);
   }
   if (done.length) await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
     desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
-  return { done, skipped, whenPhrase };
+  // No per-target ephemeral prompt for bulk — could be dozens of targets — but a joke default (staff-on-
+  // staff, allowNamedStaff only) is still surfaced as a plain text note so it isn't silently invisible.
+  return { done, skipped, whenPhrase, jokes };
 }
 
 // Mirrors cornerMany, for /uncorner's own `also` option (owner, 2026-08-17: "I meant uncornering multiple
@@ -3701,7 +3724,8 @@ async function handleCornerButton(interaction) {
     } catch (e) { console.error(`[recorner] announce failed: ${e.message}`); }
     await logCorner(guild, { emoji: '⛓️', title: 'RE-CORNERED', color: CORNER_RED,
       desc: `<@${userId}> was sent straight back to the corner **indefinitely**.\n**By:** <@${interaction.user.id}>` });
-    return interaction.editReply(`⛓️ Re-cornered <@${userId}>, stripped **${r.stripped}** role(s).`);
+    await interaction.editReply(`⛓️ Re-cornered <@${userId}>, stripped **${r.stripped}** role(s).`);
+    return jokeCheckIn(interaction, userId, r.joke);
   }
   // owner, 2026-08-16: these 3 branches were writing state.setCornered() directly, with ZERO tier/override
   // check — a mod could one-click-release someone an owner or admin deliberately cornered, completely
@@ -6927,15 +6951,17 @@ client.on('interactionCreate', async (interaction) => {
       let extraNote = '';
       if (extras.length) {
         const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
-        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { reasonText: reason, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
+        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { reasonText: reason, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
         extraNote = `\n➕ Also cornered **${done.length}**${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${sweptCount ? ` · swept ${Math.min(mins, 120)}m` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
+        if (jokes.length) extraNote += `\n😂 Treated as joke (staff-on-staff, release tier lock waived): ${jokes.map(id => `<@${id}>`).join(', ')}`;
         if (done.length) await target.channel.send({
           content: `🧹 <@${interaction.user.id}> also sent ${done.map(id => `<@${id}>`).join(', ')} to the corner ${whenPhrase}.`,
           allowedMentions: { parse: [] } }).catch(e => console.error('[corner-extra] public announce:', e.message));
       }
       if (unknownAlso.length) extraNote += `\n❓ Not found: ${unknownAlso.map(id => `\`${id}\``).join(', ')}`;
       const whenPhrase = durationMs ? `until <t:${Math.floor((Date.now() + durationMs) / 1000)}:f>` : 'indefinitely';
-      return interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner ${whenPhrase}${reason ? ` (${reason})` : ''}. Stripped **${res.stripped}** role(s).${extraNote}`, allowedMentions: { parse: [] } });
+      await interaction.editReply({ content: `🚫 Sent <@${member.id}> to the corner ${whenPhrase}${reason ? ` (${reason})` : ''}. Stripped **${res.stripped}** role(s).${extraNote}`, allowedMentions: { parse: [] } });
+      return jokeCheckIn(interaction, member.id, res.joke);
     } catch (e) { console.error(`[corner-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not corner.') : interaction.reply({ content: 'Could not corner.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Strike reason+weight modal. customId: strike_reason:<memberId>:<channelId>:<messageId>
@@ -6980,12 +7006,13 @@ client.on('interactionCreate', async (interaction) => {
       if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
         return interaction.editReply(`You can’t strike someone of a higher staff tier than you (they’re **${targetTier}**).`);
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
-      let cornerNote = '';
+      let cornerNote = '', cornerJoke;
       if (cornerMs) {
         const cr = await corner.corner(guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
         if (cr.ok) {
           const relSec = Math.floor((Date.now() + cornerMs) / 1000);
           cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
+          cornerJoke = cr.joke;
           try { const cch = await guild.channels.fetch(config.cornerChannelId).catch(() => null); if (cch) await cch.send(cornerSentMessage(member.id, `until <t:${relSec}:f>`, reason)); } catch { /* announce best-effort */ }
           await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${member.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
         } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
@@ -7000,8 +7027,10 @@ client.on('interactionCreate', async (interaction) => {
       const banNote = res.crossedBan ? banConfirmRow(member.id, 'Confirm ban') : null;
       await ownerlog.log(guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
         detail: `<@${member.id}> — ${strikes.formatUnits(weight)} unit(s), ${reason} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
-      return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike, now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
+      await interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike, now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [] });
+      if (cornerJoke !== undefined) return jokeCheckIn(interaction, member.id, cornerJoke);
+      return;
     } catch (e) { console.error(`[strike-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not strike.') : interaction.reply({ content: 'Could not strike.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Corner "Appeal a strike" button: cornered members can't run /appeal (the corner removes slash access),
@@ -9009,12 +9038,13 @@ client.on('interactionCreate', async (interaction) => {
       }
       const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? `, ${reason}` : ''}` : reason;
       const res = await strikes.addStrike(interaction.guild, member, state, { weight, ruleIndex: ruleN, reason: reasonText, timeoutMs, byId: interaction.user.id, byTag: interaction.user.tag });
-      let cornerNote = '';
+      let cornerNote = '', cornerJoke;
       if (cornerMs) {
         const cr = await corner.corner(interaction.guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
         if (cr.ok) {
           const relSec = Math.floor((Date.now() + cornerMs) / 1000);
           cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
+          cornerJoke = cr.joke;
           try { const cch = await interaction.guild.channels.fetch(config.cornerChannelId).catch(() => null); if (cch) await cch.send(cornerSentMessage(user.id, `until <t:${relSec}:f>`, reasonText)); } catch { /* announce best-effort */ }
           await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${user.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
         } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
@@ -9029,8 +9059,10 @@ client.on('interactionCreate', async (interaction) => {
       const banNote = res.crossedBan ? banConfirmRow(user.id, 'Confirm ban') : null;
       await ownerlog.log(interaction.guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
         detail: `<@${user.id}> — ${strikes.formatUnits(res.weight)} unit(s), ${reasonText}${timeoutMs ? ' + timeout' : ''} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${cap}.` });
-      return interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight}, Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''}, now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
+      await interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight}, Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''}, now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      if (cornerJoke !== undefined) return jokeCheckIn(interaction, user.id, cornerJoke);
+      return;
     }
     if (sub === 'remove') {
       const strikeId = interaction.options.getString('strike_id');
@@ -10361,12 +10393,13 @@ client.on('interactionCreate', async (interaction) => {
             if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) { extras.push(mm); seen.add(m.author.id); sweptCount++; }
           }
         }
-        const { done, skipped, whenPhrase } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
+        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
         const lines = [];
         if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` (${reasonText})` : ''}`);
         if (sweptCount) lines.push(`🧹 Swept the last ${Math.min(sweepMins, 120)}m of this channel.`);
         if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
         if (unknown.length) lines.push(`❓ Not found: ${unknown.map(id => `\`${id}\``).join(', ')}`);
+        if (jokes.length) lines.push(`😂 Treated as joke (staff-on-staff, release tier lock waived): ${jokes.map(id => `<@${id}>`).join(', ')}`);
         return interaction.editReply({ content: lines.join('\n') || 'Nobody to corner.', allowedMentions: { parse: [] } });
       }
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
@@ -10410,24 +10443,9 @@ client.on('interactionCreate', async (interaction) => {
       // before, it's just sent a different way so the interaction's own response can stay ephemeral.
       if (!inCorner) await interaction.channel.send({ content: ackText, allowedMentions: { parse: [] } }).catch(() => {});
       await interaction.editReply(ackText);   // message #1 — private copy of the ack, always
-      if ((isMod || trial) && !mCorner && !isHitSquadTarget) {
-        // Message #2 — the joke check-in, its own separate ephemeral followup. Now genuinely private:
-        // Discord only honors a followup's ephemeral flag when the INITIAL response was ephemeral too
-        // (it was public whenever run outside the corner channel), which is why this was visible/clickable
-        // to everyone before. One button only — the flip OUT of the default, not a two-way chooser; not
-        // clicking it just leaves the default (joke for staff-on-staff, real for staff-on-a-member) standing.
-        const promptText = r.joke
-          ? `😂 Staff-on-staff, so this was treated as a **joke** by default — the release tier lock is waived, anyone can let ${user} out early.`
-          : `Cornering ${user} was treated as **real** by default — the normal release tier lock stays in place.`;
-        const flipBtn = r.joke
-          ? new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:0`).setEmoji('🔒').setLabel("No, it's real").setStyle(ButtonStyle.Danger)
-          : new ButtonBuilder().setCustomId(`corner_markjoke:${user.id}:1`).setEmoji('😂').setLabel('It was a joke').setStyle(ButtonStyle.Secondary);
-        await interaction.followUp({
-          content: promptText,
-          components: [new ActionRowBuilder().addComponents(flipBtn)],
-          flags: MessageFlags.Ephemeral,
-        }).catch(e => console.error('[corner] joke prompt followUp:', e.message));
-      }
+      // Message #2 — the joke check-in, its own separate ephemeral followup (genuinely private now that
+      // the interaction's initial response is always ephemeral — see the deferReply comment above).
+      if ((isMod || trial) && !mCorner && !isHitSquadTarget) await jokeCheckIn(interaction, user.id, r.joke);
       return;
     } else {
       const inCorner = interaction.channelId === config.cornerChannelId;
