@@ -41,8 +41,7 @@ Prompted by comparing the new age-bracket-gated Adults area against the older MD
   express "requires role A AND role B" natively; gating on plain MDNI alone is exactly as strong,
   since `enforceMdni` already continuously strips MDNI from anyone without a confirmed adult age
   role. `config.mdniVerifiedRoleId` removed. The now-fully-unused `🔞 𝗠𝗗𝗡𝗜 𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗` Discord role
-  itself was NOT deleted (nothing grants/checks it anymore, but deleting the role is a separate,
-  easily-reversed step — do it whenever, no rush).
+  itself was deleted shortly after (had 0 members at deletion, confirming nothing still needed it).
 - **Registration lock relaxed for MDNI**: `enforceRegistrationLock` no longer reverts a self-toggle
   of the MDNI role for anyone who currently holds an adult age bracket role (owner: "remove the
   registration lock for mdni for people who hold an 18+ role") — MDNI is now a free-standing
