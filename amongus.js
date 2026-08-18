@@ -72,7 +72,7 @@ function phaseLabel(p) { return p === 'play' ? '▶️ Play — everyone muted' 
 function panel(game, guild) {
   const deadNames = (game.dead || []).map(id => `<@${id}>`).join(', ') || '_none_';
   const e = new EmbedBuilder().setColor(COLOR).setTitle('🔴 Among Us — VC control')
-    .setDescription(`**Phase:** ${phaseLabel(game.phase)}\n**Dead:** ${deadNames}\n\nAnyone in <#${game.vcId}> can use the buttons.`)
+    .setDescription(`**Phase:** ${phaseLabel(game.phase)}\n**Dead:** ${deadNames}\n\nAnyone in <#${game.vcId}> can drive rounds. Ending the game is staff-only.`)
     .setFooter({ text: 'Play mutes everyone · Discussion unmutes the living · New Round revives everyone' });
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`amongus_play:${game.vcId}`).setEmoji('▶️').setLabel('Play').setStyle(ButtonStyle.Danger),
@@ -143,6 +143,10 @@ async function postPanel(interaction, game) {
 async function handleCommand(interaction) {
   const vc = interaction.member?.voice?.channel;
   if (!vc) return interaction.reply({ content: 'Join a voice channel first, then run `/amongus` to start a game there.', flags: EPH });
+  // Must be run from that VC's own text chat, not a regular text channel (owner, 2026-08-18: "It should
+  // only work in the text channel of a voice call") — a voice channel's chat tab shares its VC's own id,
+  // so the panel/game can only ever live where the players actually are.
+  if (interaction.channelId !== vc.id) return interaction.reply({ content: `Run \`/amongus\` from **${vc.name}**'s own text chat (the chat tab inside the voice call), not here.`, flags: EPH });
   const existing = games[vc.id];
   if (existing) return postPanel(interaction, existing);   // game already running → just refresh/re-post its panel (keep phase + dead)
   const g = { vcId: vc.id, guildId: interaction.guildId, textChannelId: interaction.channelId, panelMessageId: null,
@@ -182,6 +186,11 @@ async function handleInteraction(interaction) {
     return updatePanel(interaction.client, game);
   }
   if (action === 'amongus_end') {
+    // Players can drive rounds (Play/Discussion/New Round) and mark dead, but only staff can end the game
+    // entirely and dismiss the panel (owner, 2026-08-18: "members can start rounds ... but they can't
+    // dismiss the pop-up, only staff can do that") — same permission the /amongus command itself requires.
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers))
+      return interaction.reply({ content: 'Only staff can end the game.', flags: EPH });
     await interaction.deferUpdate().catch(() => {});
     game.phase = 'lobby'; game.dead = []; await applyPhase(guild, game);   // unmute everyone the bot muted
     delete games[vcId]; save();
