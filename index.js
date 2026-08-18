@@ -9441,9 +9441,17 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason');
     const ok = await target.roles.remove(config.modRoleId, `Mod demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
-    return interaction.editReply(ok
-      ? `✅ Removed the **Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
-      : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Mod**.').catch(() => {});
+    if (!ok) return interaction.editReply('❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Mod**.').catch(() => {});
+    // Demoting a Mod steps them down to Trial Mod, not straight to nothing (owner, 2026-08-17: "demote
+    // should make trial mod") — best-effort; a missing/unconfigured Trial Mod role just skips this part.
+    const trialRoleId = modapps.loadConfig().trialModRoleId;
+    let trialOk = false;
+    if (trialRoleId && !target.roles.cache.has(trialRoleId))
+      trialOk = await target.roles.add(trialRoleId, `Stepped down to Trial Mod by ${interaction.user.tag}`).then(() => true).catch(() => false);
+    return interaction.editReply(
+      `✅ Removed the **Mod** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
+      + (trialRoleId ? (trialOk ? ' Stepped down to **Trial Mod**.' : ' ⚠️ Couldn’t add **Trial Mod** — check the role/hierarchy.') : ' (No Trial Mod role configured, so they weren’t stepped down to it.)')
+    ).catch(() => {});
   }
   if (name === 'demote-admin') {
     // Owner/approver only — same tier bar as demote-trial.
@@ -9462,9 +9470,21 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason');
     const ok = await target.roles.remove(config.adminRoleId, `Admin demoted by ${interaction.user.tag}${reason ? ` - ${reason}` : ''}`).then(() => true).catch(() => false);
-    return interaction.editReply(ok
-      ? `✅ Removed the **Admin** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''} If they hold Mod independently it stays; a purely tier-nested grant is cleaned up automatically.`
-      : '❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Admin**.').catch(() => {});
+    if (!ok) return interaction.editReply('❌ Couldn’t remove the role. Make sure the bot’s own role sits above **Admin**.').catch(() => {});
+    // Demoting an Admin steps them down to Mod, not straight to nothing (owner, 2026-08-17: full step-down
+    // ladder, same as /demote-mod → Trial Mod). They likely already hold Mod via tier-nesting (auto-granted
+    // while they were Admin) — grant is idempotent either way, but nestedRoles.clear() converts it into a
+    // genuine, independent grant so the NEXT tier-nesting sweep (which would otherwise see "tier no longer
+    // admin, this Mod grant was only nested, strip it") doesn't immediately undo the step-down.
+    let modOk = false;
+    if (config.modRoleId) {
+      modOk = await target.roles.add(config.modRoleId, `Stepped down to Mod by ${interaction.user.tag}`).then(() => true).catch(() => false);
+      if (modOk) nestedRoles.clear(target.id, config.modRoleId);
+    }
+    return interaction.editReply(
+      `✅ Removed the **Admin** role from <@${target.id}>.${reason ? ` (noted: ${reason})` : ''}`
+      + (config.modRoleId ? (modOk ? ' Stepped down to **Mod**.' : ' ⚠️ Couldn’t add **Mod** — check the role/hierarchy.') : ' (No Mod role configured, so they weren’t stepped down to it.)')
+    ).catch(() => {});
   }
   if (name === 'help') {
     return interaction.reply({ embeds: [helpEmbed(interaction.guild)], flags: MessageFlags.Ephemeral });
