@@ -307,7 +307,8 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
 
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
-async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTier = null) {
+async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTier = null, opts = {}) {
+  const { forceReal = false } = opts;
   const now = Date.now();
   // Nobody can corner themselves — every entry point (slash /corner, "Send to corner", the dashboard
   // picker, the re-corner button) funnels through here, so one central guard closes them all. The tier
@@ -384,8 +385,11 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // below (canActSolo) for THIS corner instance, flippable afterward via the "mark as real" follow-up
   // prompt index.js shows right after. actorTier truthy already implies a recognized staff actor (trial
   // mods pass null here and can't reach a staff target anyway, so no separate trial check is needed).
+  // forceReal (owner, 2026-08-18: "strike corner paths don't need it cause strikes are always serious") —
+  // a corner attached to a strike is never a joke regardless of staff-on-staff, so those callers pass this
+  // to skip the default entirely rather than defaulting to joke and needing a prompt to walk it back.
   const targetIsStaff = !!(opspanel.memberTier(member) || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId)));
-  const joke = !!actorTier && targetIsStaff;
+  const joke = !forceReal && !!actorTier && targetIsStaff;
   state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke });
   try {
     // ONE atomic role.set() instead of a separate remove() then add() (owner-reported, 2026-08-12: "cornered

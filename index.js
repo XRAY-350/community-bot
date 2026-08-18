@@ -7006,13 +7006,14 @@ client.on('interactionCreate', async (interaction) => {
       if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0))
         return interaction.editReply(`You can’t strike someone of a higher staff tier than you (they’re **${targetTier}**).`);
       const res = await strikes.addStrike(guild, member, state, { weight, ruleIndex: ruleN, reason, byId: interaction.user.id, byTag: interaction.user.tag });
-      let cornerNote = '', cornerJoke;
+      let cornerNote = '';
       if (cornerMs) {
-        const cr = await corner.corner(guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
+        // forceReal: a corner attached to a strike is always serious, never defaults to joke (owner,
+        // 2026-08-18: "strike corner paths don't need it cause strikes are always serious").
+        const cr = await corner.corner(guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { forceReal: true });
         if (cr.ok) {
           const relSec = Math.floor((Date.now() + cornerMs) / 1000);
           cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
-          cornerJoke = cr.joke;
           try { const cch = await guild.channels.fetch(config.cornerChannelId).catch(() => null); if (cch) await cch.send(cornerSentMessage(member.id, `until <t:${relSec}:f>`, reason)); } catch { /* announce best-effort */ }
           await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${member.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
         } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
@@ -7027,10 +7028,8 @@ client.on('interactionCreate', async (interaction) => {
       const banNote = res.crossedBan ? banConfirmRow(member.id, 'Confirm ban') : null;
       await ownerlog.log(guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
         detail: `<@${member.id}> — ${strikes.formatUnits(weight)} unit(s), ${reason} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD}.` });
-      await interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike, now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
+      return interaction.editReply({ content: `⚠️ Gave <@${member.id}> a **${weight}-unit** strike, now **${strikes.formatUnits(res.totalUnits)}/${strikes.BAN_THRESHOLD} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [] });
-      if (cornerJoke !== undefined) return jokeCheckIn(interaction, member.id, cornerJoke);
-      return;
     } catch (e) { console.error(`[strike-reason] ${e.message}`); return (interaction.deferred ? interaction.editReply('Could not strike.') : interaction.reply({ content: 'Could not strike.', flags: MessageFlags.Ephemeral })).catch(() => {}); }
   }
   // Corner "Appeal a strike" button: cornered members can't run /appeal (the corner removes slash access),
@@ -9038,13 +9037,14 @@ client.on('interactionCreate', async (interaction) => {
       }
       const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? `, ${reason}` : ''}` : reason;
       const res = await strikes.addStrike(interaction.guild, member, state, { weight, ruleIndex: ruleN, reason: reasonText, timeoutMs, byId: interaction.user.id, byTag: interaction.user.tag });
-      let cornerNote = '', cornerJoke;
+      let cornerNote = '';
       if (cornerMs) {
-        const cr = await corner.corner(interaction.guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
+        // forceReal: a corner attached to a strike is always serious, never defaults to joke (owner,
+        // 2026-08-18: "strike corner paths don't need it cause strikes are always serious").
+        const cr = await corner.corner(interaction.guild, member, cornerMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { forceReal: true });
         if (cr.ok) {
           const relSec = Math.floor((Date.now() + cornerMs) / 1000);
           cornerNote = ` · ⛓️ also cornered until <t:${relSec}:R>`;
-          cornerJoke = cr.joke;
           try { const cch = await interaction.guild.channels.fetch(config.cornerChannelId).catch(() => null); if (cch) await cch.send(cornerSentMessage(user.id, `until <t:${relSec}:f>`, reasonText)); } catch { /* announce best-effort */ }
           await logCorner(interaction.guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (with strike)', color: CORNER_RED, desc: `<@${user.id}> was cornered until ${relPhrase(relSec * 1000)} alongside a strike.\n**By:** <@${interaction.user.id}>` });
         } else cornerNote = ` · ⚠️ corner failed: ${cr.error}`;
@@ -9059,10 +9059,8 @@ client.on('interactionCreate', async (interaction) => {
       const banNote = res.crossedBan ? banConfirmRow(user.id, 'Confirm ban') : null;
       await ownerlog.log(interaction.guild, { emoji: '⚠️', title: 'Strike given', color: 0xED4245,
         detail: `<@${user.id}> — ${strikes.formatUnits(res.weight)} unit(s), ${reasonText}${timeoutMs ? ' + timeout' : ''} — by <@${interaction.user.id}>. Now ${strikes.formatUnits(res.totalUnits)}/${cap}.` });
-      await interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight}, Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''}, now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
+      return interaction.reply({ content: `⚠️ Gave <@${user.id}> a **${strikes.formatUnits(res.weight)}-unit** strike${weightAutoFilled ? ` (${weight}, Rule ${ruleN}’s decided weight)` : ''}${timeoutMs ? ` (${weight} base + ${strikes.formatUnits(bonus)} for the timeout)` : ''}, now **${strikes.formatUnits(res.totalUnits)}/${cap} units** (${res.tier})${res.crossedBan ? ', 🔨 **crossed the ban threshold**' : ''}${cornerNote}.`,
         components: banNote ? [banNote] : [], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-      if (cornerJoke !== undefined) return jokeCheckIn(interaction, user.id, cornerJoke);
-      return;
     }
     if (sub === 'remove') {
       const strikeId = interaction.options.getString('strike_id');
@@ -10374,7 +10372,10 @@ client.on('interactionCreate', async (interaction) => {
       const sweepMins = sweepStr ? Number(sweepStr) : 0;
       const wantSweep = Number.isFinite(sweepMins) && sweepMins > 0;
       if ((alsoStr && alsoStr.trim()) || wantSweep) {
-        await interaction.deferReply({ flags: interaction.channelId === config.cornerChannelId ? MessageFlags.Ephemeral : undefined });
+        // Always ephemeral (was public unless run in the corner channel) — each cornered member already
+        // gets their own public announcement in the corner channel via cornerMany below, so this summary
+        // ack doesn't need to be public too, and staying private is consistent with the single-target path.
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const seen = new Set([member.id]), extras = [member], unknown = [];
         if (alsoStr && alsoStr.trim()) {
           for (const id of [...new Set(alsoStr.match(/\d{15,}/g) || [])]) {
