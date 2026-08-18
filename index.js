@@ -4238,6 +4238,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
+        .addBooleanOption(o => o.setName('joke').setDescription('Staff only: mark this as a joke corner, waiving the tier lock (still a real corner otherwise)').setRequired(false))
         .setDefaultMemberPermissions(cornerVis),   // always visible; the handler enforces staff/trial/member restrictions (and tells a member plainly if 'memberCorner' is off)
       new SlashCommandBuilder().setName('uncorner').setDescription('Release a member from the corner (or schedule a release)')
         .addUserOption(o => o.setName('user').setDescription('Member to release').setRequired(true))
@@ -10273,7 +10274,17 @@ client.on('interactionCreate', async (interaction) => {
       if (member.id === guild.ownerId && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction))) {
         return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
       }
-      if (targetRank > actorRank && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)) && !hitsquad.canBypass(interaction.user.id, member.id)) {
+      // Joke flag (staff-only — mod+/trial, NOT verified-member corners): waives the tier-hierarchy check
+      // ONLY, so e.g. a mod can joke-corner an admin. Everything else (owner protection, hit-squad immunity,
+      // self-corner block, the strip/jail/restore itself) is untouched (owner, 2026-08-18: "add a flag to
+      // corners that can count them as jokes which removes the tier lock").
+      const jokeWanted = !!interaction.options.getBoolean('joke');
+      const jokeIsStaff = !!opspanel.tierOf(interaction) || trial;
+      if (jokeWanted && !jokeIsStaff) {
+        return interaction.reply({ content: 'The **joke** flag is staff-only (mods+/trial mods).', flags: MessageFlags.Ephemeral });
+      }
+      const jokeFlag = jokeWanted && jokeIsStaff;
+      if (targetRank > actorRank && !jokeFlag && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)) && !hitsquad.canBypass(interaction.user.id, member.id)) {
         return interaction.reply({ content: `You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`, flags: MessageFlags.Ephemeral });
       }
       const isHitSquadTarget = hitsquad.canBypass(interaction.user.id, member.id);
@@ -10291,7 +10302,7 @@ client.on('interactionCreate', async (interaction) => {
       // Reason: a picked rule and/or a custom typed reason. Show both when present.
       const ruleN = interaction.options.getString('rule');
       const customReason = interaction.options.getString('reason');
-      const reasonText = [ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}` : null, customReason].filter(Boolean).join(', ') || null;
+      const reasonText = [jokeFlag ? '😂 joke corner (tier lock waived)' : null, ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}` : null, customReason].filter(Boolean).join(', ') || null;
       // Trial-mod restrictions: must give a rule OR a reason (same "not both required" convention as
       // /strike elsewhere), and the corner can't exceed 1 hour.
       if (trial) {
