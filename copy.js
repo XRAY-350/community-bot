@@ -84,8 +84,8 @@ const appeals = {
 
 // ── anonymous member tools (each posts anonymously; the noun differs, so one section each) ────────────
 const reports = {
-  notSetup: 'Reports aren’t set up yet. An admin needs to run `/report-setup`.',
-  channelMissing: 'The reports channel is missing. An admin needs to run `/report-setup` again.',
+  notSetup: 'Reports aren’t set up yet. An admin needs to open `/panel` → 🧩 Setup → 🚩 Anon reports.',
+  channelMissing: 'The reports channel is missing. An admin needs to re-run `/panel` → 🧩 Setup → 🚩 Anon reports.',
   tooShort: min => `Give a bit more detail: at least ${min} characters.`,
   tooLong: max => `Keep it under ${max} characters.`,
   filtered: 'That tripped the safety filter. Describe the behaviour without threats/slurs and resend.',
@@ -93,8 +93,8 @@ const reports = {
   revealLabel: revealed => revealed ? 'Revealed' : 'Reveal reporter (admins)',
 };
 const modmail = {
-  notSetup: 'Modmail isn’t set up yet. An admin needs to run `/modmail-setup`.',
-  channelMissing: 'The modmail inbox is missing. An admin needs to run `/modmail-setup` again.',
+  notSetup: 'Modmail isn’t set up yet. An admin needs to open `/panel` → 🧩 Setup → ✉️ Mod inbox.',
+  channelMissing: 'The modmail inbox is missing. An admin needs to re-run `/panel` → 🧩 Setup → ✉️ Mod inbox.',
   tooShort: min => `That’s too short: at least ${min} characters.`,
   tooLong: max => `Keep it under ${max} characters.`,
   filtered: 'That tripped the safety filter. Reword without threats/slurs and resend.',
@@ -102,8 +102,8 @@ const modmail = {
   revealLabel: revealed => revealed ? 'Revealed' : 'Reveal sender (owners)',
 };
 const confessions = {
-  notSetup: 'Confessions aren’t set up yet. An admin needs to run `/confess-setup`.',
-  channelMissing: 'The confessions channel is missing. An admin needs to run `/confess-setup` again.',
+  notSetup: 'Confessions aren’t set up yet. An admin needs to open `/panel` → 🧩 Setup → 💭 Confessions.',
+  channelMissing: 'The confessions channel is missing. An admin needs to re-run `/panel` → 🧩 Setup → 💭 Confessions.',
   tooShort: min => `That’s too short. Give at least ${min} characters.`,
   tooLong: max => `That’s too long. Keep it under ${max} characters.`,
   filtered: 'That confession tripped the word filter, so it wasn’t posted. Rephrase it and try again.',
@@ -113,8 +113,8 @@ const confessions = {
 };
 
 const rolereq = {
-  notSetup: 'Role requests aren’t set up yet. An admin needs to run `/request-role-setup`.',
-  channelMissing: 'The role-requests channel is missing. An admin needs to run `/request-role-setup` again.',
+  notSetup: 'Role requests aren’t set up yet. An admin needs to open `/panel` → 🧩 Setup → 🎭 Role requests.',
+  channelMissing: 'The role-requests channel is missing. An admin needs to re-run `/panel` → 🧩 Setup → 🎭 Role requests.',
   cantRequest: why => `You can’t request that role: ${why}.`,
   dontHave: 'You don’t have that role, so there’s nothing to remove.',
   alreadyHave: 'You already have that role.',
@@ -122,8 +122,8 @@ const rolereq = {
   couldntApply: removing => `Couldn’t ${removing ? 'remove' : 'assign'} it (is it above my role?).`,
 };
 const suggestions = {
-  notSetup: 'The suggestions forum isn’t set up yet. An admin needs to run `/suggest-setup`.',
-  forumMissing: 'The suggestions forum is missing. An admin needs to run `/suggest-setup` again.',
+  notSetup: 'The suggestions forum isn’t set up yet. An admin needs to open `/panel` → 🧩 Setup → 💡 Suggestions.',
+  forumMissing: 'The suggestions forum is missing. An admin needs to re-run `/panel` → 🧩 Setup → 💡 Suggestions.',
   tooShort: min => `That’s too short. Give at least ${min} characters.`,
   tooLong: max => `That’s too long. Keep it under ${max} characters.`,
   filtered: 'That suggestion tripped the word filter, so it wasn’t posted. Rephrase it and try again.',
@@ -133,7 +133,7 @@ const suggestions = {
   alreadyResolved: 'Already resolved.',
 };
 const whistleblow = {
-  notSetup: 'Whistleblow isn’t set up yet. The head admin needs to run `/whistleblow-setup`.',
+  notSetup: 'Whistleblow isn’t set up yet. The bot owner needs to open `/panel` → 🧩 Setup → 🕊️ Whistleblow.',
   pickWho: 'Pick who (if anyone) may unmask you.',
   tooShort: min => `Give a bit more detail: at least ${min} characters.`,
   tooLong: max => `Keep it under ${max} characters.`,

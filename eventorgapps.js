@@ -141,7 +141,7 @@ function answersFromEmbed(e) {
 
 async function submitFromModal(interaction) {
   const c = loadConfig();
-  if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: 'Event Organizer applications aren’t set up yet. An admin needs to run `/event-organizer-setup`.', flags: MessageFlags.Ephemeral });
+  if (!c.forumId || !c.appsChannelId) return interaction.reply({ content: 'Event Organizer applications aren’t set up yet. An admin needs to open `/panel` → 🧩 Setup → 🎪 Event Organizer apps.', flags: MessageFlags.Ephemeral });
   if (!applicationsOpen()) return interaction.reply({ content: closedNotice(), flags: MessageFlags.Ephemeral });
   const state = loadState();
   if (Object.values(state.posts).find(p => p.applicantId === interaction.user.id && p.status === 'open'))
@@ -150,7 +150,7 @@ async function submitFromModal(interaction) {
   const member = interaction.member;
   const forum = await interaction.guild.channels.fetch(c.forumId).catch(() => null);
   const appsCh = await interaction.guild.channels.fetch(c.appsChannelId).catch(() => null);
-  if (!forum || !appsCh) return interaction.reply({ content: 'Something’s misconfigured — ask an admin to re-run `/event-organizer-setup`.', flags: MessageFlags.Ephemeral });
+  if (!forum || !appsCh) return interaction.reply({ content: 'Something’s misconfigured — ask an admin to re-run `/panel` → 🧩 Setup → 🎪 Event Organizer apps.', flags: MessageFlags.Ephemeral });
 
   const appThread = await appsCh.threads.create({
     name: `Application · ${member.user.username}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,

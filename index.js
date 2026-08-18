@@ -9297,7 +9297,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'apply-event-organizer') {
     if (!isVerifiedOrStaff(interaction))
       return interaction.reply({ content: 'You need to be verified before you can apply.', flags: MessageFlags.Ephemeral });
-    if (!eventorgapps.isConfigured()) return interaction.reply({ content: 'Event Organizer applications aren’t set up on this server yet. Ask an admin to run `/event-organizer-setup`.', flags: MessageFlags.Ephemeral });
+    if (!eventorgapps.isConfigured()) return interaction.reply({ content: 'Event Organizer applications aren’t set up on this server yet. Ask an admin to open `/panel` → 🧩 Setup → 🎪 Event Organizer apps.', flags: MessageFlags.Ephemeral });
     if (!eventorgapps.applicationsOpen()) return interaction.reply({ content: eventorgapps.closedNotice(), flags: MessageFlags.Ephemeral });
     try { return await interaction.showModal(eventorgapps.buildModal()); }
     catch (e) { console.error(`[eventorgapps] showModal ${e.message}`); }
@@ -9474,7 +9474,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can demote a trial mod.', flags: MessageFlags.Ephemeral });
     const roleId = modapps.loadConfig().trialModRoleId;
-    if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured. Run `/apply-mod-setup` first.', flags: MessageFlags.Ephemeral });
+    if (!roleId) return interaction.reply({ content: 'No Trial Mod role is configured. Run `/panel` → 🧩 Setup → 📋 Mod apps first.', flags: MessageFlags.Ephemeral });
     const target = await interaction.guild.members.fetch(interaction.options.getString('member')).catch(() => null);
     if (!target) return interaction.reply({ content: 'Couldn’t find that member in the server.', flags: MessageFlags.Ephemeral });
     if (!target.roles.cache.has(roleId)) return interaction.reply({ content: `<@${target.id}> isn’t a **Trial Mod**, so there’s nothing to remove.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });

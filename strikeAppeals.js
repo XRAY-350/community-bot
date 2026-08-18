@@ -87,7 +87,7 @@ function appealEmbed(rec, resolution, byId) {
 async function submit(guild, member, state, strikeId, note) { return withLock(LOCK_KEY, () => _submit(guild, member, state, strikeId, note)); }
 async function _submit(guild, member, state, strikeId, note) {
   const c = loadConfig();
-  if (!c.channelId) return { ok: false, msg: 'Strike appeals aren’t set up yet. An admin needs to run `/appeal-strike-setup`.' };
+  if (!c.channelId) return { ok: false, msg: 'Strike appeals aren’t set up yet. An admin needs to open `/panel` → 🧩 Setup → 🎫 Strike appeals.' };
   const entry = strikes.ledger(state, member.id).find(e => e.id === strikeId);
   if (!entry || !entry.active) return { ok: false, msg: 'I couldn’t find an active strike with that ID on your record. It may already be removed, or the ID’s wrong. Use the autocomplete list instead of typing it by hand.' };
   if (entry.crossedBan) return { ok: false, msg: 'That’s the strike that crossed the ban threshold. It isn’t appealable here. If you were banned over it, use `/appeal ban` instead (a friend still in the server has to open that one for you).' };
@@ -105,7 +105,7 @@ async function _submit(guild, member, state, strikeId, note) {
   }
 
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
-  if (!channel) return { ok: false, msg: 'The strike-appeals channel is missing. An admin needs to run `/appeal-strike-setup` again.' };
+  if (!channel) return { ok: false, msg: 'The strike-appeals channel is missing. An admin needs to re-run `/panel` → 🧩 Setup → 🎫 Strike appeals.' };
 
   const rec = { memberId: member.id, memberTag: member.user.tag, strikeId, strikeSnapshot: { ...entry }, note: note || '', status: 'open', votes: { up: [], down: [] } };
   const thread = await channel.threads.create({

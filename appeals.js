@@ -97,9 +97,9 @@ async function findBan(guild, username) {
 async function submit(guild, member, username, note) { return withLock(LOCK_KEY, () => _submit(guild, member, username, note)); }
 async function _submit(guild, member, username, note) {
   const c = loadConfig();
-  if (!c.channelId) return { ok: false, msg: 'Ban appeals aren’t set up yet. An admin needs to run `/appeal-setup`.' };
+  if (!c.channelId) return { ok: false, msg: 'Ban appeals aren’t set up yet. An admin needs to open `/panel` → 🧩 Setup → ⚖️ Ban appeals.' };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
-  if (!channel) return { ok: false, msg: 'The ban-appeals channel is missing. An admin needs to run `/appeal-setup` again.' };
+  if (!channel) return { ok: false, msg: 'The ban-appeals channel is missing. An admin needs to re-run `/panel` → 🧩 Setup → ⚖️ Ban appeals.' };
   const ban = await findBan(guild, username);
   if (!ban) return { ok: false, msg: `I couldn’t find a **banned** user with the username \`${username.replace(/^@/, '')}\`. Double-check the spelling (it’s their @username). If they aren’t banned, there’s nothing to appeal.` };
   const category = instantBanCategory(ban.reason);
