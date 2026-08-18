@@ -8687,8 +8687,8 @@ client.on('interactionCreate', async (interaction) => {
     const gifAtt = [...(target.attachments?.values() || [])].find(mediafilter.isGifAttachment);
     if (!gifAtt) return interaction.reply({ content: "Couldn't find a GIF link or file in that message.", flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    let hash; try { hash = await mediafilter.hashUrl(gifAtt.url); } catch (e) { return interaction.editReply(`Failed to fetch that file: ${e.message}`); }
-    const r = mediafilter.addHash(state, hash, null, interaction.user.id, gifAtt.name);
+    let res; try { res = await mediafilter.hashUrl(gifAtt.url, gifAtt.name); } catch (e) { return interaction.editReply(`Failed to fetch that file: ${e.message}`); }
+    const r = mediafilter.addHash(state, res.hash, null, interaction.user.id, gifAtt.name, res.dhash);
     await logCorner(interaction.guild, { emoji: '🧹', title: r.updated ? 'GIF BLOCK UPDATED' : 'GIF BLOCKED', color: CORNER_AMBER,
       desc: `Auto-deleting the GIF file \`${gifAtt.name}\` (from a message by <@${target.author.id}>) by content hash — a rename won't dodge it.\n**By:** <@${interaction.user.id}>` }).catch(() => {});
     return interaction.editReply(`🧹 ${r.updated ? 'Updated' : 'Now blocking'} that GIF file (matched by content, so a rename won't dodge it).`);
@@ -8702,8 +8702,8 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const blocked = [];
     for (const att of atts) {
-      let hash; try { hash = await mediafilter.hashUrl(att.url); } catch (e) { console.error('[mediafilter] hash:', e.message); continue; }
-      mediafilter.addHash(state, hash, null, interaction.user.id, att.name);
+      let res; try { res = await mediafilter.hashUrl(att.url, att.name); } catch (e) { console.error('[mediafilter] hash:', e.message); continue; }
+      mediafilter.addHash(state, res.hash, null, interaction.user.id, att.name, res.dhash);
       blocked.push(att.name);
     }
     if (!blocked.length) return interaction.editReply('Failed to fetch any of that message\'s attachments.');
