@@ -673,31 +673,37 @@ function tribeHubContent(guild, config) {
   return `# 🏴 Tribes\nPledge your first tribe in <#${config.rolesChannelId}>. Everything else — standings, your own tribe, joining/leaving, war — is below.`;
 }
 function tribeHubEmbed() {
-  const desc = `**The server's tribe system:** member factions, each with its own territory, roles, ranks and economy, and a living history the server watches. Pledge in, rise up, represent.\n\n`
+  const desc = `**The server's tribe system:** member factions, each with its own territory, roles, ranks and economy, and a living history. Pledge in, rise up, represent.\n\n`
     + `## What a tribe is\n`
-    + `Every tribe has a hoisted role and colour, a private land (throne, hall, voice), a member-made **banner** on its profile, a rank ladder, and a leader who runs it (each names its own title, Warden, Warlord, whatever fits).\n\n`
+    + `Every tribe has a hoisted role and colour, a private land (throne, hall, voice), a member-made **banner**, a rank ladder, and a leader who runs it (own title, e.g. Warden, Warlord).\n\n`
     + `## How tribes are founded\n`
-    + `An admin can found a tribe. A mod can too, but only backed by **two other mods**, all three lead it together, and a mod-founded tribe must keep **three leaders** to stay standing. Got an idea? Bring it to an admin, or rally two mods.\n\n`
+    + `An admin can found a tribe. A mod can too, backed by **two other mods**; all three lead it, and the tribe must keep **three leaders** to stay standing. Got an idea? Bring it to an admin, or rally two mods.\n\n`
     + `## How to join\n`
-    + `Pick a tribe from the Tribes section in #roles. Your **first tribe is a free choice**. After that you can't leave or switch on your own: a leader must release you (staff can Leave below), and a new tribe must accept you (nomination, invite, or your Join Request below).\n\n`
+    + `Pick a tribe from the Tribes section in #roles. Your **first tribe is a free choice**. After that a leader must release you (staff can Leave below), and a new tribe must accept you (nomination, invite, or Join Request below).\n\n`
     + `## Ranks & Prestige\n`
     + `Being active in the hall moves you up the rank ladder automatically (four named rungs); ranks only go up. Staff members hold **General**, above the ladder. Reach the **top rung** and you can **⭐ Prestige**: reset your climb for a permanent honour title and a mark in tribe history.\n\n`
+    + `## Lore & Paths\n`
+    + `Every tribe has 3 lore paths. Pick one with \`/tribe panel\` → Choose Your Path: ranking up grows your own bonus and your tribe's real power in that category, in War, Arena, and Tribe Games alike. Full paths are pinned in your throne.\n\n`
     + `## Treasury, Glory & the Weekly Crown\n`
-    + `Activity earns **Glory** (this week's live standing). Every Sunday 00:00 UTC the most Glory takes the **👑 Weekly Crown** in a staged **coronation**. Glory resets weekly; **Treasury** is the permanent bank (crowns, \`/tribe offer\`, raids, ally gifts, quests).\n\n`
+    + `Activity earns **Glory** (live weekly standing). Every Sunday 00:00 UTC the most Glory takes the **👑 Weekly Crown**. Glory resets weekly; **Treasury** is the permanent bank (crowns, \`/tribe offer\`, raids, gifts, quests).\n\n`
     + `## Ages, Relics & the Hall of Fame\n`
-    + `Time is measured in **Ages**, named **6-week** chapters (like "The Age of Embers"). Crowns stack across an age; when it ends the top tribe is named **🏆 Age Champion**, entered into the **Hall of Fame**, and awarded a **🏺 Relic** (a lasting trophy with a tiny war edge that stacks but fades over the ages, seizable in war). Then crowns reset and a new age opens; Treasury, ranks and relics carry over.\n\n`
+    + `Time is measured in **Ages**, 6-week chapters. Crowns stack across an age; the top tribe becomes **🏆 Age Champion**, enters the **Hall of Fame**, and wins a **🏺 Relic** (a war-edge trophy, seizable in war). Crowns reset for a new age; everything else carries over.\n\n`
     + `## Weekly Quests & the Chronicle\n`
-    + `Every week the tribes share three **🎯 Quests** (win arenas, answer musters, win a war, take the Crown); finishing one banks Treasury + Glory. And the bot writes a weekly **📜 Chronicle**, a chapter of all that happened.\n\n`
+    + `Every week tribes share three **🎯 Quests** (arenas, musters, war, the Crown); finishing one banks Treasury + Glory. The bot also writes a weekly **📜 Chronicle** of what happened.\n\n`
     + `## The Shop\n`
-    + `Each unlock has a members-or-crowns gate plus a treasury cost: 2nd text/voice channels, re-theme, external sounds, voice-quality boost, faster points, and a **custom tribe icon**. A maxed tribe keeps sinking treasury into repeatable **🏰 Stronghold Tiers** for war defense.\n\n`
+    + `Each unlock has a members-or-crowns gate plus a treasury cost: extra channels, re-theme, external sounds, voice boost, faster points, and a **custom icon**. A maxed tribe sinks treasury into repeatable **🏰 Stronghold Tiers** for war defense.\n\n`
     + `## Musters\n`
-    + `A leader can call a **muster**, a hall roll-call (about once a day). Answer it and the tribe banks treasury + glory for everyone who shows up.\n\n`
+    + `A leader can call a **muster** (hall roll-call, about once a day). Answer it and the tribe banks treasury + glory.\n\n`
     + `## War & Alliances\n`
-    + `A leader can **Declare War**: your members vote first (24h majority); if it passes the target's leader Accepts or Declines (a coin flip then decides). Each war is **named** and plays out as a live, narrated battle, resolved by a points-weighted strength sim (not rank-based, no guaranteed win), 72h cooldown. The loser is raided for ~25% treasury and can lose a few members for 36h (never the leader), though **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) need a member vote too; allies defend each other and can gift treasury.\n\n`
-    + `## Challenges — the Arena\n`
-    + `The bot runs live cross-tribe games through the day (busier at peak, calmer overnight for **2x Treasury**), each with a **5-minute heads-up** in the arena channel. **15 game types** rotate, from Reaction Race, Trivia and Word Scramble to Number Pattern, Fast Fingers and themed Geography / Science / History / Animal quizzes. The winning tribe banks **Glory + Treasury**. (Staff launch one with \`/tribe-admin arena\`.)\n\n`
+    + `A leader can **Declare War**: members vote first, then the target leader Accepts or Declines. Each war is **named**, plays out as a live narrated battle (points-weighted, no guaranteed win), 72h cooldown. Loser is raided ~25% treasury, can lose members for 36h (never the leader); **🏰 Stronghold Tiers** blunt it. **Alliances** (1 per tribe) defend each other and gift treasury.\n\n`
+    + `## Challenges: the Arena\n`
+    + `The bot runs live cross-tribe games through the day (calmer overnight for **2x Treasury**), each with a **5-minute heads-up**. **15 game types** rotate: trivia, word games, reaction/reflex, themed quizzes. Winner banks **Glory + Treasury**. (Staff: \`/tribe-admin arena\`.)\n\n`
+    + `## Tribe Games\n`
+    + `Staff-run tribe vs. tribe matches in real external games (Among Us, Murder Mystery 2, Flee the Facility, and more). Your leader (or staff) sets your rep via \`/tribe panel\`; staff reports the real result once it's played out, and rewards follow your path. Watch your Hall for the lobby ping.\n\n`
+    + `## Propaganda\n`
+    + `Promote your tribe or needle a rival in **#📢┆propaganda**, tag your tribe on the thread. Daily Treasury payout based on reactions, every tribe that posted gets paid.\n\n`
     + `## Every tribe's Throne\n`
-    + `Each throne has a pinned panel. Members get Roster / Leaderboard / Shop / Tithe / Leave, plus 🏅 Trophies, 🏛️ Hall of Fame, 🎯 Quests, 🏺 Relics and ⭐ Prestige. Leaders (or staff) also get Invite, Banish, Note, Set Rank, Retheme, Icon, Announce, Motto, Banner, Muster, War and Alliances.\n\n`
+    + `Each throne has a pinned panel. Members get Roster / Leaderboard / Shop / Tithe / Leave, plus Trophies, Hall of Fame, Quests, Relics and Prestige. Leaders (or staff) get the full leader toolkit too: Invite, Banish, Set Rank, Muster, War, Alliances, and more.\n\n`
     + `-# Use the buttons below instead of typing commands out.`;
   return new EmbedBuilder().setColor(copy.herald.COLORS.herald).setDescription(desc.slice(0, 4096));
 }
