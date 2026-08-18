@@ -39,6 +39,29 @@ async function setMute(member, on) {
     }
   } catch { /* hierarchy / perms / not-in-voice — skip this member */ }
 }
+// Unconditional unmute for someone LEAVING the game VC — setMute()'s channelId guard exists so we never
+// try to mute someone who isn't there to receive it, but that same guard was blocking the UNMUTE on a
+// full disconnect (owner, 2026-08-18: "if anyone leaves mid game they should be un server muted so they
+// aren't muted next time they join a vc"). By the time this fires, newState.member.voice.channelId is
+// already null (they've left, not just moved), so the shared setMute() silently no-op'd — their
+// server-mute flag stayed set and carried into whatever VC they joined next. Discord's mute edit works
+// regardless of current connection (it just has no visible effect until they're in voice again), so skip
+// the channelId check entirely here.
+async function forceUnmute(member) {
+  try { await member.voice.setMute(false, 'Among Us mode — left mid-game'); } catch { /* not in voice / perms — best-effort */ }
+}
+
+// Discord's voice-channel "status" (the short text under the channel name in the sidebar) has no
+// discord.js helper in this version, so it's a raw REST call. Best-effort — a missing ManageChannels
+// permission or a transient API error just no-ops rather than breaking the game (owner, 2026-08-18:
+// "/amongus also doesn't properly set the status of the channel" — it never set it at all before this).
+async function setVcStatus(client, vcId, status) {
+  try { await client.rest.put(`/channels/${vcId}/voice-status`, { body: { status: (status || '').slice(0, 500) } }); }
+  catch (e) { console.error('[amongus] voice status:', e.message); }
+}
+function phaseStatus(phase) {
+  return phase === 'play' ? '▶️ Among Us: Play' : phase === 'discussion' ? '💬 Among Us: Discussion' : '🛋️ Among Us: Lobby';
+}
 
 // Apply the game's current phase to everyone in its VC, and unmute anyone the bot previously muted who
 // should no longer be. Recomputes game.mutedIds (the set the bot is responsible for).
@@ -54,12 +77,15 @@ async function applyPhase(guild, game) {
     tasks.push(setMute(m, shouldMute));
     if (shouldMute) nowMuted.push(m.id);
   }
-  // Anyone we muted before but shouldn't be now (left the VC, revived, phase→lobby): unmute — also in parallel.
+  // Anyone we muted before but shouldn't be now (left the VC, revived, phase→lobby): unmute — also in
+  // parallel. forceUnmute, not setMute — someone who left the VC entirely (not just revived/lobby'd while
+  // still present) has no channelId for setMute's guard to see, so it would silently no-op and leave them
+  // stuck server-muted into their next voice session.
   for (const id of game.mutedIds || []) {
     if (!nowMuted.includes(id)) {
       const cached = ch.guild.members.cache.get(id);
-      if (cached) tasks.push(setMute(cached, false));
-      else tasks.push(ch.guild.members.fetch(id).then(m => setMute(m, false)).catch(() => {}));
+      if (cached) tasks.push(forceUnmute(cached));
+      else tasks.push(ch.guild.members.fetch(id).then(m => forceUnmute(m)).catch(() => {}));
     }
   }
   await Promise.allSettled(tasks);
@@ -153,6 +179,7 @@ async function handleCommand(interaction) {
     phase: 'lobby', dead: [], mutedIds: [], startedBy: interaction.user.id };
   games[vc.id] = g; save();
   refreshPresence(interaction.client);   // → "Playing Among Us"
+  await setVcStatus(interaction.client, vc.id, phaseStatus(g.phase));
   await postPanel(interaction, g);
 }
 
@@ -183,6 +210,7 @@ async function handleInteraction(interaction) {
     else { game.phase = 'lobby'; game.dead = []; }
     save();
     await applyPhase(guild, game);
+    await setVcStatus(interaction.client, game.vcId, phaseStatus(game.phase));
     return updatePanel(interaction.client, game);
   }
   if (action === 'amongus_end') {
@@ -195,6 +223,7 @@ async function handleInteraction(interaction) {
     game.phase = 'lobby'; game.dead = []; await applyPhase(guild, game);   // unmute everyone the bot muted
     delete games[vcId]; save();
     refreshPresence(interaction.client);   // clear "Playing Among Us" if that was the last game
+    await setVcStatus(interaction.client, vcId, '');   // clear the VC status too
     await interaction.message.delete().catch(() => {});   // remove the panel entirely
     return;
   }
@@ -215,12 +244,14 @@ function register(client) {
       const guild = client.guilds.cache.get(g.guildId) || await client.guilds.fetch(g.guildId).catch(() => null);
       const vc = guild && (guild.channels.cache.get(g.vcId) || await guild.channels.fetch(g.vcId).catch(() => null));
       if (!guild || !vc || !vc.members || vc.members.size === 0) {
-        if (guild) for (const id of g.mutedIds || []) { const m = await guild.members.fetch(id).catch(() => null); if (m) await setMute(m, false); }
+        if (guild) for (const id of g.mutedIds || []) { const m = await guild.members.fetch(id).catch(() => null); if (m) await forceUnmute(m); }
+        if (guild) await setVcStatus(client, g.vcId, '');
         await deletePanel(client, g).catch(() => {});
         delete games[g.vcId]; dropped++;
         continue;
       }
       await applyPhase(guild, g).catch(e => console.error('[amongus] resume applyPhase:', e.message));   // re-mute to saved phase
+      await setVcStatus(client, g.vcId, phaseStatus(g.phase));
       await updatePanel(client, g).catch(() => {});   // refresh the panel (its buttons already survive the restart)
       resumed++;
     }
@@ -236,13 +267,13 @@ function register(client) {
         const g = games[oldState.channelId];
         // unmute the leaver (so they aren't stuck muted elsewhere) and drop them from tracking
         const m = newState.member || oldState.member;
-        if (m) await setMute(m, false);
+        if (m) await forceUnmute(m);
         g.dead = (g.dead || []).filter(id => id !== (m?.id));
         g.mutedIds = (g.mutedIds || []).filter(id => id !== (m?.id));
         save();
         // auto-end if the VC is now empty; otherwise refresh the panel so the dead-picker drops the leaver
         const ch = oldState.guild.channels.cache.get(g.vcId);
-        if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); refreshPresence(client); await deletePanel(client, g).catch(() => {}); }
+        if (ch && ch.members && ch.members.size === 0) { delete games[g.vcId]; save(); refreshPresence(client); await setVcStatus(client, g.vcId, ''); await deletePanel(client, g).catch(() => {}); }
         else await updatePanel(client, g).catch(() => {});
       }
       if (joined) {
