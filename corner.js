@@ -368,27 +368,20 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     let threadId = existing.threadId || null;
     if (thread && !threadId) {
-      try {
+      threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member);
+      if (threadId) {
+        existing.threadId = threadId;
+        state.setCornered(member.id, existing);
         const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
-        if (ch && ch.isTextBased()) {
-          const name = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
-          const th = await ch.threads.create({ name, autoArchiveDuration: 1440, type: 12, reason: 'Corner thread imprisonment' }).catch(async () => {
-            return await ch.threads.create({ name, autoArchiveDuration: 1440, type: 11, reason: 'Corner thread imprisonment' }).catch(() => null);
-          });
-          if (th) {
-            await th.members.add(member.id).catch(() => {});
-            threadId = th.id;
-            existing.threadId = threadId;
-            state.setCornered(member.id, existing);
-            await ch.permissionOverwrites.edit(member.id, {
-              SendMessages: false,
-              SendMessagesInThreads: true,
-              ViewChannel: true,
-              ReadMessageHistory: true
-            }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
-          }
+        if (ch) {
+          await ch.permissionOverwrites.edit(member.id, {
+            SendMessages: false,
+            SendMessagesInThreads: true,
+            ViewChannel: true,
+            ReadMessageHistory: true
+          }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
         }
-      } catch (err) { console.error('[corner] existing thread create:', err.message); }
+      }
     }
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount, threadId, targetChannelId };
   }
@@ -414,25 +407,18 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // Optional Thread Imprisonment & Adult Corner routing
   let threadId = null;
   if (thread) {
-    try {
+    threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member);
+    if (threadId) {
       const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
-      if (ch && ch.isTextBased()) {
-        const name = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
-        const th = await ch.threads.create({ name, autoArchiveDuration: 1440, type: 12, reason: 'Corner thread imprisonment' }).catch(async () => {
-          return await ch.threads.create({ name, autoArchiveDuration: 1440, type: 11, reason: 'Corner thread imprisonment' }).catch(() => null);
-        });
-        if (th) {
-          await th.members.add(member.id).catch(() => {});
-          threadId = th.id;
-          await ch.permissionOverwrites.edit(member.id, {
-            SendMessages: false,
-            SendMessagesInThreads: true,
-            ViewChannel: true,
-            ReadMessageHistory: true
-          }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
-        }
+      if (ch) {
+        await ch.permissionOverwrites.edit(member.id, {
+          SendMessages: false,
+          SendMessagesInThreads: true,
+          ViewChannel: true,
+          ReadMessageHistory: true
+        }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
       }
-    } catch (err) { console.error('[corner] thread create:', err.message); }
+    }
   }
 
   state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke, threadId, isAdult: !!adult, channelId: targetChannelId });
