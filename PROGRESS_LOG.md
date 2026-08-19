@@ -551,3 +551,18 @@ also/sweep path) to explicitly point at `/corner-status` as the fix, closing the
 what got auto-classified" and "here's how to correct it" in the same message.
 
 Deployed to both bots, clean restart confirmed. Commit `05b5bad`, pushed.
+
+## 2026-08-19 21:16 — Native welcome/goodbye confirmed working, replaces Carl-bot + Mimu
+
+Owner: "just the wording. condense the two messages into 1. i don't want the 'i created this
+server' since i'm its third owner." Condensed the welcome embed's two stacked paragraphs (Carl-bot's
+rules-reminder + Mimu's tagline) into one unified paragraph, dropped "I created this space" (owner
+is the third owner, didn't create this iteration of the server). Commit `5403711`.
+
+Reposted the welcome test message with the new wording for review — owner: "test looks good. you
+can delete both." Deleted both the welcome and goodbye test messages. The native replacement
+(commit history: config additions, `postWelcomeMessage`/`postGoodbyeMessage`, `guildMemberAdd`/
+`guildMemberRemove` handlers, content-based real mentions fixing the original "tags stopped
+showing" bug) is now confirmed working end-to-end and considered done for this session. Owner is
+still handling turning off Carl-bot's/Mimu's own welcome/leave config on their end, per the earlier
+"I'll turn it off myself" choice — not something this repo's code controls.
