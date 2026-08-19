@@ -7,6 +7,7 @@ const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
 const hitsquad = require('./hitsquad');
 const opspanel = require('./opspanel');
+const overridesManager = require('./overridesManager');
 
 // ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
 // /corner already refuses to corner someone of a HIGHER tier than the actor. This closes the mirror
@@ -14,33 +15,9 @@ const opspanel = require('./opspanel');
 // trial mod could undo a decision an admin or owner deliberately made. Canonical RANK lives here now;
 // index.js and opspanel.js reference corner.RANK instead of each keeping their own copy.
 const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-// One-off personal overrides (owner request, 2026-08-14/15): specific actors may corner specific targets,
-// bypassing the normal higher-tier block below — regardless of either party's tier now or later. Not a
-// general rule; keep this list short and named, same pattern as index.js's SELF_CORNER_EXEMPT_ID.
-// actorId '*' = ANY actor (still subject to their own tier's normal duration/reason/daily-cap limits —
-// this only lifts the "can't touch someone above your tier" gate, nothing else) — used for the real
-// Discord server owner opting themselves in as a cornerable target (2026-08-15): purely cosmetic for them
-// specifically, since the actual guild owner keeps full Discord permissions regardless of stripped roles.
-const PERSONAL_CORNER_OVERRIDES = [
-  { actorId: '1415112053823242250', targetId: '989615671178575972' },   // approved actor -> approved target
-  { actorId: '593371777569390602', targetId: '989615671178575972' },    // second approved actor -> same target
-  { actorId: '*', targetId: '865843812907089940' },                     // any STAFF actor -> the server owner (opted in) — narrowed from any verified member (owner, 2026-08-17: "change the everyone corner to only staff (mod+)")
-];
-// actorTier: pass the actor's recognized staff tier (opspanel.tierOf/memberTier — 'mod'/'admin'/'owner'/
-// 'botowner'), or null/undefined for a plain verified member. Named overrides (exact actorId match) work
-// regardless of tier; the wildcard '*' entry only matches a STAFF actorTier now — a regular member no
-// longer qualifies for it even though the target opted in to being corner-able by "anyone."
+
 function canBypassCornerTier(actorId, targetId, actorTier = null) {
-  return PERSONAL_CORNER_OVERRIDES.some(o => {
-    if (o.targetId !== targetId) return false;
-    if (o.actorId === actorId) return true;
-    // The wildcard entry (currently just the server owner opting in) requires admin+ specifically, not any
-    // staff tier — narrowed from "any staff" (owner, 2026-08-18: "the ability for people to corner me as
-    // the owner should be admin/owner"), so a plain mod no longer qualifies even though they still can't
-    // corner an admin/owner under the normal tier rule either way.
-    if (o.actorId === '*') return (RANK[actorTier] || 0) >= RANK.admin;
-    return false;
-  });
+  return overridesManager.canBypassTier(actorId, targetId, actorTier);
 }
 // Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
 // tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
@@ -330,36 +307,26 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
 
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
-async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTier = null, opts = {}) {
-  const { forceReal = false, adult = false, thread = false } = opts;
+async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
+  const { forceReal = false, adult = false, thread = false } = opts || {};
   const now = Date.now();
-  // Nobody can corner themselves — every entry point (slash /corner, "Send to corner", the dashboard
-  // picker, the re-corner button) funnels through here, so one central guard closes them all. The tier
-  // check upstream lets equal tiers act on each other (mod↔mod), which — with no self-check — also let a
-  // mod corner their OWN account and self-strip their roles. Auto-corner (rule 9) passes the bot's id as
-  // byId against a member target, so byId===member.id only ever means a genuine self-corner attempt.
-  if (byId && byId === member.id) {
-    return { ok: false, error: "you can't corner yourself." };
-  }
-  // The server owner is never cornerable, full stop — centralized here (not left to each of the ~8
-  // callers to remember) after finding one caller (the Send-to-corner reason-modal submit handler) with
-  // NO owner check at all: the upstream command that opens the modal validates the target, but the modal
-  // submit step that actually strips roles trusted the embedded id with no re-check. One guard here closes
-  // every entry point, present and future, regardless of what each caller does or forgets to do upstream.
+  // Dynamic Granted Corner Power check (e.g. knylvr granted owner-level cornering power)
+  const grantedPower = byId ? overridesManager.getGrantedPower(byId) : null;
+  if (grantedPower) actorTier = grantedPower;
+
   if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id, actorTier))) {
     return { ok: false, error: "you can't corner the server owner." };
   }
-  // A current hit-squad member is immune to being cornered (by anyone, staff included) for as long as
-  // their activation window is live (owner, 2026-08-17: "they can't be cornered during the window") — same
-  // central choke point every entry point already funnels through, so this can't be dodged via a path that
-  // forgot to check it.
+  if (byId && byId === member.id) {
+    return { ok: false, error: "you can't corner yourself." };
+  }
   if (hitsquad.isSquadMember(member.id)) {
     return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
   }
-  // Exclusive protection: only the server owner can corner knylvr (1211024269149081620)
-  const KNYLVR_ID = '1211024269149081620';
-  if (member.id === KNYLVR_ID && byId !== guild.ownerId) {
-    return { ok: false, error: `only <@${guild.ownerId}> can corner knylvr.` };
+  // Dynamic Exclusive Target Protection check (e.g. knylvr -> only server owner can corner)
+  const exclusive = overridesManager.checkExclusiveProtection(member.id, byId);
+  if (!exclusive.allowed) {
+    return { ok: false, error: `only <@${exclusive.requiredActorId}> can corner knylvr.` };
   }
   // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
   const MINOR_ROLE_ID = '1516185172213628989';

@@ -87,6 +87,7 @@ const PAGES = [
   { emoji: '⚙️', name: 'Settings', tier: 'admin', blurb: 'turn helpers on/off (needs Admin)' },
   { emoji: '🧩', name: 'Setup', tier: 'admin', blurb: 'create channels + (re)post member panels (needs Admin)' },
   { emoji: '⚠️', name: 'Danger', tier: 'owner', blurb: 'removal policy (needs Owner)' },
+  { emoji: '🛡️', name: 'Overrides', tier: 'owner', blurb: 'personal corner overrides & special powers (needs Owner)' },
 ];
 const pageIdx = (name) => PAGES.findIndex(p => p.name === name);   // reorder-safe page lookup
 const watchlist = require('./watchlist');
@@ -492,6 +493,38 @@ async function buildPromotions() {
   return { content: '## 🏅 FUBU Ops · Promotions', embeds: [embed], components: rows };
 }
 
+function buildOverrides() {
+  const list = overridesManager.getOverrides();
+  const lines = list.map((o, idx) => {
+    const typeLabel = o.type === 'EXCLUSIVE_CORNERER' ? '🔒 Exclusive' : o.type === 'GRANT_POWER' ? `⚡ Grant (${o.powerTier || 'owner'})` : o.type === 'BYPASS_TIER' ? '🔓 Bypass' : '🛡️ Immunity';
+    return `\`${idx + 1}.\` **${typeLabel}** · Actor: ${o.actorId === '*' ? '* (all staff)' : `<@${o.actorId}>`} → Target: ${o.targetId === '*' ? '*' : `<@${o.targetId}>`}${o.note ? ` _(${o.note})_` : ''}`;
+  });
+
+  const embed = new EmbedBuilder().setColor(0x5865F2)
+    .setTitle('🛡️ Personal Corner Overrides')
+    .setDescription('**👑 Owner only.** Manage personal corner rules live — no code edits needed.\n\n'
+      + (lines.length ? lines.join('\n') : '_No personal overrides active._'))
+    .setFooter({ text: 'Owner only. Live personal corner rules.' });
+
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('fops_ov_addmodal').setEmoji('➕').setLabel('Add Rule').setStyle(ButtonStyle.Success),
+  );
+
+  const rows = [row1];
+  if (list.length) {
+    const opts = list.slice(0, 25).map((o, idx) => ({
+      label: `${idx + 1}. ${o.type} (${o.actorId.slice(-4)} → ${o.targetId.slice(-4)})`.slice(0, 100),
+      value: o.id,
+      description: (o.note || `${o.actorId} -> ${o.targetId}`).slice(0, 100)
+    }));
+    rows.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('fops_ov_delpicker').setPlaceholder('🗑️ Select a rule to delete…').addOptions(opts)
+    ));
+  }
+  rows.push(navRow(pageIdx('Overrides')));
+  return { content: '## 🛡️ FUBU Ops · Personal Overrides', embeds: [embed], components: rows };
+}
+
 async function buildPage(page) {
   const name = PAGES[page] && PAGES[page].name;   // name-based so the array can be reordered freely
   if (name === 'Moderation') return buildModeration();
@@ -505,6 +538,7 @@ async function buildPage(page) {
   if (name === 'Settings') return buildSettings();
   if (name === 'Setup') return buildSetup();
   if (name === 'Danger') return buildDanger();
+  if (name === 'Overrides') return buildOverrides();
   return await buildOverview();
 }
 
@@ -761,6 +795,16 @@ async function handlePanel(interaction) {
         { id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` },
         { id: 'options', label: 'Options: type "thread", "adult", or "both"', placeholder: 'blank = standard corner' }
       ]));
+  }
+  if (id === 'fops_ov_addmodal') {
+    if (!isBotOwner(interaction) && !meets(tier, 'owner')) return denyReply('owner');
+    return interaction.showModal(followupModal('fops_ov_submitadd', 'Add Personal Corner Override', [
+      { id: 'actor_id', label: 'Actor User ID (or * for any staff)', placeholder: '865843812907089940 or *' },
+      { id: 'target_id', label: 'Target User ID (or * for any target)', placeholder: '1211024269149081620 or *' },
+      { id: 'rule_type', label: 'Type: exclusive, grant_power, or bypass', placeholder: 'exclusive' },
+      { id: 'power_tier', label: 'Power Tier if grant_power (owner/admin/mod)', placeholder: 'owner' },
+      { id: 'note', label: 'Note / Description (optional)', placeholder: 'e.g. Knylvr owner-only protection' }
+    ]));
   }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
@@ -1113,6 +1157,28 @@ async function handlePanel(interaction) {
       if (!term) return interaction.editReply('Enter a term.');
       const t = id === 'fops_wl_wtermaddmodal' ? watchlist.addWelfare(term) : watchlist.removeWelfare(term);
       await interaction.editReply(`${id === 'fops_wl_wtermaddmodal' ? '➕ Added' : '➖ Removed'} welfare term \`${term}\`. ${t.length} welfare term(s) now.`);
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_ov_submitadd') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const actorId = (interaction.fields.getTextInputValue('actor_id') || '').trim();
+      const targetId = (interaction.fields.getTextInputValue('target_id') || '').trim();
+      const rawType = (interaction.fields.getTextInputValue('rule_type') || '').trim().toLowerCase();
+      const powerTier = (interaction.fields.getTextInputValue('power_tier') || '').trim().toLowerCase() || null;
+      const note = (interaction.fields.getTextInputValue('note') || '').trim();
+      let type = 'BYPASS_TIER';
+      if (rawType.includes('exclusive')) type = 'EXCLUSIVE_CORNERER';
+      else if (rawType.includes('grant') || rawType.includes('power')) type = 'GRANT_POWER';
+
+      const entry = overridesManager.addOverride({ actorId, targetId, type, powerTier, note });
+      await interaction.editReply(`✅ Added personal override rule \`${entry.id}\` (${type}).`);
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_ov_delpicker') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const ruleId = interaction.values[0];
+      const ok = overridesManager.removeOverride(ruleId);
+      await interaction.editReply(ok ? `🗑️ Deleted rule \`${ruleId}\`.` : 'Rule not found.');
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_wl_termlist') {
