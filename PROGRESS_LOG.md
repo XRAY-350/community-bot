@@ -30,7 +30,28 @@ fine — this rule is about copy real members read.
 
 ---
 
-## 2026-08-19 16:11 — Renamed the FUBU systemd service from community-bot to fubu-bot
+## 2026-08-19 16:20 — FUBU: consolidated Text/Hobbies/Confessions categories, deleted empty archived category
+
+Live Discord server change, no code touched. Owner asked to merge "Text Channels" and "Hobbies and
+Interests" categories, then mid-task added "Confessions" to the merge, then separately asked to
+delete the (now confirmed genuinely empty) "📦 archived" category.
+
+Surveyed all three categories first (10 + 13 + 6 = 29 channels, well under Discord's 50-per-category
+cap) and confirmed with the owner which category survives, its new name, and left the known
+`hobbies-interests` (forum) vs `hobbies-interests✿` (text channel) duplicate alone per their call.
+
+Renamed the `ღᴛᴇxᴛ ᴄʜᴀɴᴇʟʟsఌ` category (id 1500215550020812850) to `ღ ᴄᴏᴍᴍᴜɴɪᴛʏ ఌ`, moved all 13
+Hobbies channels + all 6 Confessions channels into it via `setParent(id, { lockPermissions: false })`
+— explicitly NOT syncing category permissions onto the moved channels, since several (mod-inbox,
+anon-reports, confession-log) have their own restrictive overwrites that a permission sync would
+have clobbered. Deleted the two now-empty source categories. Verified via a full `guild.channels.fetch()`
+(not cache) that the merged category holds all 29 channels and the old two are gone.
+
+Then deleted `📦 archived` (id 1535874875573543002) — confirmed via full fetch (not just cache) that
+it held 0 channels before deleting, so no content was lost.
+
+No permguard interaction: it keys off channelId for its golden-manifest sweep, not parent category,
+and no channel's own overwrites were touched — only their `parentId` changed.
 
 Owner clarified the repo/package naming history (FUBU was the original codebase, deliberately
 renamed to `community-bot` when Melanin was consolidated onto it "instead of making code changes
