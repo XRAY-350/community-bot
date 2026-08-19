@@ -505,3 +505,35 @@ call sites. The one thing that correctly stays gone: the literal boolean argumen
 itself.
 
 Deployed to both bots, clean restart confirmed. Commit `81a46dc`, pushed.
+
+## 2026-08-19 21:01 — New /corner-status command: fixes the bulk-corner joke/real flaw
+
+Owner asked how joke/real is decided when a bulk `/corner` (via `also`) targets both a regular
+member and a mod at once. Answer surfaced a real bug in both directions: joke/real is computed
+per-target purely by "is this target staff" — a serious corner on a mod bundled into a batch
+silently gets auto-flagged joke (tier lock waived, no confirmation since bulk mode skips the
+ephemeral flip-prompt), while a joke corner sweeping in a regular member leaves them stuck with the
+full real lock (joke never applies to non-staff targets). No way to correct either after the fact.
+
+Owner offered 3 directions: re-add joke as a command argument, a secondary command, or a way to
+change status while someone's cornered. Flagged that option 1 conflicts with the standing "don't
+add it to the command" ruling from earlier this session — owner clarified the REAL reason for that
+ruling: not wanting members to see the joke concept existed at all via `/corner`'s own visible
+option list (same reason the whole system is ephemeral-only). Went with option 3 (most general —
+fixes it regardless of how the corner happened) as a new slash command.
+
+New `/corner-status <user> <joke|real>`, mod+ only (not Trial Mods — owner: "they're the only ones
+who should have this ability anyway"). Marking "joke" requires the same authority `corner.canActSolo`
+already gates a solo release with (since it waives the same protection for everyone else); marking
+"real" is open to any mod+. Logged via `logCorner` either way for an audit trail.
+
+**Deploy hit a real, non-obvious bug along the way**: the command description exceeded Discord's
+100-char limit, which surfaced as an opaque `Invalid string length` from `@sapphire/shapeshift`'s
+validator — NOT a clear "too long" message — and broke `guild.commands.set()` entirely for BOTH
+bots on first deploy (command registration silently failed, existing commands stayed stale). Traced
+by extracting just the new `SlashCommandBuilder` into a standalone test script and running it
+directly to get the real stack trace, since the caught error only logged `err.message`. Also found
+the command was missing from `features.js`'s registry — would have been silently filtered out of
+registration even with a valid description. Fixed both, redeployed clean.
+
+Commit `f82bbf8`, pushed.
