@@ -803,16 +803,6 @@ async function handlePanel(interaction) {
         { id: 'options', label: 'Options: type "thread", "adult", or "both"', placeholder: 'blank = standard corner' }
       ]));
   }
-  if (id === 'fops_ov_addmodal') {
-    if (!isBotOwner(interaction) && !meets(tier, 'owner')) return denyReply('owner');
-    return interaction.showModal(followupModal('fops_ov_submitadd', 'Add Personal Corner Override', [
-      { id: 'actor_id', label: 'Actor User ID (or * for any staff)', placeholder: '865843812907089940 or *' },
-      { id: 'target_id', label: 'Target User ID (or * for any target)', placeholder: '1211024269149081620 or *' },
-      { id: 'rule_type', label: 'Type: exclusive, grant_power, or bypass', placeholder: 'exclusive' },
-      { id: 'power_tier', label: 'Power Tier if grant_power (owner/admin/mod)', placeholder: 'owner' },
-      { id: 'note', label: 'Note / Description (optional)', placeholder: 'e.g. Knylvr owner-only protection' }
-    ]));
-  }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
     const uid = interaction.values[0];
@@ -1297,18 +1287,46 @@ async function handlePanel(interaction) {
           type: 'ALLOW_SELF_CORNER',
           note: 'Self-corner allowed'
         });
-      } else {
-        entry = overridesManager.addOverride({
-          actorType: isUser ? 'user' : 'role',
-          actorId: pickedId,
-          targetType: '*',
-          targetId: '*',
-          type: 'BYPASS_TIER',
-          note: 'Tier gate bypass'
-        });
+      } else if (ruleType === 'BYPASS_TIER') {
+        // Bypass needs a target scope, not an immediate create — "everyone" (the only option before this
+        // revamp) is rarely what's meant; usually it's this actor bypassing the gate for ONE person/role.
+        const actorType = isUser ? 'user' : 'role';
+        const scopeRow = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder().setCustomId(`fops_ov_bypassscope:${actorType}:${pickedId}`).setPlaceholder('Select Target Scope…').addOptions([
+            { label: '🌐 Everyone (bypass over all targets)', value: 'all', description: 'This actor bypasses the tier gate against anyone' },
+            { label: '👤 Specific Member', value: 'user', description: 'Bypass applies only against one member' },
+            { label: '🎭 Specific Role', value: 'role', description: 'Bypass applies only against one role' },
+          ])
+        );
+        return interaction.editReply({ content: `### 🔓 Bypass Tier Gate: Step 2 of 2\nWho does ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} bypass the tier gate against?`, components: [scopeRow] });
       }
 
       await interaction.editReply({ content: `✅ Added personal override rule \`${entry.id}\` for ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} (${ruleType}).`, components: [] });
+      return refreshPanel(interaction.client);
+    }
+    if (id.startsWith('fops_ov_bypassscope:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, actorType, actorId] = id.split(':');
+      const scope = interaction.values[0];
+      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
+      if (scope === 'all') {
+        const entry = overridesManager.addOverride({ actorType, actorId, targetType: '*', targetId: '*', type: 'BYPASS_TIER', note: 'Tier gate bypass (everyone)' });
+        await interaction.editReply({ content: `✅ Added override \`${entry.id}\`: ${actorFmt} bypasses the tier gate against **Everyone**.`, components: [] });
+        return refreshPanel(interaction.client);
+      }
+      const picker = scope === 'user'
+        ? new UserSelectMenuBuilder().setCustomId(`fops_ov_bypasstarget:user:${actorType}:${actorId}`).setPlaceholder('👤 Select Target Member…')
+        : new RoleSelectMenuBuilder().setCustomId(`fops_ov_bypasstarget:role:${actorType}:${actorId}`).setPlaceholder('🎭 Select Target Role…');
+      return interaction.editReply({ content: `### 🔓 Bypass Tier Gate\nWho does ${actorFmt} bypass the gate against?`, components: [new ActionRowBuilder().addComponents(picker)] });
+    }
+    if (id.startsWith('fops_ov_bypasstarget:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, targetType, actorType, actorId] = id.split(':');
+      const targetId = interaction.values[0];
+      const entry = overridesManager.addOverride({ actorType, actorId, targetType, targetId, type: 'BYPASS_TIER', note: 'Tier gate bypass' });
+      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
+      const targetFmt = targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`;
+      await interaction.editReply({ content: `✅ Added override \`${entry.id}\`: ${actorFmt} bypasses the tier gate against ${targetFmt}.`, components: [] });
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_ov_delpicker') {
