@@ -208,10 +208,15 @@ async function ensureCornerPerms(guild) {
         continue;
       }
       if (config.adultCornerChannelId && ch.id === config.adultCornerChannelId) {
-        // Adult Corner: @everyone denied view (gated 18+ space); corner role + staff allowed
+        // Adult Corner: @everyone denied view; 16-17 role explicitly denied; corner role + staff allowed
         const everyoneDesired = { ViewChannel: false };
         if (!overwriteMatches(ch, everyone, everyoneDesired)) {
           await ch.permissionOverwrites.edit(everyone, everyoneDesired, { reason: 'adult corner self-heal' }); fixed++;
+        }
+        const minorRoleId = '1516185172213628989';   // ✰ • 16-17 role
+        const minorDesired = { ViewChannel: false, SendMessages: false, ReadMessageHistory: false };
+        if (!overwriteMatches(ch, minorRoleId, minorDesired)) {
+          await ch.permissionOverwrites.edit(minorRoleId, minorDesired, { reason: 'adult corner minor deny self-heal' }).catch(() => {}); fixed++;
         }
         const cornerDesired = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, EmbedLinks: true, AddReactions: true };
         if (!overwriteMatches(ch, config.cornerRoleId, cornerDesired)) {
@@ -350,6 +355,16 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // forgot to check it.
   if (hitsquad.isSquadMember(member.id)) {
     return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
+  }
+  // Exclusive protection: only the server owner can corner knylvr (1211024269149081620)
+  const KNYLVR_ID = '1211024269149081620';
+  if (member.id === KNYLVR_ID && byId !== guild.ownerId) {
+    return { ok: false, error: `only <@${guild.ownerId}> can corner knylvr.` };
+  }
+  // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
+  const MINOR_ROLE_ID = '1516185172213628989';
+  if (adult && member.roles?.cache?.has(MINOR_ROLE_ID)) {
+    return { ok: false, error: 'members with the 16-17 role cannot be sent to the 18+ Adult Corner.' };
   }
   // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
   // use PUT semantics computed off the LOCAL cache — a stale/partial member (e.g. from a message event,
