@@ -308,25 +308,30 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
-  const { forceReal = false, adult = false, thread = false } = opts || {};
+  const { forceReal = false, adult = false, thread = false, anon = false } = opts || {};
   const now = Date.now();
-  // Dynamic Granted Corner Power check (e.g. knylvr granted owner-level cornering power)
-  const grantedPower = byId ? overridesManager.getGrantedPower(byId) : null;
+  // Fetch actor member if byId provided to evaluate role-based granted powers
+  let actorMember = null;
+  if (byId && guild) {
+    actorMember = await guild.members.fetch(byId).catch(() => null);
+  }
+  const grantedPower = overridesManager.getGrantedPower(actorMember || byId);
   if (grantedPower) actorTier = grantedPower;
 
-  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id, actorTier))) {
+  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(actorMember || byId, member, actorTier))) {
     return { ok: false, error: "you can't corner the server owner." };
   }
   if (byId && byId === member.id) {
-    return { ok: false, error: "you can't corner yourself." };
+    const selfCornerAllowed = overridesManager.canSelfCorner(member);
+    if (!selfCornerAllowed) return { ok: false, error: "you can't corner yourself." };
   }
   if (hitsquad.isSquadMember(member.id)) {
     return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
   }
-  // Dynamic Exclusive Target Protection check (e.g. knylvr -> only server owner can corner)
-  const exclusive = overridesManager.checkExclusiveProtection(member.id, byId);
+  // Dynamic Exclusive Target Protection check
+  const exclusive = overridesManager.checkExclusiveProtection(member, byId);
   if (!exclusive.allowed) {
-    return { ok: false, error: `only <@${exclusive.requiredActorId}> can corner knylvr.` };
+    return { ok: false, error: `only <@${exclusive.requiredActorId}> can corner ${member.displayName || member.user?.username || 'this member'}.` };
   }
   // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
   const MINOR_ROLE_ID = '1516185172213628989';

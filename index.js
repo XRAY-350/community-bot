@@ -3350,7 +3350,7 @@ async function jokeCheckIn(interaction, targetUserId, joke) {
   }).catch(e => console.error('[corner] joke prompt followUp:', e.message));
 }
 
-function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false) {
+function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false, isAnon = false) {
   const staffPings = [];
   if (isThread) {
     if (config.modRoleId) staffPings.push(`<@&${config.modRoleId}>`);
@@ -3362,11 +3362,12 @@ function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false
     const rIds = [config.modRoleId, config.adminRoleId].filter(Boolean);
     if (rIds.length) allowed.roles = rIds;
   }
+  const sentByText = isAnon ? '**Sent by:** 🎭 Anonymous Staff' : (actorId ? `**Sent by:** <@${actorId}>` : '');
   return {
     content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>${pingStr}`,
     embeds: [new EmbedBuilder().setColor(CORNER_RED)
       .setDescription(`<@${userId}> has been stripped of their roles and confined here **${whenPhrase}**.`
-        + (actorId ? `\n**Sent by:** <@${actorId}>` : '')
+        + (sentByText ? `\n${sentByText}` : '')
         + (reason ? `\n**Reason:** ${reason}` : '')
         + (isThread ? `\n\nThis is your private jail thread. Staff have been notified.` : `\n\nThis is the only text channel you may speak in (you can also join the corner voice channel). Reflect on what brought you here.`))],
     components: [new ActionRowBuilder().addComponents(
@@ -4357,6 +4358,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
         .addBooleanOption(o => o.setName('adult').setDescription('Send to the 18+ Adult Corner for adult chat offenses?').setRequired(false))
         .addBooleanOption(o => o.setName('thread').setDescription('Imprison to a private jail thread?').setRequired(false))
+        .addBooleanOption(o => o.setName('anon').setDescription('Hide your name and announce as Anonymous Staff (bot)').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
         .setDefaultMemberPermissions(cornerVis),   // always visible; the handler enforces staff/trial/member restrictions (and tells a member plainly if 'memberCorner' is off)
@@ -10564,8 +10566,9 @@ client.on('interactionCreate', async (interaction) => {
       // sent as its own plain channel message instead, so it's unaffected by this.
       const isAdult = interaction.options.getBoolean('adult') || false;
       const isThread = interaction.options.getBoolean('thread') || false;
+      const isAnon = interaction.options.getBoolean('anon') || false;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread });
+      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon });
       if (!r.ok) {
         if (r.error === 'gated') {
           const actorTier = opspanel.tierOf(interaction);
@@ -10582,11 +10585,11 @@ client.on('interactionCreate', async (interaction) => {
       // Announce in the corner channel so the cornered member sees it there.
       try {
         const cornerCh = await guild.channels.fetch(r.targetChannelId || config.cornerChannelId).catch(() => null);
-        const sentMsg = cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id);
+        const sentMsg = cornerSentMessage(user.id, whenPhrase, reasonText, isAnon ? null : interaction.user.id, false, isAnon);
         if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
         if (r.threadId) {
           const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
-          if (threadCh) await threadCh.send(cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id, true)).catch(() => {});
+          if (threadCh) await threadCh.send(cornerSentMessage(user.id, whenPhrase, reasonText, isAnon ? null : interaction.user.id, true, isAnon)).catch(() => {});
         }
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
