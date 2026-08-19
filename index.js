@@ -21,6 +21,11 @@ const opspanel = require('./opspanel');
 const overridesManager = require('./overridesManager');
 
 function effectiveTierOf(interaction, targetMember = null) {
+  // Being cornered suspends ALL active authority — role-based tier (opspanel.tierOf already accounts for
+  // this) AND a GRANT_POWER override, which doesn't depend on role/tier at all and would otherwise still
+  // apply to a jailed actor. Checked here directly (not just via a null rawTier below) because rawTier is
+  // ALSO null for a regular non-staff member who legitimately holds a grant — that case must still work.
+  if (state.getCornered(interaction?.user?.id)) return null;
   const actor = interaction?.member || interaction?.user?.id;
   const rawTier = opspanel.tierOf(interaction);
   const granted = overridesManager.getGrantedPower(actor, targetMember, rawTier);
@@ -7253,7 +7258,7 @@ client.on('interactionCreate', async (interaction) => {
   // ---- Member-founded tribe: the founder's identity modal → posts the cosign petition ----
   if (interaction.isModalSubmit?.() && interaction.customId === 'tribemfound_modal') {
     if (!features.enabled('memberFoundedTribe')) return interaction.reply({ content: 'Founding a tribe as a member isn’t available yet.', flags: MessageFlags.Ephemeral });
-    if (opspanel.memberTier(interaction.member) || isTrialMod(interaction)) return interaction.reply({ content: 'Only a regular member can found a member-led tribe.', flags: MessageFlags.Ephemeral });
+    if (opspanel.tierOf(interaction) || isTrialMod(interaction)) return interaction.reply({ content: 'Only a regular member can found a member-led tribe.', flags: MessageFlags.Ephemeral });
     if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a tribe.', flags: MessageFlags.Ephemeral });
     const name = interaction.fields.getTextInputValue('name').trim().slice(0, 80);
     if (!name) return interaction.reply({ content: 'Give the tribe a name.', flags: MessageFlags.Ephemeral });
@@ -7275,7 +7280,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!req) return interaction.reply({ content: 'This founding petition is no longer active.', flags: MessageFlags.Ephemeral });
     if (interaction.user.id === req.founderId) return interaction.reply({ content: 'You can’t cosign your own founding petition.', flags: MessageFlags.Ephemeral });
     if (!isVerifiedOrStaff(interaction)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
-    if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
+    if (opspanel.tierOf(interaction)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
     if (tribes.myTribe(interaction.member)) {
       // Cosigning JOINS this tribe, so you must leave your current one first. Rather than just tell them,
       // kick off the SAME leave flow the hub/command use (files a leave request to their throne for the leader).
@@ -7571,7 +7576,7 @@ client.on('interactionCreate', async (interaction) => {
     // lock overrides even the staff exemption — otherwise a captured staff member could just bounce out
     // instantly and the war's whole point (a real, sticky consequence) would mean nothing.
     if (tribes.isCaptureLocked(interaction.member.id)) return interaction.reply({ content: `You were captured in a recent war — can’t leave until <t:${Math.floor(tribes.captureLockUntil(interaction.member.id) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
-    if (['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) {
+    if (['admin', 'mod'].includes(opspanel.tierOf(interaction))) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await releaseTribeMember(interaction.guild, tribe, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
       return interaction.editReply(r.ok ? `🚪 Left **${tribe.shortName || tribe.name}**. You can be accepted into a new tribe whenever you like.` : 'Couldn’t remove the role. Check my role position.');
@@ -7664,7 +7669,7 @@ client.on('interactionCreate', async (interaction) => {
       if (!interaction.member.roles.cache.has(tribe.roleId)) return interaction.reply({ content: `You’re not in **${tribe.shortName || tribe.name}**.`, flags: MessageFlags.Ephemeral });
       const ranks = tribe.ranks || [];
       const topIdx = ranks.length - 1;
-      const isStaffOrLeader = tribes.isLeader(interaction.member, tribe) || ['admin', 'mod'].includes(opspanel.memberTier(interaction.member));
+      const isStaffOrLeader = tribes.isLeader(interaction.member, tribe) || ['admin', 'mod'].includes(opspanel.tierOf(interaction));
       const atTop = ranks.length > 0 && !isStaffOrLeader && tribes.earnedRankIndex(tribe, uid) >= topIdx;
       const lvl = tribes.getPrestige(tribe.key, uid);
       const tides = tribes.getTides(tribe.key, uid);
@@ -7683,7 +7688,7 @@ client.on('interactionCreate', async (interaction) => {
       const uid = interaction.user.id;
       const ranks = tribe.ranks || [];
       const topIdx = ranks.length - 1;
-      const isStaffOrLeader = tribes.isLeader(interaction.member, tribe) || ['admin', 'mod'].includes(opspanel.memberTier(interaction.member));
+      const isStaffOrLeader = tribes.isLeader(interaction.member, tribe) || ['admin', 'mod'].includes(opspanel.tierOf(interaction));
       if (!interaction.member.roles.cache.has(tribe.roleId) || isStaffOrLeader || !(ranks.length > 0 && tribes.earnedRankIndex(tribe, uid) >= topIdx))
         return interaction.reply({ content: 'You’re no longer eligible to Prestige.', flags: MessageFlags.Ephemeral });
       const before = tribes.getTides(tribe.key, uid);
@@ -7713,7 +7718,7 @@ client.on('interactionCreate', async (interaction) => {
     if (act === 'leave') {
       if (tribes.isLeader(interaction.member, tribe)) return interaction.reply({ content: 'You’re this tribe’s leader — there’s no one to release you but staff (`/tribe-admin`, or ask an admin).', flags: MessageFlags.Ephemeral });
       if (tribes.isCaptureLocked(interaction.member.id)) return interaction.reply({ content: `You were captured in a recent war — can’t leave until <t:${Math.floor(tribes.captureLockUntil(interaction.member.id) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
-      if (['admin', 'mod'].includes(opspanel.memberTier(interaction.member))) {
+      if (['admin', 'mod'].includes(opspanel.tierOf(interaction))) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const r = await releaseTribeMember(interaction.guild, tribe, interaction.member, `Staff instant-leave by ${interaction.user.tag}`);
         return interaction.editReply(r.ok ? `🚪 Left **${tribe.shortName || tribe.name}**. You can be accepted into a new tribe whenever you like.` : 'Couldn’t remove the role. Check my role position.');
@@ -7807,14 +7812,14 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(await buildTribePanelView(interaction, interaction.values[0]));
   }
   if (interaction.isButton?.() && interaction.customId === 'tp_tally_start') {
-    if (!(opspanel.memberTier(interaction.member) || contest.isEventOrganizer(interaction.member))) return interaction.reply({ content: 'Only staff or an Event Organizer can start a live tally.', flags: MessageFlags.Ephemeral });
+    if (!(opspanel.tierOf(interaction) || contest.isEventOrganizer(interaction.member))) return interaction.reply({ content: 'Only staff or an Event Organizer can start a live tally.', flags: MessageFlags.Ephemeral });
     await interaction.deferUpdate();
     const r = await startTally(interaction.guild, interaction.user.id);
     if (!r.ok) return interaction.editReply({ content: `Couldn't start it: ${r.error}`, components: [] });
     return interaction.editReply(await buildTribePanelView(interaction));
   }
   if (interaction.isButton?.() && interaction.customId === 'tp_tally_end') {
-    if (!(opspanel.memberTier(interaction.member) || contest.isEventOrganizer(interaction.member))) return interaction.reply({ content: 'Only staff or an Event Organizer can end the live tally.', flags: MessageFlags.Ephemeral });
+    if (!(opspanel.tierOf(interaction) || contest.isEventOrganizer(interaction.member))) return interaction.reply({ content: 'Only staff or an Event Organizer can end the live tally.', flags: MessageFlags.Ephemeral });
     await interaction.deferUpdate();
     const r = await endTally(interaction.guild);
     if (!r.ok) return interaction.editReply({ content: r.error, components: [] });
@@ -9041,11 +9046,11 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'panel') {
     try {
       // Event organizers who aren't staff get the EVENT dashboard instead of the mod-only ops panel.
-      if (features.enabled('contest') && !opspanel.memberTier(interaction.member) && !isTrialMod(interaction)
+      if (features.enabled('contest') && !opspanel.tierOf(interaction) && !isTrialMod(interaction)
           && interaction.member?.roles?.cache?.has('1529976148706984110'))
         return await contest.openEventPanel(interaction);
       // Trial mods (not mod+) get the read-only view; mod+ get the full interactive panel.
-      if (!opspanel.memberTier(interaction.member) && isTrialMod(interaction)) return await opspanel.openReadOnly(interaction);
+      if (!opspanel.tierOf(interaction) && isTrialMod(interaction)) return await opspanel.openReadOnly(interaction);
       return await opspanel.openPersonalPanel(interaction);
     } catch (e) { console.error(`[fops] /panel ${e.message}`); return interaction.reply({ content: 'Could not open the panel.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
@@ -9084,7 +9089,7 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'contest') {
     // Organizers (Event Organizer role holds ManageEvents), staff (mod+), and admins may manage contests.
     const canManage = interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageEvents)
-      || opspanel.memberTier(interaction.member)
+      || opspanel.tierOf(interaction)
       || interaction.member?.roles?.cache?.has('1529976148706984110');
     if (!canManage) return interaction.reply({ content: 'Only organizers or staff can manage contests.', flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
@@ -9755,7 +9760,7 @@ client.on('interactionCreate', async (interaction) => {
     // Organizer (ManageEvents / Event Organizer role) or staff. Fuses any organizer-run event with the tribe
     // fight: place your top finishers, their tribes bank Glory + Treasury by placement (Ami's request).
     const canManage = interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageEvents)
-      || opspanel.memberTier(interaction.member) || interaction.member?.roles?.cache?.has('1529976148706984110');
+      || opspanel.tierOf(interaction) || interaction.member?.roles?.cache?.has('1529976148706984110');
     if (!canManage) return interaction.reply({ content: 'Only event organizers or staff can award event points.', flags: MessageFlags.Ephemeral });
     const AWARD = [50, 30, 10];   // Glory + Treasury to 1st / 2nd / 3rd place tribes
     const placed = [interaction.options.getMember('first'), interaction.options.getMember('second'), interaction.options.getMember('third')];
@@ -9803,7 +9808,7 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'found') {
       if (!features.enabled('memberFoundedTribe')) return interaction.reply({ content: 'Founding a tribe as a member isn’t available yet.', flags: MessageFlags.Ephemeral });
       if (!isVerifiedOrStaff(interaction)) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
-      if (opspanel.memberTier(interaction.member)) return interaction.reply({ content: 'This is a **member-led** tribe path — mods/admins/owners found tribes through `/tribe-admin`.', flags: MessageFlags.Ephemeral });
+      if (opspanel.tierOf(interaction)) return interaction.reply({ content: 'This is a **member-led** tribe path — mods/admins/owners found tribes through `/tribe-admin`.', flags: MessageFlags.Ephemeral });
       if (isTrialMod(interaction)) return interaction.reply({ content: 'Trial mods can **cosign** a member-founded tribe, but the founder has to be a regular member.', flags: MessageFlags.Ephemeral });
       if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a tribe — leave it first before founding a new one.', flags: MessageFlags.Ephemeral });
       if (tribes.getMemberFoundedTribeKey()) return interaction.reply({ content: 'There’s already a member-founded tribe (only one is allowed at a time). It has to disband before another can be founded.', flags: MessageFlags.Ephemeral });

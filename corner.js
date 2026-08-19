@@ -351,8 +351,14 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   if (byId && guild) {
     actorMember = await guild.members.fetch(byId).catch(() => null);
   }
-  const grantedPower = overridesManager.getGrantedPower(actorMember || byId, member, actorTier);
+  // Defense in depth (found 2026-08-19): a GRANT_POWER override doesn't depend on role/tier at all, so it
+  // must be checked against corner status directly here too, not just trusted from the caller's already-
+  // gated actorTier — a path that bypasses the normal tier gate (e.g. an active hit-squad member calling
+  // /corner) would otherwise still let a currently-cornered actor's grant apply.
+  const actorCurrentlyCornered = byId && !!state.getCornered(byId);
+  const grantedPower = !actorCurrentlyCornered && overridesManager.getGrantedPower(actorMember || byId, member, actorTier);
   if (grantedPower) actorTier = grantedPower;
+  else if (actorCurrentlyCornered) actorTier = null;
 
   if (member.id === guild.ownerId && !(byId && canBypassCornerTier(actorMember || byId, member, actorTier))) {
     return { ok: false, error: "you can't corner the server owner." };

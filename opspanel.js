@@ -65,11 +65,27 @@ function memberTier(member) {
   return null;
 }
 // ACTOR authority tier — who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server
-// owner < bot owner. The bot owner is supreme BY USER ID (role-independent → keeps access even role-stripped).
+// owner < bot owner. The bot owner is supreme BY USER ID (role-independent → keeps access even role-stripped,
+// and deliberately NOT gated by the cornered-check below — a bot-owner corner is either a mistake or an
+// attack, and locking the one identity with no other recovery path out of the bot's own tools entirely would
+// be worse than the alternative).
 // OWNER tier requires BOTH the OWNER role AND the Administrator permission (safeguard; see memberTier).
 // Note "admin" = the ADMINS-★ role, NOT the Administrator permission.
+//
+// Found 2026-08-19: this used to just be memberTier(interaction.member) — but memberTier() ALSO falls back to
+// a cornered member's pre-corner role snapshot (see memberTier's comment) so a jailed mod's STANDING still
+// resolves correctly when someone ELSE checks it (demoting them, displaying their tier). tierOf(interaction)
+// is different — it's ALWAYS about the person who triggered THIS interaction, i.e. "what can they actively DO
+// right now" — and every staff-gated command/button in the bot (canBan, canWLAdmin, isOwner, modClicked, the
+// dashboard's meets() gate, and ~40 direct call sites) ultimately asks this question through here. Without this
+// check, a cornered mod/admin's own tier check still passed, letting them e.g. /uncorner themselves or others
+// while jailed. The snapshot fallback is correct for memberTier() as a TARGET lookup; it must never grant the
+// cornered person THEMSELVES active authority, so gate it here instead of touching memberTier() itself.
 function tierOf(interaction) {
   if (isBotOwner(interaction)) return 'botowner';
+  try {
+    if (D && D.state && D.state.getCornered(interaction.user.id)) return null;
+  } catch { /* fall through to the normal tier check */ }
   return memberTier(interaction.member);   // owner requires OWNER role AND Admin perm (in memberTier); no perm-alone shortcut
 }
 
