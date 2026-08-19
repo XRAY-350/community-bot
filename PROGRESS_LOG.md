@@ -4,13 +4,15 @@
 **Deploy model:** this checkout (on box `mc25`) is source only. The bots run on `bots-vm`
 (Tailscale `100.123.250.73`, GCP project `discord-bots-504720` — a DIFFERENT project from this
 box). Deploy = `scp` the changed file(s) to `~/bots/community-bot/` on bots-vm, `node --check`
-there, `sudo systemctl restart community-bot melanin-bot`, then grep the restart logs for
+there, `sudo systemctl restart fubu-bot melanin-bot`, then grep the restart logs for
 `registered` and no `error`/`fatal`. There is no git-on-box workflow for the bots themselves.
 
-**One codebase, two deployments:** `community-bot` (systemd unit) = FUBU, `melanin-bot` = Melanin.
-Same code, separate `.env`/state dirs (`/var/lib/fubu-bot` vs `/var/lib/melanin-bot`). Always
-restart both, always check both restart logs — a change that's fine for FUBU can still break
-Melanin if a feature/config differs (e.g. `smartWatch` is on for FUBU, off for Melanin).
+**One codebase, two deployments:** `fubu-bot` (systemd unit, renamed from `community-bot`
+2026-08-19 — the old generic name was a leftover from before Melanin was consolidated onto this
+same codebase) = FUBU, `melanin-bot` = Melanin. Same code, separate `.env`/state dirs
+(`/var/lib/fubu-bot` vs `/var/lib/melanin-bot`). Always restart both, always check both restart
+logs — a change that's fine for FUBU can still break Melanin if a feature/config differs (e.g.
+`smartWatch` is on for FUBU, off for Melanin).
 
 **Cornering strips roles, not staff identity.** A cornered mod/admin's LIVE roles are stripped —
 `opspanel.memberTier()` now falls back to the pre-corner role snapshot when someone is currently
@@ -27,6 +29,32 @@ itself was explicitly declined ("don't flip yet") and has not happened since.
 fine — this rule is about copy real members read.
 
 ---
+
+## 2026-08-19 16:11 — Renamed the FUBU systemd service from community-bot to fubu-bot
+
+Owner clarified the repo/package naming history (FUBU was the original codebase, deliberately
+renamed to `community-bot` when Melanin was consolidated onto it "instead of making code changes
+twice" — not an accident) — [[project-fubu-renamed-to-community-bot]] memory saved. Then asked to
+rename the systemd service itself to match `melanin-bot`'s naming, since `community-bot.service`
+running only FUBU (Melanin has always been its own separate unit) was confusing on its face.
+
+Checked for anything else depending on the unit name before touching it: no crontab entries, no
+systemd timers, no scripts under `/home/Administrator` referencing `community-bot.service`. Only
+this repo's own docs (this file's pinned block, now updated) mentioned it.
+
+On bots-vm: wrote `/etc/systemd/system/fubu-bot.service` (identical to the old unit — same
+`WorkingDirectory=/home/Administrator/bots/community-bot`, same `.community_env`, only the
+`Description=` and filename changed), `daemon-reload`, `enable fubu-bot`, `stop`+`disable`
+`community-bot`, `start fubu-bot`. Confirmed clean restart (`registered 54/69 commands`, no
+errors), then deleted the old `/etc/systemd/system/community-bot.service` unit file and
+`daemon-reload`d again. `melanin-bot` was untouched throughout, confirmed still active/enabled
+after. The **repo directory itself stays named `community-bot`** (that's the codebase name, still
+accurate — one shared codebase, two bot deployments) — only the FUBU-side systemd unit changed.
+
+Also archived (not deleted) the orphaned `XRAY-350/melanin-bot` GitHub repo — a pre-consolidation
+standalone Melanin codebase, created 2026-08-05, frozen since 2026-08-06T14:59:15Z (the moment
+consolidation happened), confirmed nothing on bots-vm or in CI references it. Archived rather than
+deleted per owner's choice, keeping the pre-consolidation history around read-only.
 
 ## 2026-08-18 18:43 — Age-gated channels actually require Verified now (took 3 iterations)
 
