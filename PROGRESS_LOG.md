@@ -587,3 +587,26 @@ intentionally has no panel page.
 Deployed to both bots (`node --check` local + remote clean, `sudo systemctl restart fubu-bot
 melanin-bot`, journalctl confirms `corner-status` in both bots' registered command lists, no
 errors). Committed `c84b3ae`, pushed to origin/main.
+
+## 2026-08-19 21:48 — Dashboard also referenced dead commands (owner: "it references disabled commands")
+
+Follow-up to the /corner-status gap above. Owner flagged that the reference also names commands
+that no longer exist. Checked both the pinned command reference and the live Anon Tools page
+against features.js's REGISTRY and found: `/cornered` was folded into the panel's own Corner page
+a while back (features.js comment confirms), and `/confess`/`/report`/`/modmail`/`/suggest` were
+all converted to `/dashboard` buttons (`commands: []` in their REGISTRY entries) — none of the
+four still exist as slash commands, only `/whistleblow` does. Both `commandRefEmbed()` and
+`buildAnonTools()` still described all of them as live slash-typed commands, which would have sent
+a mod typing a command Discord doesn't have. Reworded every reference to point at `/dashboard`
+buttons or the Corner page instead, and added a `/dashboard` line to the reference's "Other"
+section for completeness.
+
+Also found and committed a separate loose end: `config.js`'s `welcomeChannelId`/`goodbyeChannelId`
+(native welcome/goodbye, deployed and confirmed working earlier this session) had never actually
+made it into a commit — confirmed still live on bots-vm via ssh grep, then committed as a
+now-it's-committed-not-a-new-deploy fix.
+
+Deployed opspanel.js changes to both bots (`node --check` clean local+remote, clean restart,
+`corner-status` still registered on both, melanin-bot's pre-existing "no dashboard channel set"
+log line is unrelated — melanin never had /panel's channel configured). Commits `13da055`
+(opspanel fixes) and `60ade06` (config.js catch-up), both pushed to origin/main.
