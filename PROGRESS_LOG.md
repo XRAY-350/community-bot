@@ -343,3 +343,58 @@ lowercase instead of the small-caps style every other channel on the server uses
 channel (staff+ tier, mirroring `mod call` staying mod+-only) never actually got created during the
 restructure — created `📞┆sᴛᴀꜰꜰ ᴄᴀʟʟ` in the Staff category with the same access group as
 staff-discussions (Mods, Admins, Trial Mods, Mini-Mods, Event Organizer can connect/speak).
+
+## 2026-08-19 17:46 — Cornered-staff security fix: acting authority now suspended while jailed
+
+Owner: "because cornered mod is still considered a mod they can free themselves and others while
+cornered potentially." Confirmed real, then scoped as "every staff gated command as well as
+buttons" — the standing item from the earlier recap.
+
+Traced the mechanism precisely rather than guessing at a fix: `opspanel.memberTier(member)` falls
+back to a cornered member's pre-corner role snapshot (deliberate, 2026-08-18: "a mod should always
+be considered whatever their level is even in the corner unless demoted through the bot" — needed
+so demote-mod/-admin still work on a jailed target, and so tier displays stay accurate). The bug was
+never memberTier() itself — it's that NOTHING separately checked whether the ACTOR running a
+command was themselves currently cornered, so the same snapshot that correctly preserves a jailed
+mod's STANDING (for others checking them) also incorrectly preserved their ACTIVE AUTHORITY to act.
+
+Found the actual choke point instead of patching call sites individually: `opspanel.tierOf(interaction)`
+is architecturally ALWAYS about the interaction's own invoking user, never a target (targets are
+always checked via `memberTier(someOtherMember)` directly) — and it's the single function behind
+`canBan`, `canWLAdmin`, `isOwner`, `modClicked`, the dashboard's `meets()` gate (captured once at
+the top of `handlePanel`), and ~37 direct `opspanel.tierOf(interaction)` call sites in index.js.
+One change there — return `null` if `state.getCornered(interaction.user.id)` before ever reaching
+`memberTier()`'s snapshot fallback — closes essentially the entire class in one edit. `memberTier()`
+itself is untouched, since it's still correct for target lookups. Bot owner is deliberately exempted
+(checked first, before the corner check) — a bot-owner corner is either a mistake or an attack, and
+locking out the one identity with no other recovery path would be worse than the alternative.
+
+Two adjacent gaps that `tierOf` alone would NOT have closed, found by tracing every consumer rather
+than stopping at the first fix:
+- `effectiveTierOf()` (index.js, the GRANT_POWER override wrapper used by /corner's tier checks)
+  calls `overridesManager.getGrantedPower()`, which matches an actor's override entry independent
+  of tier/corner status entirely — a cornered actor holding a standing GRANT_POWER override (e.g.
+  knylvr's owner-level grant) would still get it. Fixed: `effectiveTierOf` now checks
+  `state.getCornered()` directly BEFORE consulting the override, since a null rawTier alone can't
+  distinguish "cornered" from "legitimately not staff but holds a grant" (the latter must still work).
+- `corner.js`'s own `corner()` function has a SECOND, independent `getGrantedPower()` call — a
+  defense-in-depth gap for any path that reaches `corner()` without going through the normal outer
+  gate (e.g. an active hit-squad member calling `/corner`). Fixed at the source: checks
+  `state.getCornered(byId)` directly rather than trusting the caller's already-gated `actorTier`.
+
+Also swept and found 13 more call sites using `opspanel.memberTier(interaction.member)` DIRECTLY
+(bypassing `tierOf` entirely) via `grep -v interaction.member` to separate actor-checks from
+legitimate target-checks: tribe leave/prestige staff-shortcut checks, `/panel`'s dashboard-vs-
+event-panel routing, `/contest` management authorization. All switched to `opspanel.tierOf(interaction)`
+— lower severity than corner/uncorner (tribe mechanics, not moderation), but the identical bug class.
+Verified via `grep -v` that every remaining `opspanel.memberTier(` call in index.js is a genuine
+target lookup (passing a fetched member, not `interaction.member`), not a missed actor-check.
+
+Flagged, not fixed (out of scope for this pass, tracked in SLATE.md): `messageReactionAdd`'s live-
+tally point authorization has the same vulnerable pattern but is a reaction event with no
+`interaction` object and only grants contest points, not a moderation action. The Mini-Mod "Send to
+corner" context-menu path still uses the older `miniModCanActOn` channel-scoped check, never
+touched by this fix.
+
+Deployed to both `fubu-bot` and `melanin-bot`, clean restart confirmed (both registered their full
+command lists, no errors). Files: `index.js`, `opspanel.js`, `corner.js`. Commit `9cb6526`, pushed.
