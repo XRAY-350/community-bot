@@ -645,125 +645,125 @@ async function buildPage(page) {
 }
 
 // --- lifecycle --------------------------------------------------------------------------------------
-// Static staff command reference — the "what every command does" list, moved off the Overview page into
-// its own pinned message so the live panel stays lean as the toolkit grows. Includes the tier breakdown
-// (who can do what). Staff-only by virtue of living in the mod-only #mod-dashboard channel.
-function commandRefEmbed() {
-  return new EmbedBuilder().setColor(0x2b2d31).setTitle('📖 FUBU Ops · Staff Command Reference')
-    .setDescription('Everything the staff toolkit can do. The **live dashboard** (status + point-and-click actions) is the other pinned message in this channel.')
-    .addFields(
-      { name: '🛡️ Moderation', value:
-        `\`/corner @member [${copy.corner.unitsDot}]\`: time-out: strips roles + locks them to the corner (blank = until released)\n` +
-        '`/uncorner @member [time]`: release now, or schedule a release later\n' +
-        '(who’s cornered + a release button is now the ⛓️ Corner page, not a separate command)\n' +
-        '`/corner-status @member [also] <joke|real>`: fix a mis-flagged corner (staff-on-staff auto-flags joke; mods+ only, marking joke needs solo-release authority)\n' +
-        '`/strike view·add·remove·clear @member`: raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
-      { name: '👁️ Watchlist & safety', value:
-        '`/watchlist add·remove·list @member`: put/lift the **Watchlist** role (their messages get flagged to mods)\n' +
-        '`/watchlist-terms add·remove·list`: edit flagged words · scopes: **strict** / **loose** / **welfare**\n' +
-        '`/watchlist-suggest [hours]`: scan recent chat and recommend new flagged terms\n' +
-        '**Right-click a message → “Report to watchlist”**: file a deletion-proof report\n' +
-        '`/unban <user-id> [watchlist]`: unban by ID (admin); can re-flag them if they rejoin' },
-      { name: '🔒 Anonymous tools & Send-to-corner', value:
-        'Confess/Report/Modmail/Suggest are **buttons on `/dashboard`** now, not their own slash commands · `/whistleblow` is the one that’s still its own command\n' +
-        '**Right-click a message → “Report”**: same as the Report button, from context\n' +
-        '**Right-click a message → “Send to corner”**: jail the author + copy that message into the corner\n' +
-        '**Right-click a message → “Strike”**: strike the author for that message (auto-replies on it)\n' +
-        '_Who-can-reveal, limits + live counts are on the **🔒 Anon Tools** page._' },
-      { name: '🧰 Other', value:
-        '`/verify @member` · `/pending`: verify members / flip through the ones waiting\n' +
-        '`/panel`: open this dashboard privately (only you see it)\n' +
-        '`/dashboard`: the member-facing hub (status, server info, and the Confess/Report/Modmail/Suggest buttons)\n' +
-        '_Also: watch-log reports carry **⚠️ Strike / 🗑️ Dismiss** buttons, and the 🛡️ Moderation page lets you pick a member from a dropdown and act with no typing._' },
-      { name: '👥 Staff & mod-team', value:
-        '`/staff`: how many of each tier we have (unique, deduped by highest)\n' +
-        '`/promote-trial @member`: open a promotion vote in mod-announcements (mods vote 👍/👎, **owner** confirms → adds Mod, drops Trial)\n' +
-        '`/demote-trial @member`: remove someone’s **Trial Mod** role (**owner**)\n' +
-        '_Trial mods can **verify** + **corner** (rule + reason, ≤1h) + a read-only `/panel`; ban/strike/watchlist unlock at full Mod._' },
-      { name: '👥 Who can do what', value:
-        '**🟢 Mods (MODS-✰)**: day-to-day: corner, strike, watchlist, verify, and all the review/anon tools.\n' +
-        '**🔵 Admins (ADMINS-★)**: everything mods can, **plus** ban/unban, running the bot on-demand, and helper settings.\n' +
-        '**🟣 Owner**: everything, **plus** removal policy (⚠️ Danger page), mod-application decisions, and feature toggles.' })
-    .setFooter({ text: '🔒 = needs a higher role. This is the reference; use the dashboard to actually do things.' });
+// Static staff command reference. Owner wanted: (1) the plain MESSAGE first, embed SECOND — reversed
+// from the original embed-first layout — and (2) both grouped by COMMAND, not by paragraph-per-category.
+// commandRefText() is the quick index (one line per command, still clustered under category headers for
+// scanability, but one command per line). commandRefDetailEmbeds() is the full argument-by-argument
+// breakdown, one embed field per command (title = command name, value = its args) so every command is
+// its own distinct unit there too, not prose sharing a field with its neighbors.
+function commandRefText() {
+  return '## 📖 FUBU Ops · Staff Command Reference\n' +
+    'Quick index — full argument detail is the embed below. The live dashboard is pinned further down.\n\n' +
+    '**🛡️ Moderation**\n' +
+    `\`/corner @member [${copy.corner.unitsDot}]\` — time-out: strips roles + jails them (blank = until released)\n` +
+    '`/uncorner @member [time]` — release now, or schedule a release later (who’s cornered: ⛓️ Corner page)\n' +
+    '`/corner-status @member <joke|real> [also]` — fix a mis-flagged corner (mods+, not Trial Mods)\n' +
+    '`/strike view·add·remove·clear @member` — raise/lower strikes (weighted; ban offered at 10 units)\n' +
+    '`/stats @member` — corner/strike record over a period\n\n' +
+    '**👁️ Watchlist & safety**\n' +
+    '`/watchlist add·remove·list @member` — put/lift the Watchlist role\n' +
+    '`/watchlist-terms add·remove·list` — edit flagged words · strict / loose / welfare\n' +
+    '`/watchlist-suggest [hours]` — scan recent chat, recommend new terms\n' +
+    'Right-click → **“Report to watchlist”** — file a deletion-proof report\n' +
+    '`/unban <user-id> [watchlist]` — unban by ID; can re-flag on rejoin\n\n' +
+    '**🔒 Anonymous tools & Send-to-corner**\n' +
+    'Confess / Report / Modmail / Suggest — buttons on `/dashboard`, not their own commands\n' +
+    '`/whistleblow` — DM a problem straight to the top, sealed from snooping\n' +
+    'Right-click → **“Send to corner”** — jail the author + copy the message in\n' +
+    'Right-click → **“Strike”** — strike the author for that message\n' +
+    '_Reveal rules, limits, counts: 🔒 Anon Tools page._\n\n' +
+    '**🧰 Other**\n' +
+    '`/verify @member` · `/pending` — verify members / flip through the waiting queue\n' +
+    '`/panel` — open this dashboard privately (only you see it)\n' +
+    '`/dashboard` — member hub: status, server info, anon-tool buttons\n\n' +
+    '**👥 Staff & mod-team**\n' +
+    '`/staff` — tier counts + rosters\n' +
+    '`/promote-trial` · `/promote-mod` @member — open a promotion vote\n' +
+    '`/demote-trial` · `/demote-mod` @member — remove a role (owner)\n\n' +
+    '**👥 Who can do what**\n' +
+    '🟢 Mods: corner, strike, watchlist, verify, anon/review tools\n' +
+    '🔵 Admins: + ban/unban, run-now, helper settings\n' +
+    '🟣 Owner: + removal policy, mod-app decisions, feature toggles';
 }
 
-// Per-argument detail — plain messages, not embeds: embed field values cap at 1024 chars and this needs
-// room to actually explain every option. Two chunks so each stays under Discord's 2000-char message cap.
-function commandRefDetailTexts() {
-  return [
-    '**📖 Command Arguments — 🛡️ Moderation**\n\n' +
-    '`/corner`\n' +
-    '• `user` (required) — member to corner\n' +
-    '• `duration` (optional) — e.g. `30m`/`2h`/`3d`; blank = until released\n' +
-    '• `rule` (optional) — pick a server rule they broke\n' +
-    '• `reason` (optional) — custom reason instead of a rule\n' +
-    '• `adult` (optional) — send to the 18+ Adult Corner\n' +
-    '• `thread` (optional) — jail to a private thread\n' +
-    '• `anon` (optional) — hide your name, announce as Anonymous Staff\n' +
-    '• `also` (optional) — corner more members too: @mentions or IDs, space-separated (same duration/reason)\n' +
-    '• `sweep` (optional) — also corner everyone non-staff who posted in this channel in the last N minutes\n\n' +
-    '`/uncorner`\n' +
-    '• `user` (required) — member to release\n' +
-    '• `duration` (optional) — schedule the release later instead of now\n' +
-    '• `also` (optional) — release more members too, same shape as `/corner`\'s `also`\n\n' +
-    '`/corner-status`\n' +
-    '• `user` (required) — member currently cornered\n' +
-    '• `status` (required) — `joke` (waives the release tier lock) or `real` (normal tier lock applies)\n' +
-    '• `also` (optional) — change more members too, same shape as `/corner`\'s `also`\n\n' +
-    '`/strike view`\n' +
-    '• `user` (required) — whose units + history to show\n\n' +
-    '`/strike add`\n' +
-    '• `user` (required)\n' +
-    '• `rule` (optional) — pick a rule (rule, reason, or both)\n' +
-    '• `reason` (optional) — free text (rule, reason, or both)\n' +
-    '• `weight` (optional) — 1 minor / 2 moderate / 3 severe; omit to use the rule\'s default\n' +
-    '• `timeout` (optional) — native Discord timeout e.g. `30m`/`2h`, adds bonus units (capped +2)\n' +
-    '• `corner` (optional) — also corner them for this long, e.g. `30m`\n\n' +
-    '`/strike remove`\n' +
-    '• `user` (required)\n' +
-    '• `strike_id` (required) — autocomplete picks from their active strikes\n\n' +
-    '`/strike clear`\n' +
-    '• `user` (required) — wipes ALL their active strikes\n\n' +
-    '`/stats`\n' +
-    '• `user` (required)\n' +
-    '• `period` (optional) — 7d / 30d / 90d / all, default 30d\n' +
-    '• `visibility` (optional) — private (default, only you) or public',
-
-    '**📖 Command Arguments — 👁️ Watchlist & safety**\n\n' +
-    '`/watchlist add` / `/watchlist remove`\n' +
-    '• `user` (required)\n\n' +
-    '`/watchlist list` — no arguments\n\n' +
-    '`/watchlist-terms add`\n' +
-    '• `term` (required) — word or phrase to flag\n' +
-    '• `scope` (optional) — strict (watchlist ban alerts) / loose (day-to-day watch-log) / welfare (support check-ins); default strict\n\n' +
-    '`/watchlist-terms remove`\n' +
-    '• `term` (required)\n' +
-    '• `scope` (optional) — same 3 choices, default strict\n\n' +
-    '`/watchlist-terms list`\n' +
-    '• `scope` (optional) — same 3 choices, default all\n\n' +
-    '`/watchlist-suggest`\n' +
-    '• `hours` (optional) — how far back to scan, default 6, max 24\n\n' +
-    '`/unban`\n' +
-    '• `user_id` (required) — banned user\'s ID; autocomplete searches by name too\n' +
-    '• `watchlist` (optional) — re-flag them on rejoin\n' +
-    '• `reason` (optional) — audit-log reason\n\n' +
-    '**📖 Command Arguments — 🔒 Anonymous tools**\n\n' +
-    'Confess / Report / Modmail / Suggest are `/dashboard` buttons, not slash commands — no arguments to document here, the button opens a modal.\n\n' +
-    '`/whistleblow`\n' +
-    '• `to` (required) — head admin only / server owner only / both / anonymous (no one can unmask)\n' +
-    '• `text` (required) — the problem, up to 1500 chars\n\n' +
-    '**📖 Command Arguments — 🧰 Other**\n\n' +
-    '`/verify`\n' +
-    '• `user` (required) — member to verify\n\n' +
-    '`/pending`, `/panel`, `/dashboard` — no arguments\n\n' +
-    '**📖 Command Arguments — 👥 Staff & mod-team**\n\n' +
-    '`/staff` — no arguments\n\n' +
-    '`/promote-trial` / `/promote-mod`\n' +
-    '• `member` (required) — autocomplete; opens a mod-vote thread\n\n' +
-    '`/demote-trial` / `/demote-mod`\n' +
-    '• `member` (required) — autocomplete\n' +
-    '• `reason` (optional) — internal note, not shown to the member',
+function commandRefDetailEmbeds() {
+  const cmds = [
+    { name: '/corner', lines: [
+      'user (required) — member to corner',
+      `duration (optional) — e.g. 30m/2h/3d; blank = until released`,
+      'rule (optional) — pick a server rule they broke',
+      'reason (optional) — custom reason instead of a rule',
+      'adult (optional) — send to the 18+ Adult Corner',
+      'thread (optional) — jail to a private thread',
+      'anon (optional) — hide your name, announce as Anonymous Staff',
+      'also (optional) — corner more members too: @mentions or IDs, space-separated (same duration/reason)',
+      'sweep (optional) — also corner non-staff who posted here in the last N minutes',
+    ] },
+    { name: '/uncorner', lines: [
+      'user (required) — member to release',
+      'duration (optional) — schedule the release later instead of now',
+      'also (optional) — release more members too, same shape as /corner\'s also',
+    ] },
+    { name: '/corner-status', lines: [
+      'user (required) — member currently cornered',
+      'status (required) — joke (waives the release tier lock) or real (normal tier lock applies)',
+      'also (optional) — change more members too, same shape as /corner\'s also',
+    ] },
+    { name: '/strike', lines: [
+      'view: user (required) — units + history',
+      'add: user (required) · rule (optional) · reason (optional) — pick a rule, a reason, or both',
+      'add: weight (optional) — 1 minor / 2 moderate / 3 severe, omit to use the rule\'s default',
+      'add: timeout (optional) — native Discord timeout e.g. 30m/2h, adds bonus units (capped +2)',
+      'add: corner (optional) — also corner them for this long, e.g. 30m',
+      'remove: user (required) · strike_id (required, autocomplete)',
+      'clear: user (required) — wipes ALL their active strikes',
+    ] },
+    { name: '/stats', lines: [
+      'user (required)',
+      'period (optional) — 7d / 30d / 90d / all, default 30d',
+      'visibility (optional) — private (default, only you) or public',
+    ] },
+    { name: '/watchlist', lines: [
+      'add / remove: user (required)',
+      'list: no arguments',
+    ] },
+    { name: '/watchlist-terms', lines: [
+      'add: term (required) · scope (optional, default strict)',
+      'remove: term (required) · scope (optional, default strict)',
+      'list: scope (optional, default all)',
+      'scopes — strict: watchlist ban alerts · loose: day-to-day watch-log · welfare: support check-ins',
+    ] },
+    { name: '/watchlist-suggest', lines: [
+      'hours (optional) — how far back to scan, default 6, max 24',
+    ] },
+    { name: '/unban', lines: [
+      'user_id (required) — banned user\'s ID; autocomplete searches by name too',
+      'watchlist (optional) — re-flag them on rejoin',
+      'reason (optional) — audit-log reason',
+    ] },
+    { name: '/whistleblow', lines: [
+      'to (required) — head admin only / server owner only / both / anonymous (no one can unmask)',
+      'text (required) — the problem, up to 1500 chars',
+    ] },
+    { name: '/verify', lines: ['user (required) — member to verify'] },
+    { name: '/pending · /panel · /dashboard', lines: ['no arguments'] },
+    { name: '/staff', lines: ['no arguments'] },
+    { name: '/promote-trial · /promote-mod', lines: ['member (required, autocomplete) — opens a mod-vote thread'] },
+    { name: '/demote-trial · /demote-mod', lines: [
+      'member (required, autocomplete)',
+      'reason (optional) — internal note, not shown to the member',
+    ] },
   ];
+  const note = 'Confess / Report / Modmail / Suggest are /dashboard buttons, not slash commands — no arguments to document, the button opens a modal.';
+  const embeds = [];
+  let embed = new EmbedBuilder().setColor(0x2b2d31).setTitle('📖 Command Arguments — full detail, one field per command')
+    .setDescription(note);
+  for (const c of cmds) {
+    if (embed.data.fields && embed.data.fields.length >= 24) { embeds.push(embed); embed = new EmbedBuilder().setColor(0x2b2d31); }
+    embed.addFields({ name: c.name, value: c.lines.map(l => `• ${l}`).join('\n') });
+  }
+  embeds.push(embed);
+  return embeds;
 }
 
 async function ensureCommandRef(client, channelId) {
@@ -773,42 +773,48 @@ async function ensureCommandRef(client, channelId) {
     if (!chId) return console.error('[fops] no dashboard channel for command reference');
     const ch = await client.channels.fetch(chId).catch(() => null);
     if (!ch) return console.error('[fops] command-ref channel not found');
+    const sameChannel = ref.channelId === chId;
 
-    let msgId = ref.messageId;
-    if (ref.channelId === chId && ref.messageId) {
-      const msg = await ch.messages.fetch(ref.messageId).catch(() => null);
-      if (msg) { await msg.edit({ embeds: [commandRefEmbed()] }); if (!msg.pinned) await msg.pin().catch(() => {}); }
+    // 1) The quick-index MESSAGE, posted/edited first so it lands above the detail embed below it.
+    let msgId = sameChannel ? ref.messageId : null;
+    if (msgId) {
+      const msg = await ch.messages.fetch(msgId).catch(() => null);
+      if (msg) { await msg.edit({ content: commandRefText(), embeds: [] }); if (!msg.pinned) await msg.pin().catch(() => {}); }
       else msgId = null;
-    } else msgId = null;
+    }
     if (!msgId) {
-      const msg = await ch.send({ embeds: [commandRefEmbed()] });
+      const msg = await ch.send({ content: commandRefText() });
       await msg.pin().catch(() => {});
       msgId = msg.id;
-      console.log(`[fops] command reference created + pinned ${msg.id} in ${chId}`);
+      console.log(`[fops] command reference (index) created + pinned ${msg.id} in ${chId}`);
     }
 
-    // Full per-argument breakdown lives in its own plain messages right below the index embed — an
-    // embed field caps at 1024 chars, nowhere near enough room to explain every option on every command.
-    const texts = commandRefDetailTexts();
-    const detailIds = Array.isArray(ref.detailMessageIds) && ref.channelId === chId ? ref.detailMessageIds.slice() : [];
-    for (let i = 0; i < texts.length; i++) {
-      const existingId = detailIds[i];
-      const existing = existingId ? await ch.messages.fetch(existingId).catch(() => null) : null;
-      if (existing) { await existing.edit({ content: texts[i], embeds: [] }); if (!existing.pinned) await existing.pin().catch(() => {}); detailIds[i] = existing.id; }
-      else {
-        const msg = await ch.send({ content: texts[i] });
-        await msg.pin().catch(() => {});
-        detailIds[i] = msg.id;
+    // 2) The full per-argument detail EMBED(s), posted/edited second so it lands below the index message
+    // and above the live dashboard panel. Grouped one field per command, not shared paragraphs.
+    const embeds = commandRefDetailEmbeds();
+    let detailId = sameChannel ? ref.detailMessageId : null;
+    if (detailId) {
+      const msg = await ch.messages.fetch(detailId).catch(() => null);
+      if (msg) { await msg.edit({ content: '', embeds }); if (!msg.pinned) await msg.pin().catch(() => {}); }
+      else detailId = null;
+    }
+    if (!detailId) {
+      const msg = await ch.send({ embeds });
+      await msg.pin().catch(() => {});
+      detailId = msg.id;
+      console.log(`[fops] command reference (detail) created + pinned ${msg.id} in ${chId}`);
+    }
+
+    // Cleanup: an older deploy's leftover multi-message detail chunks (pre-embed layout).
+    if (sameChannel && Array.isArray(ref.detailMessageIds)) {
+      for (const id of ref.detailMessageIds) {
+        if (id === detailId) continue;
+        const stale = await ch.messages.fetch(id).catch(() => null);
+        if (stale) await stale.delete().catch(() => {});
       }
     }
-    // A prior deploy's leftover extra detail message (texts array shrank) — unpin/delete anything beyond.
-    for (let i = texts.length; i < detailIds.length; i++) {
-      const stale = await ch.messages.fetch(detailIds[i]).catch(() => null);
-      if (stale) await stale.delete().catch(() => {});
-    }
-    detailIds.length = texts.length;
 
-    fs.writeFileSync(GUIDE_REF_FILE, JSON.stringify({ channelId: chId, messageId: msgId, detailMessageIds: detailIds }));
+    fs.writeFileSync(GUIDE_REF_FILE, JSON.stringify({ channelId: chId, messageId: msgId, detailMessageId: detailId }));
   } catch (e) { console.error('[fops] ensureCommandRef:', e.message); }
 }
 
