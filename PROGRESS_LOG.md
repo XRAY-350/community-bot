@@ -455,3 +455,12 @@ confirming which one `opspanel.MOD_ROLE_ID`/`ADMIN_ROLE_ID` actually points to a
 empty duplicates should be deleted.
 
 Commit `9cb13ef`, pushed. Deploy verified clean on both bots.
+
+## 2026-08-19 18:35 — Deleted the duplicate MODS/ADMINS roles
+
+Owner: "you can delete the dupes. i made those" — confirmed self-made, not a bot-created accident
+like application-archive. Verified which pair was live before deleting: `opspanel.js`'s
+`ADMIN_ROLE_ID` default (`1516179051105226833`, 2 members) and `.community_env`'s `MOD_ROLE_ID`
+(`1528316361665675316`, 3 members) matched the non-empty roles. Deleted the two 0-member duplicates
+(`1539396298363510916` "ADMINS - ★", `1539396384036364328` "MODS - ✰"), double-checked member
+count was 0 immediately before each delete.
