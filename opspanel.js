@@ -391,7 +391,8 @@ function buildSetup() {
     new ButtonBuilder().setCustomId('fops_setup:whistleblow').setEmoji('🕊️').setLabel('Whistleblow').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_setup:dashboard').setEmoji('🤖').setLabel('Member hub').setStyle(ButtonStyle.Secondary));
   const row3 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('fops_setup:eventorg').setEmoji('🎪').setLabel('Event Organizer apps').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId('fops_setup:eventorg').setEmoji('🎪').setLabel('Event Organizer apps').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:adultcorner').setEmoji('🔞').setLabel('Adult Corner').setStyle(ButtonStyle.Secondary));
   return { content: '## 🧩 FUBU Ops · Setup', embeds: [embed], components: [row1, row2, row3, navRow(pageIdx('Setup'))] };
 }
 

@@ -4046,6 +4046,23 @@ async function runPanelSetup(interaction, kind, channelId) {
         const { forum, apps } = await eventorgapps.setup(g, config);
         return interaction.editReply(`✅ Event Organizer applications ready: review forum <#${forum.id}> + applicant threads in <#${apps.id}>. Members apply with \`/apply-event-organizer\`.`);
       }
+      case 'adultcorner': {
+        if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, ...eph });
+        await interaction.deferReply(eph);
+        let ch = config.adultCornerChannelId ? await g.channels.fetch(config.adultCornerChannelId).catch(() => null) : null;
+        let created = false;
+        if (!ch) {
+          ch = await g.channels.create({
+            name: '🔞┆ᴀᴅᴜʟᴛ-ᴄᴏʀɴᴇʀ',
+            type: ChannelType.GuildText,
+            reason: 'Setup 18+ Adult Corner channel'
+          });
+          config.adultCornerChannelId = ch.id;
+          created = true;
+        }
+        await corner.ensureCornerPerms(g);
+        return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} Adult Corner <#${ch.id}>.`);
+      }
       case 'dashboard': {
         if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can post the hub panel.', ...eph });
         await interaction.deferReply(eph);
@@ -4315,6 +4332,8 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('rule').setDescription('Which rule did they break? (optional)').setRequired(false)
           .addChoices(...SERVER_RULES.map((r, i) => ({ name: `${i + 1}. ${r}`, value: String(i + 1) }))))
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
+        .addBooleanOption(o => o.setName('adult').setDescription('Send to the 18+ Adult Corner for adult chat offenses?').setRequired(false))
+        .addBooleanOption(o => o.setName('thread').setDescription('Imprison to a private jail thread?').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
         .setDefaultMemberPermissions(cornerVis),   // always visible; the handler enforces staff/trial/member restrictions (and tells a member plainly if 'memberCorner' is off)
@@ -10524,8 +10543,10 @@ client.on('interactionCreate', async (interaction) => {
       // followup publicly, which is why the joke-check-in prompt below was visible/clickable to everyone
       // instead of just the actor. The public in-channel ack (when not run in the corner channel) is now
       // sent as its own plain channel message instead, so it's unaffected by this.
+      const isAdult = interaction.options.getBoolean('adult') || false;
+      const isThread = interaction.options.getBoolean('thread') || false;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction));
+      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread });
       if (!r.ok) {
         if (r.error === 'gated') {
           const actorTier = opspanel.tierOf(interaction);
@@ -10541,7 +10562,7 @@ client.on('interactionCreate', async (interaction) => {
       const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
       // Announce in the corner channel so the cornered member sees it there.
       try {
-        const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
+        const cornerCh = await guild.channels.fetch(r.targetChannelId || config.cornerChannelId).catch(() => null);
         if (cornerCh) await cornerCh.send(cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id));
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
