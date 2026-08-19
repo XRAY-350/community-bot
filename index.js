@@ -4351,12 +4351,14 @@ client.once('ready', async () => {
   verify.register(client, state, getVerifyChannel);
   sweep.register(client, state, { getVerifyChannel, getAlertChannel, getWarnChannel, getConflictChannel });
 
-  // Ops dashboard: create/refresh the pinned tier-gated panel in the mod-only dashboard channel
-  // (channel id persisted in the panel ref file). Light 5-min refresh keeps counts current.
-  opspanel.ensurePanel(client).catch(err => console.error('[fops] init:', err.message));
-  // Static staff command reference — its own pinned message at the top of #mod-dashboard (kept off the
-  // Overview page so the live panel stays lean as the toolkit grows).
-  opspanel.ensureCommandRef(client).catch(err => console.error('[fops] cmdref init:', err.message));
+  // Static staff command reference — its own pinned messages at the top of #mod-dashboard (kept off the
+  // Overview page so the live panel stays lean as the toolkit grows). Created BEFORE the panel below so
+  // it lands earlier in the channel history / above the live dashboard, per owner request 2026-08-19.
+  opspanel.ensureCommandRef(client).then(() =>
+    // Ops dashboard: create/refresh the pinned tier-gated panel in the mod-only dashboard channel
+    // (channel id persisted in the panel ref file). Light 5-min refresh keeps counts current.
+    opspanel.ensurePanel(client).catch(err => console.error('[fops] init:', err.message))
+  ).catch(err => console.error('[fops] cmdref init:', err.message));
   // Every 60s: refresh the shared panel's live counts AND run the idle auto-return (so an abandoned
   // page snaps back to Overview within ~90–150s). The private /panel isn't affected.
   setInterval(() => opspanel.refreshPanel(client).catch(() => {}), 60 * 1000);
