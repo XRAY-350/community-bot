@@ -154,9 +154,11 @@ function canBypassTier(actorMember, targetMember, actorTier = null) {
   const targetId = typeof targetMember === 'string' ? targetMember : targetMember?.id;
   return list.some(o => {
     if (o.type !== 'BYPASS_TIER') return false;
-    if (!matchEntity(o.targetType, o.targetId, targetMember || targetId)) return false;
-    if (o.actorId === '*') return !!actorTier;
-    return matchEntity(o.actorType, o.actorId, actorMember || actorId);
+    const tType = o.targetType || 'user';
+    const aType = o.actorType || 'user';
+    if (!matchEntity(tType, o.targetId, targetMember || targetId)) return false;
+    if (o.actorId === '*') return true;
+    return matchEntity(aType, o.actorId, actorMember || actorId);
   });
 }
 
