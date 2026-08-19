@@ -253,17 +253,17 @@ function buildAnonTools() {
   let sugOpen = 0;
   try { const s = JSON.parse(fs.readFileSync(statePath('suggestions_state.json'), 'utf8')); sugOpen = Object.values(s.posts || {}).filter(p => p.status === 'open').length; } catch {}
   const embed = new EmbedBuilder().setColor(0x9b59b6).setDescription(
-    'The anonymous **reporting + feedback** system. Members run these in any chat channel; the mod-side actions (reveal / delete / unseal / approve) live **on the posts themselves**, not here.')
+    'The anonymous **reporting + feedback** system. Confess/Report/Modmail/Suggest are **buttons on `/dashboard`**; `/whistleblow` is still its own slash command. The mod-side actions (reveal / delete / unseal / approve) live **on the posts themselves**, not here.')
     .addFields(
       { name: '📈 Totals so far', value: `🤫 Confessions **${conf}** · 🚩 Reports **${rep}** · 📨 Modmail **${mm}** · 🕊️ Whistleblows **${wb}** · 💡 Suggestions **${sug}** (**${sugOpen}** open)` },
-      { name: '🤫 /confess', value: 'Anonymous in **#confessions**; real author + **🗑 Delete** in **#confession-log**. Every mod sees the author.' },
-      { name: '🚩 /report · right-click → Apps → Report', value: 'Lands in **#anon-reports**. Reporter hidden; **admins** hit **🔍 Reveal reporter** (with cause · logged).' },
-      { name: '📨 /modmail', value: 'Lands in **#mod-inbox**. Only **owners** can **🔍 Reveal sender**.' },
+      { name: '🤫 Confess (dashboard button)', value: 'Anonymous in **#confessions**; real author + **🗑 Delete** in **#confession-log**. Every mod sees the author.' },
+      { name: '🚩 Report (dashboard button · right-click → Apps → Report)', value: 'Lands in **#anon-reports**. Reporter hidden; **admins** hit **🔍 Reveal reporter** (with cause · logged).' },
+      { name: '📨 Modmail (dashboard button)', value: 'Lands in **#mod-inbox**. Only **owners** can **🔍 Reveal sender**.' },
       { name: '🕊️ /whistleblow', value: 'DMed to who the sender picked (head-admin / owner / both / anonymous). Sealed → **🔓 Unseal** by the entrusted person only (logged). "No one" = never unmaskable.' },
-      { name: '💡 /suggest', value: 'Forum post with ⬆/⬇ votes; staff **✅ Approve** / **❌ Deny** → auto-archives. Not anonymous.' },
+      { name: '💡 Suggest (dashboard button)', value: 'Forum post with ⬆/⬇ votes; staff **✅ Approve** / **❌ Deny** → auto-archives. Not anonymous.' },
       { name: '🔑 Who can reveal', value: 'confessions = all mods · reports = admins · modmail = owners · whistleblow = only who the sender chose. Reveal only with cause.' },
       { name: '⏱️ Limits / member', value: 'confess 3m · 20/day · suggest 10m · 3 open · report+modmail 30m · 6/day · whistleblow 60m · 4/day' })
-    .setFooter({ text: 'Members use these in any chat channel.' }).setTimestamp(new Date());
+    .setFooter({ text: 'Members reach these via /dashboard (Confess/Report/Modmail/Suggest) or /whistleblow.' }).setTimestamp(new Date());
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_refresh').setEmoji('🔄').setLabel('Refresh').setStyle(ButtonStyle.Secondary));
   return { content: '## 🔒 FUBU Ops · Anon Tools', embeds: [embed], components: [row, navRow(pageIdx('Anon Tools'))] };
@@ -655,7 +655,7 @@ function commandRefEmbed() {
       { name: '🛡️ Moderation', value:
         `\`/corner @member [${copy.corner.unitsDot}]\`: time-out: strips roles + locks them to the corner (blank = until released)\n` +
         '`/uncorner @member [time]`: release now, or schedule a release later\n' +
-        '`/cornered`: list who’s in the corner, each with a release button\n' +
+        '(who’s cornered + a release button is now the ⛓️ Corner page, not a separate command)\n' +
         '`/corner-status @member [also] <joke|real>`: fix a mis-flagged corner (staff-on-staff auto-flags joke; mods+ only, marking joke needs solo-release authority)\n' +
         '`/strike view·add·remove·clear @member`: raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
       { name: '👁️ Watchlist & safety', value:
@@ -665,13 +665,15 @@ function commandRefEmbed() {
         '**Right-click a message → “Report to watchlist”**: file a deletion-proof report\n' +
         '`/unban <user-id> [watchlist]`: unban by ID (admin); can re-flag them if they rejoin' },
       { name: '🔒 Anonymous tools & Send-to-corner', value:
-        '`/confess` `/report` `/modmail` `/whistleblow` `/suggest`: anonymous reporting + feedback (members can use them in any chat channel)\n' +
+        'Confess/Report/Modmail/Suggest are **buttons on `/dashboard`** now, not their own slash commands · `/whistleblow` is the one that’s still its own command\n' +
+        '**Right-click a message → “Report”**: same as the Report button, from context\n' +
         '**Right-click a message → “Send to corner”**: jail the author + copy that message into the corner\n' +
         '**Right-click a message → “Strike”**: strike the author for that message (auto-replies on it)\n' +
         '_Who-can-reveal, limits + live counts are on the **🔒 Anon Tools** page._' },
       { name: '🧰 Other', value:
         '`/verify @member` · `/pending`: verify members / flip through the ones waiting\n' +
         '`/panel`: open this dashboard privately (only you see it)\n' +
+        '`/dashboard`: the member-facing hub (status, server info, and the Confess/Report/Modmail/Suggest buttons)\n' +
         '_Also: watch-log reports carry **⚠️ Strike / 🗑️ Dismiss** buttons, and the 🛡️ Moderation page lets you pick a member from a dropdown and act with no typing._' },
       { name: '👥 Staff & mod-team', value:
         '`/staff`: how many of each tier we have (unique, deduped by highest)\n' +
