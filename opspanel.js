@@ -748,13 +748,19 @@ async function handlePanel(interaction) {
   // follow-up modal (customId carries the uid); everything else executes straight away.
   if (id === 'fops_pick_corner') {
     const uid = interaction.values[0];
-    return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner: duration',
-      [{ id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` }]));
+    return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner member',
+      [
+        { id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` },
+        { id: 'options', label: 'Options: type "thread", "adult", or "both"', placeholder: 'blank = standard corner' }
+      ]));
   }
   if (id === 'fops_pick_cornermulti') {
     _cornerMultiStash.set(interaction.user.id, { ids: interaction.values, at: Date.now() });
-    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s): duration`,
-      [{ id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` }]));
+    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s)`,
+      [
+        { id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` },
+        { id: 'options', label: 'Options: type "thread", "adult", or "both"', placeholder: 'blank = standard corner' }
+      ]));
   }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
@@ -995,7 +1001,6 @@ async function handlePanel(interaction) {
       const uid = id.split(':')[1];
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
       if (!member) return interaction.editReply(copy.common.noMemberInServer);
-      // Same tier hierarchy as every other corner entry point — this dashboard modal had no check at all.
       const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
       const targetTier = memberTier(member);
       if ((RANK[targetTier] || 0) > (RANK[tier] || 0))
@@ -1003,7 +1008,10 @@ async function handlePanel(interaction) {
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
       if (dur && !ms) return interaction.editReply(copy.corner.badDuration);
-      const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id, null, tier);
+      let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch {}
+      const isAdult = optsStr.includes('adult');
+      const isThread = optsStr.includes('thread');
+      const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id, null, tier, { adult: isAdult, thread: isThread });
       if (!r.ok) {
         if (r.error === 'gated') {
           return interaction.editReply(r.need
@@ -1012,7 +1020,7 @@ async function handlePanel(interaction) {
         }
         return interaction.editReply(`Failed: ${r.error}`);
       }
-      if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null);
+      if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null, r.threadId, r.targetChannelId);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'}, stripped ${r.stripped} role(s).`);
       return refreshPanel(interaction.client);
     }
@@ -1026,7 +1034,10 @@ async function handlePanel(interaction) {
       const members = [];
       for (const uid of stash.ids) { const m = await interaction.guild.members.fetch(uid).catch(() => null); if (m) members.push(m); }
       const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[tierOf(interaction)] || 0;
-      const { done, skipped } = await D.cornerMany(interaction.guild, interaction.user.id, actorRank, members, ms, {});
+      let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch {}
+      const isAdult = optsStr.includes('adult');
+      const isThread = optsStr.includes('thread');
+      const { done, skipped } = await D.cornerMany(interaction.guild, interaction.user.id, actorRank, members, ms, { adult: isAdult, thread: isThread });
       const lines = [];
       if (done.length) lines.push(`⛓️ Cornered **${done.length}**${dur ? ` for ${dur}` : ' indefinitely'}: ${done.map(x => `<@${x}>`).join(', ')}`);
       if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);

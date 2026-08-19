@@ -3673,11 +3673,10 @@ async function addRoleEffective(member, roleId, reason) {
 // ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
-async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null } = {}) {
+async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false } = {}) {
   const done = [], skipped = [], jokes = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
-  const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
   for (const member of members) {
     if (!member || seen.has(member.id)) continue;
     seen.add(member.id);
@@ -3685,9 +3684,6 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     if (member.user?.bot) { skipped.push(`<@${member.id}> (bot)`); continue; }
     if (member.id === guild.ownerId) { skipped.push(`<@${member.id}> (owner)`); continue; }
     const targetTier = opspanel.memberTier(member);
-    // Auto-sweep never touches staff (owner ruling 2026-08-01). But an EXPLICITLY NAMED target (allowNamedStaff,
-    // i.e. via `also`) may be staff — the mod chose them on purpose — subject to the same tier rule as everywhere
-    // else: you can corner your own tier or lower, never someone above you.
     if (allowNamedStaff) {
       const targetRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[targetTier] || 0;
       if (targetRank > actorRank) { skipped.push(`<@${member.id}> (${targetTier}, higher tier)`); continue; }
@@ -3695,9 +3691,19 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
-    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier);
-    if (r.ok) { done.push(member.id); if (r.joke) jokes.push(member.id); if (cornerCh) await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId)).catch(() => {}); }
-    else skipped.push(`<@${member.id}> (${r.error})`);
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread });
+    if (r.ok) {
+      done.push(member.id);
+      if (r.joke) jokes.push(member.id);
+      const chId = r.targetChannelId || config.cornerChannelId;
+      const cornerCh = await guild.channels.fetch(chId).catch(() => null);
+      const sentMsg = cornerSentMessage(member.id, whenPhrase, reasonText, actorId);
+      if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
+      if (r.threadId) {
+        const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
+        if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+      }
+    } else skipped.push(`<@${member.id}> (${r.error})`);
   }
   if (done.length) await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
     desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
