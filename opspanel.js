@@ -645,71 +645,44 @@ async function buildPage(page) {
 }
 
 // --- lifecycle --------------------------------------------------------------------------------------
-// Static staff command reference. Owner wanted: (1) the plain MESSAGE first, embed SECOND — reversed
-// from the original embed-first layout — and (2) both grouped by COMMAND, not by paragraph-per-category.
-// commandRefText() is the quick index (one line per command, still clustered under category headers for
-// scanability, but one command per line). commandRefDetailEmbeds() is the full argument-by-argument
-// breakdown, one embed field per command (title = command name, value = its args) so every command is
-// its own distinct unit there too, not prose sharing a field with its neighbors.
-function commandRefText() {
-  return '## 📖 FUBU Ops · Staff Command Reference\n' +
-    'Quick index — full argument detail is the embed below. The live dashboard is pinned further down.\n\n' +
-    '**🛡️ Moderation**\n' +
-    `\`/corner @member [${copy.corner.unitsDot}]\` — time-out: strips roles + jails them (blank = until released)\n` +
-    '`/uncorner @member [time]` — release now, or schedule a release later (who’s cornered: ⛓️ Corner page)\n' +
-    '`/corner-status @member <joke|real> [also]` — fix a mis-flagged corner (mods+, not Trial Mods)\n' +
-    '`/strike view·add·remove·clear @member` — raise/lower strikes (weighted; ban offered at 10 units)\n' +
-    '`/stats @member` — corner/strike record over a period\n\n' +
-    '**👁️ Watchlist & safety**\n' +
-    '`/watchlist add·remove·list @member` — put/lift the Watchlist role\n' +
-    '`/watchlist-terms add·remove·list` — edit flagged words · strict / loose / welfare\n' +
-    '`/watchlist-suggest [hours]` — scan recent chat, recommend new terms\n' +
-    'Right-click → **“Report to watchlist”** — file a deletion-proof report\n' +
-    '`/unban <user-id> [watchlist]` — unban by ID; can re-flag on rejoin\n\n' +
-    '**🔒 Anonymous tools & Send-to-corner**\n' +
-    'Confess / Report / Modmail / Suggest — buttons on `/dashboard`, not their own commands\n' +
-    '`/whistleblow` — DM a problem straight to the top, sealed from snooping\n' +
-    'Right-click → **“Send to corner”** — jail the author + copy the message in\n' +
-    'Right-click → **“Strike”** — strike the author for that message\n' +
-    '_Reveal rules, limits, counts: 🔒 Anon Tools page._\n\n' +
-    '**🧰 Other**\n' +
-    '`/verify @member` · `/pending` — verify members / flip through the waiting queue\n' +
-    '`/panel` — open this dashboard privately (only you see it)\n' +
-    '`/dashboard` — member hub: status, server info, anon-tool buttons\n\n' +
-    '**👥 Staff & mod-team**\n' +
-    '`/staff` — tier counts + rosters\n' +
-    '`/promote-trial` · `/promote-mod` @member — open a promotion vote\n' +
-    '`/demote-trial` · `/demote-mod` @member — remove a role (owner)\n\n' +
-    '**👥 Who can do what**\n' +
-    '🟢 Mods: corner, strike, watchlist, verify, anon/review tools\n' +
-    '🔵 Admins: + ban/unban, run-now, helper settings\n' +
-    '🟣 Owner: + removal policy, mod-app decisions, feature toggles';
-}
+// Static staff command reference. Owner wanted each command's MESSAGE (quick one-liner) and EMBED (full
+// argument detail) paired together as one unit, interleaved per command — not one giant index message
+// followed by one giant detail embed. Discord renders a message's text content above its attached embed
+// within the same message bubble, so "message then embed, grouped by command" = one Discord message per
+// command with both content + embeds set, sent in order, category headers folded into the first command's
+// content in that category. commandRefEntries() returns that flat ordered list.
+function commandRefEntries() {
+  const entry = (cat, name, oneLiner, lines) => {
+    const content = (cat ? `**${cat}**\n` : '') + oneLiner;
+    const embed = lines ? new EmbedBuilder().setColor(0x2b2d31).setTitle(name).setDescription(lines.map(l => `• ${l}`).join('\n')) : null;
+    return { content, embed };
+  };
+  return [
+    entry(null, null, '## 📖 FUBU Ops · Staff Command Reference\nEach command below: what it does, then its full argument detail. The live dashboard is pinned further down.', null),
 
-function commandRefDetailEmbeds() {
-  const cmds = [
-    { name: '/corner', lines: [
-      'user (required) — member to corner',
-      `duration (optional) — e.g. 30m/2h/3d; blank = until released`,
-      'rule (optional) — pick a server rule they broke',
-      'reason (optional) — custom reason instead of a rule',
-      'adult (optional) — send to the 18+ Adult Corner',
-      'thread (optional) — jail to a private thread',
-      'anon (optional) — hide your name, announce as Anonymous Staff',
-      'also (optional) — corner more members too: @mentions or IDs, space-separated (same duration/reason)',
-      'sweep (optional) — also corner non-staff who posted here in the last N minutes',
-    ] },
-    { name: '/uncorner', lines: [
+    entry('🛡️ Moderation', '/corner',
+      `\`/corner @member [${copy.corner.unitsDot}]\` — time-out: strips roles + jails them (blank = until released)`, [
+        'user (required) — member to corner',
+        'duration (optional) — e.g. 30m/2h/3d; blank = until released',
+        'rule (optional) — pick a server rule they broke',
+        'reason (optional) — custom reason instead of a rule',
+        'adult (optional) — send to the 18+ Adult Corner',
+        'thread (optional) — jail to a private thread',
+        'anon (optional) — hide your name, announce as Anonymous Staff',
+        'also (optional) — corner more members too: @mentions or IDs, space-separated (same duration/reason)',
+        'sweep (optional) — also corner non-staff who posted here in the last N minutes',
+      ]),
+    entry(null, '/uncorner', '`/uncorner @member [time]` — release now, or schedule a release later (who’s cornered: ⛓️ Corner page)', [
       'user (required) — member to release',
       'duration (optional) — schedule the release later instead of now',
       'also (optional) — release more members too, same shape as /corner\'s also',
-    ] },
-    { name: '/corner-status', lines: [
+    ]),
+    entry(null, '/corner-status', '`/corner-status @member <joke|real> [also]` — fix a mis-flagged corner (mods+, not Trial Mods)', [
       'user (required) — member currently cornered',
       'status (required) — joke (waives the release tier lock) or real (normal tier lock applies)',
       'also (optional) — change more members too, same shape as /corner\'s also',
-    ] },
-    { name: '/strike', lines: [
+    ]),
+    entry(null, '/strike', '`/strike view·add·remove·clear @member` — raise/lower strikes (weighted; ban offered at 10 units)', [
       'view: user (required) — units + history',
       'add: user (required) · rule (optional) · reason (optional) — pick a rule, a reason, or both',
       'add: weight (optional) — 1 minor / 2 moderate / 3 severe, omit to use the rule\'s default',
@@ -717,53 +690,56 @@ function commandRefDetailEmbeds() {
       'add: corner (optional) — also corner them for this long, e.g. 30m',
       'remove: user (required) · strike_id (required, autocomplete)',
       'clear: user (required) — wipes ALL their active strikes',
-    ] },
-    { name: '/stats', lines: [
+    ]),
+    entry(null, '/stats', '`/stats @member` — corner/strike record over a period', [
       'user (required)',
       'period (optional) — 7d / 30d / 90d / all, default 30d',
       'visibility (optional) — private (default, only you) or public',
-    ] },
-    { name: '/watchlist', lines: [
+    ]),
+
+    entry('👁️ Watchlist & safety', '/watchlist', '`/watchlist add·remove·list @member` — put/lift the Watchlist role', [
       'add / remove: user (required)',
       'list: no arguments',
-    ] },
-    { name: '/watchlist-terms', lines: [
+    ]),
+    entry(null, '/watchlist-terms', '`/watchlist-terms add·remove·list` — edit flagged words · strict / loose / welfare', [
       'add: term (required) · scope (optional, default strict)',
       'remove: term (required) · scope (optional, default strict)',
       'list: scope (optional, default all)',
       'scopes — strict: watchlist ban alerts · loose: day-to-day watch-log · welfare: support check-ins',
-    ] },
-    { name: '/watchlist-suggest', lines: [
+    ]),
+    entry(null, '/watchlist-suggest', '`/watchlist-suggest [hours]` — scan recent chat, recommend new terms', [
       'hours (optional) — how far back to scan, default 6, max 24',
-    ] },
-    { name: '/unban', lines: [
+    ]),
+    entry(null, '/unban', '`/unban <user-id> [watchlist]` — unban by ID; can re-flag on rejoin · right-click → “Report to watchlist” files a deletion-proof report', [
       'user_id (required) — banned user\'s ID; autocomplete searches by name too',
       'watchlist (optional) — re-flag them on rejoin',
       'reason (optional) — audit-log reason',
-    ] },
-    { name: '/whistleblow', lines: [
+    ]),
+
+    entry('🔒 Anonymous tools & Send-to-corner', null,
+      'Confess / Report / Modmail / Suggest — buttons on `/dashboard`, not their own commands. Right-click → **“Send to corner”** jails the author + copies the message in; **“Strike”** strikes the author. _Reveal rules, limits, counts: 🔒 Anon Tools page._', null),
+    entry(null, '/whistleblow', '`/whistleblow` — DM a problem straight to the top, sealed from snooping', [
       'to (required) — head admin only / server owner only / both / anonymous (no one can unmask)',
       'text (required) — the problem, up to 1500 chars',
-    ] },
-    { name: '/verify', lines: ['user (required) — member to verify'] },
-    { name: '/pending · /panel · /dashboard', lines: ['no arguments'] },
-    { name: '/staff', lines: ['no arguments'] },
-    { name: '/promote-trial · /promote-mod', lines: ['member (required, autocomplete) — opens a mod-vote thread'] },
-    { name: '/demote-trial · /demote-mod', lines: [
+    ]),
+
+    entry('🧰 Other', '/verify', '`/verify @member` — verify a member, no need to open the panel', [
+      'user (required) — member to verify',
+    ]),
+    entry(null, null, '`/pending` · `/panel` · `/dashboard` — browse the verify queue · open your private panel · the member hub. No arguments.', null),
+
+    entry('👥 Staff & mod-team', null, '`/staff` — tier counts + rosters. No arguments.', null),
+    entry(null, '/promote-trial · /promote-mod', '`/promote-trial` · `/promote-mod` @member — open a promotion vote', [
+      'member (required, autocomplete) — opens a mod-vote thread',
+    ]),
+    entry(null, '/demote-trial · /demote-mod', '`/demote-trial` · `/demote-mod` @member — remove a role (owner)', [
       'member (required, autocomplete)',
       'reason (optional) — internal note, not shown to the member',
-    ] },
+    ]),
+
+    entry('👥 Who can do what', null,
+      '🟢 Mods: corner, strike, watchlist, verify, anon/review tools\n🔵 Admins: + ban/unban, run-now, helper settings\n🟣 Owner: + removal policy, mod-app decisions, feature toggles', null),
   ];
-  const note = 'Confess / Report / Modmail / Suggest are /dashboard buttons, not slash commands — no arguments to document, the button opens a modal.';
-  const embeds = [];
-  let embed = new EmbedBuilder().setColor(0x2b2d31).setTitle('📖 Command Arguments — full detail, one field per command')
-    .setDescription(note);
-  for (const c of cmds) {
-    if (embed.data.fields && embed.data.fields.length >= 24) { embeds.push(embed); embed = new EmbedBuilder().setColor(0x2b2d31); }
-    embed.addFields({ name: c.name, value: c.lines.map(l => `• ${l}`).join('\n') });
-  }
-  embeds.push(embed);
-  return embeds;
 }
 
 async function ensureCommandRef(client, channelId) {
@@ -775,46 +751,34 @@ async function ensureCommandRef(client, channelId) {
     if (!ch) return console.error('[fops] command-ref channel not found');
     const sameChannel = ref.channelId === chId;
 
-    // 1) The quick-index MESSAGE, posted/edited first so it lands above the detail embed below it.
-    let msgId = sameChannel ? ref.messageId : null;
-    if (msgId) {
-      const msg = await ch.messages.fetch(msgId).catch(() => null);
-      if (msg) { await msg.edit({ content: commandRefText(), embeds: [] }); if (!msg.pinned) await msg.pin().catch(() => {}); }
-      else msgId = null;
-    }
-    if (!msgId) {
-      const msg = await ch.send({ content: commandRefText() });
-      await msg.pin().catch(() => {});
-      msgId = msg.id;
-      console.log(`[fops] command reference (index) created + pinned ${msg.id} in ${chId}`);
-    }
-
-    // 2) The full per-argument detail EMBED(s), posted/edited second so it lands below the index message
-    // and above the live dashboard panel. Grouped one field per command, not shared paragraphs.
-    const embeds = commandRefDetailEmbeds();
-    let detailId = sameChannel ? ref.detailMessageId : null;
-    if (detailId) {
-      const msg = await ch.messages.fetch(detailId).catch(() => null);
-      if (msg) { await msg.edit({ content: '', embeds }); if (!msg.pinned) await msg.pin().catch(() => {}); }
-      else detailId = null;
-    }
-    if (!detailId) {
-      const msg = await ch.send({ embeds });
-      await msg.pin().catch(() => {});
-      detailId = msg.id;
-      console.log(`[fops] command reference (detail) created + pinned ${msg.id} in ${chId}`);
-    }
-
-    // Cleanup: an older deploy's leftover multi-message detail chunks (pre-embed layout).
-    if (sameChannel && Array.isArray(ref.detailMessageIds)) {
-      for (const id of ref.detailMessageIds) {
-        if (id === detailId) continue;
-        const stale = await ch.messages.fetch(id).catch(() => null);
-        if (stale) await stale.delete().catch(() => {});
+    const entries = commandRefEntries();
+    const ids = sameChannel && Array.isArray(ref.messageIds) ? ref.messageIds.slice() : [];
+    for (let i = 0; i < entries.length; i++) {
+      const { content, embed } = entries[i];
+      const payload = { content, embeds: embed ? [embed] : [] };
+      const existingId = ids[i];
+      const existing = existingId ? await ch.messages.fetch(existingId).catch(() => null) : null;
+      if (existing) { await existing.edit(payload); if (!existing.pinned) await existing.pin().catch(() => {}); ids[i] = existing.id; }
+      else {
+        const msg = await ch.send(payload);
+        await msg.pin().catch(() => {});
+        ids[i] = msg.id;
       }
     }
+    // Cleanup: any leftover message from a shorter/older layout (fewer entries, or the old
+    // messageId/detailMessageId/detailMessageIds single-or-pair layouts).
+    const stale = new Set();
+    for (const id of ids.slice(entries.length)) stale.add(id);
+    if (sameChannel) {
+      if (ref.messageId && !ids.includes(ref.messageId)) stale.add(ref.messageId);
+      if (ref.detailMessageId && !ids.includes(ref.detailMessageId)) stale.add(ref.detailMessageId);
+      if (Array.isArray(ref.detailMessageIds)) for (const id of ref.detailMessageIds) if (!ids.includes(id)) stale.add(id);
+    }
+    for (const id of stale) { const m = await ch.messages.fetch(id).catch(() => null); if (m) await m.delete().catch(() => {}); }
+    ids.length = entries.length;
 
-    fs.writeFileSync(GUIDE_REF_FILE, JSON.stringify({ channelId: chId, messageId: msgId, detailMessageId: detailId }));
+    console.log(`[fops] command reference: ${entries.length} entries synced in ${chId}`);
+    fs.writeFileSync(GUIDE_REF_FILE, JSON.stringify({ channelId: chId, messageIds: ids }));
   } catch (e) { console.error('[fops] ensureCommandRef:', e.message); }
 }
 
