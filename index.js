@@ -9620,15 +9620,24 @@ client.on('interactionCreate', async (interaction) => {
     const trialId = modapps.loadConfig().trialModRoleId;
     const eventOrgId = eventorgapps.ORGANIZER_ROLE_ID;
     const langs = langmods.languages();
+    const configuredMiniModIds = new Set(langs.map(l => langmods.roleForLang(l)).filter(Boolean));
+    // Mini-Mod isn't only language-scoped (owner, 2026-08-19: "mini mod is not just per language") — the
+    // config keys off whatever scope was set up (LGBTQ is one, alongside e.g. French), so `langs` here just
+    // means "every configured Mini-Mod entry," not literal languages. Separately: some Mini-Mod ROLES exist
+    // in the server with no langmods.json entry yet (not wired to any channel, so not functionally active) —
+    // list those too, so it's visible they exist and aren't configured, rather than silently invisible.
+    const allRoles = await interaction.guild.roles.fetch();
+    const unconfiguredMiniModRoles = [...allRoles.values()].filter(r => r && /mini-?mod/i.test(r.name) && !configuredMiniModIds.has(r.id));
     // Counted by HIGHEST tier so nobody is double-counted (higher tiers absorb the lower). memberTier
-    // returns owner→admin→mod (the bot's canonical tier); Trial Mod, Event Organizer, and each language's
-    // Mini-Mod are all "below mod" auxiliary roles — checked independently (not mutually exclusive with
-    // each other, since a member can genuinely hold more than one at once) and only for people below mod,
-    // same as Trial Mod already worked. These three share the same restricted /corner+/uncorner tier as
-    // of this session (owner, 2026-08-19: "generalize all 3 to trial mod level") — the census should list
-    // all of them, not just Trial Mod.
-    const byTier = { owner: [], admin: [], mod: [], trial: [], eventOrg: [], miniMod: {} };
+    // returns owner→admin→mod (the bot's canonical tier); Trial Mod, Event Organizer, and each Mini-Mod
+    // are all "below mod" auxiliary roles — checked independently (not mutually exclusive with each other,
+    // since a member can genuinely hold more than one at once) and only for people below mod, same as
+    // Trial Mod already worked. These three share the same restricted /corner+/uncorner tier as of this
+    // session (owner, 2026-08-19: "generalize all 3 to trial mod level") — the census should list all of
+    // them, not just Trial Mod.
+    const byTier = { owner: [], admin: [], mod: [], trial: [], eventOrg: [], miniMod: {}, unconfiguredMiniMod: {} };
     for (const lang of langs) byTier.miniMod[lang] = [];
+    for (const r of unconfiguredMiniModRoles) byTier.unconfiguredMiniMod[r.id] = [];
     let humans = 0;
     for (const m of members.values()) {
       if (m.user.bot) continue;
@@ -9644,10 +9653,15 @@ client.on('interactionCreate', async (interaction) => {
           const rid = langmods.roleForLang(lang);
           if (rid && m.roles.cache.has(rid)) byTier.miniMod[lang].push(m);
         }
+        for (const r of unconfiguredMiniModRoles) {
+          if (m.roles.cache.has(r.id)) byTier.unconfiguredMiniMod[r.id].push(m);
+        }
       }
     }
     const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
     const eventOrg = byTier.eventOrg.length;
+    // Unconfigured Mini-Mod roles grant no actual authority (not wired to langmods.json), so they're shown
+    // separately below but deliberately excluded from this total — holding one shouldn't count as "staff".
     const miniModTotal = langs.reduce((sum, lang) => sum + byTier.miniMod[lang].length, 0);
     // MEMBER NAMES are plain text (display name), NOT @mentions: Discord's mobile client resolves a member
     // mention only from its OWN cache, so uncached members render "@unknown-user" (owner: "only shows who I'm
@@ -9667,7 +9681,11 @@ client.on('interactionCreate', async (interaction) => {
       + block(opspanel.MOD_ROLE_ID, '⚒️', 'Mod', byTier.mod)
       + block(trialId, '🌱', 'Trial Mod', byTier.trial)
       + block(eventOrgId, '🎪', 'Event Organizer', byTier.eventOrg)
-      + langs.map(lang => block(langmods.roleForLang(lang), '🌐', `${lang} Mini-Mod`, byTier.miniMod[lang])).join('');
+      + langs.map(lang => block(langmods.roleForLang(lang), '🌐', `${lang} Mini-Mod`, byTier.miniMod[lang])).join('')
+      + (unconfiguredMiniModRoles.length
+        ? `\n\n-# ⚠️ Mini-Mod role(s) that exist but aren't wired to any channel yet — holding one grants nothing until configured via /mod-applications:`
+          + unconfiguredMiniModRoles.map(r => block(r.id, '⚠️', `${r.name} (unconfigured)`, byTier.unconfiguredMiniMod[r.id])).join('')
+        : '');
     // Split by line into ≤1900-char messages (Discord's 2000 content cap).
     const chunks = []; let cur = '';
     for (const ln of out.split('\n')) { if (cur.length + ln.length + 1 > 1900) { chunks.push(cur); cur = ''; } cur += (cur ? '\n' : '') + ln; }
