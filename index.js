@@ -16,6 +16,7 @@ const reactresolve = require('./reactresolve');
 const corner = require('./corner');
 const { buildVerifyPanel, handleVerifyButton, isVerifyButton } = require('./verifypanel');
 const { activeThreads } = require('./threads');
+const { ensureMembers } = require('./memberCache');
 const opspanel = require('./opspanel');
 const overridesManager = require('./overridesManager');
 
