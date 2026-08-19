@@ -450,7 +450,8 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   try {
     const stripSet = new Set(strip);
     const keptIds = member.roles.cache.filter(r => r.id !== guild.id && !stripSet.has(r.id)).map(r => r.id);
-    await member.roles.set([...keptIds, config.cornerRoleId], 'Sent to the corner');
+    const targetRoles = [...new Set([...keptIds, config.cornerRoleId])];
+    await member.roles.set(targetRoles, 'Sent to the corner');
   } catch (err) {
     await restoreTimeout();
     state.clearCornered(member.id); // don't leave a stale "cornered" record on a failed corner
