@@ -5011,7 +5011,10 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (tl && reaction.message.channelId === tl.scoreChannelId && reaction.emoji?.name === tally.POINT_EMOJI) {
       const rguild = reaction.message.guild;
       const reactorMember = rguild && rguild.id === config.guildId ? await rguild.members.fetch(user.id).catch(() => null) : null;
-      const authorized = reactorMember && (opspanel.memberTier(reactorMember) || contest.isEventOrganizer(reactorMember));
+      // Not an interaction, so opspanel.tierOf()'s cornered-actor check can't run here — same class of bug
+      // fixed there (2026-08-19), same fix: a cornered reactor's memberTier() snapshot still resolves to
+      // staff, so it must be checked directly rather than trusted.
+      const authorized = reactorMember && !state.getCornered(user.id) && (opspanel.memberTier(reactorMember) || contest.isEventOrganizer(reactorMember));
       if (authorized) {
         const scoredMsg = reaction.message.partial ? await reaction.message.fetch().catch(() => null) : reaction.message;
         const authorId = scoredMsg && !scoredMsg.author?.bot ? scoredMsg.author?.id : null;
@@ -5907,7 +5910,11 @@ async function syncTribeRankRoles(guild, tribeKey) {
 // language's channels (per-language roles now — French Mini-Mod acts only in French chat/VC, etc.), and
 // only when the 'langMiniMod' feature is on. Dormant if no languages are configured.
 function miniModCanActOn(interaction, channelId) {
-  return features.enabled('langMiniMod') && langmods.canActOn(interaction.member, channelId, interaction.guild);
+  // Same class of bug as opspanel.tierOf() (fixed 2026-08-19): this predates that fix and is a separate
+  // mechanism (channel-scoped, not tier-based), so it needs its own "not currently cornered" check rather
+  // than inheriting the fix — a cornered Mini-Mod's role membership doesn't get a snapshot fallback the way
+  // memberTier() does, but langmods.canActOn() also doesn't check corner status, so add it here directly.
+  return !state.getCornered(interaction.user.id) && features.enabled('langMiniMod') && langmods.canActOn(interaction.member, channelId, interaction.guild);
 }
 // Member-facing anon-pipe commands are confined to the bot-commands channel (keeps them out of chat).
 const BOT_COMMANDS_CH = process.env.FUBU_BOT_COMMANDS_CHANNEL_ID || '1528704767466016870';
@@ -9611,9 +9618,17 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const members = await ensureMembers(interaction.guild);
     const trialId = modapps.loadConfig().trialModRoleId;
+    const eventOrgId = eventorgapps.ORGANIZER_ROLE_ID;
+    const langs = langmods.languages();
     // Counted by HIGHEST tier so nobody is double-counted (higher tiers absorb the lower). memberTier
-    // returns owner→admin→mod (the bot's canonical tier); Trial Mod is only counted for people below mod.
-    const byTier = { owner: [], admin: [], mod: [], trial: [] };
+    // returns owner→admin→mod (the bot's canonical tier); Trial Mod, Event Organizer, and each language's
+    // Mini-Mod are all "below mod" auxiliary roles — checked independently (not mutually exclusive with
+    // each other, since a member can genuinely hold more than one at once) and only for people below mod,
+    // same as Trial Mod already worked. These three share the same restricted /corner+/uncorner tier as
+    // of this session (owner, 2026-08-19: "generalize all 3 to trial mod level") — the census should list
+    // all of them, not just Trial Mod.
+    const byTier = { owner: [], admin: [], mod: [], trial: [], eventOrg: [], miniMod: {} };
+    for (const lang of langs) byTier.miniMod[lang] = [];
     let humans = 0;
     for (const m of members.values()) {
       if (m.user.bot) continue;
@@ -9622,9 +9637,18 @@ client.on('interactionCreate', async (interaction) => {
       if (t === 'owner') byTier.owner.push(m);
       else if (t === 'admin') byTier.admin.push(m);
       else if (t === 'mod') byTier.mod.push(m);
-      else if (trialId && m.roles.cache.has(trialId)) byTier.trial.push(m);
+      else {
+        if (trialId && m.roles.cache.has(trialId)) byTier.trial.push(m);
+        if (eventOrgId && m.roles.cache.has(eventOrgId)) byTier.eventOrg.push(m);
+        for (const lang of langs) {
+          const rid = langmods.roleForLang(lang);
+          if (rid && m.roles.cache.has(rid)) byTier.miniMod[lang].push(m);
+        }
+      }
     }
     const owner = byTier.owner.length, admin = byTier.admin.length, mod = byTier.mod.length, trial = byTier.trial.length;
+    const eventOrg = byTier.eventOrg.length;
+    const miniModTotal = langs.reduce((sum, lang) => sum + byTier.miniMod[lang].length, 0);
     // MEMBER NAMES are plain text (display name), NOT @mentions: Discord's mobile client resolves a member
     // mention only from its OWN cache, so uncached members render "@unknown-user" (owner: "only shows who I'm
     // friends with") — content vs embed doesn't change that. displayName always renders correctly. TIER HEADERS
@@ -9637,11 +9661,13 @@ client.on('interactionCreate', async (interaction) => {
       const head = roleId ? `<@&${roleId}>: \`${arr.length}\`` : `${emoji} **${label}**: \`${arr.length}\``;
       return `\n${head}\n${arr.length ? arr.map(line).join('\n') : '-# _(none)_'}`;
     };
-    const out = `## 👥 Staff: \`${owner + admin + mod + trial}\` total\n-# of ${humans.toLocaleString()} members · counted at their highest tier\n`
+    const out = `## 👥 Staff: \`${owner + admin + mod + trial + eventOrg + miniModTotal}\` total\n-# of ${humans.toLocaleString()} members · counted at their highest tier\n`
       + block(opspanel.OWNER_DISPLAY_ROLE_ID, '👑', 'Owner', byTier.owner)
       + block(opspanel.ADMIN_ROLE_ID, '🛡️', 'Admin', byTier.admin)
       + block(opspanel.MOD_ROLE_ID, '⚒️', 'Mod', byTier.mod)
-      + block(trialId, '🌱', 'Trial Mod', byTier.trial);
+      + block(trialId, '🌱', 'Trial Mod', byTier.trial)
+      + block(eventOrgId, '🎪', 'Event Organizer', byTier.eventOrg)
+      + langs.map(lang => block(langmods.roleForLang(lang), '🌐', `${lang} Mini-Mod`, byTier.miniMod[lang])).join('');
     // Split by line into ≤1900-char messages (Discord's 2000 content cap).
     const chunks = []; let cur = '';
     for (const ln of out.split('\n')) { if (cur.length + ln.length + 1 > 1900) { chunks.push(cur); cur = ''; } cur += (cur ? '\n' : '') + ln; }
