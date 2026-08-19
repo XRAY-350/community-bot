@@ -6,7 +6,7 @@
 const fs = require('fs');
 const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
-  UserSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
+  UserSelectMenuBuilder, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
 const { ensureMembers } = require('./memberCache');
