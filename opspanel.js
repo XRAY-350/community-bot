@@ -10,6 +10,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelect
 const { MessageFlags } = require('discord.js');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
 const { ensureMembers } = require('./memberCache');
+const overridesManager = require('./overridesManager');
 
 const PANEL_FILE = process.env.FUBU_OPS_PANEL_FILE || statePath('ops_panel.json');
 // Separate pinned message: a static staff command reference (the "what every command does" list that used
