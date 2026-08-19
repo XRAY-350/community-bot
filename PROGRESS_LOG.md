@@ -714,3 +714,39 @@ chronologically before the panel, correct order. Both bots restarted clean after
 `corner-status` still registered on both.
 
 Committed `1dd8724`, pushed.
+
+## 2026-08-19 22:35 — Trial Mod / Mini-Mod / Event Organizer given #mod-dashboard access
+
+Owner (garbled voice-to-text, confirmed via AskUserQuestion): make sure Trial Mod / Mini-Mod /
+Event Organizer — the roles with /corner-tier access (`hasTrialCornerTier` in index.js) — also have
+channel access matching that tier, including the #mod-dashboard channel where this session's new
+command reference lives, and check any other channels they should have for consistency. Confirmed
+directly with the user afterward: "they don't have access to the dashboard."
+
+Audited live permission overwrites on both guilds (`audit_tier_access.js`, scratch script, run
+against FUBU and Melanin). Confirmed: on FUBU, Trial Mod (1532037321740779860), LGBTQ Mini-Mod
+(1537459452473638943, the only mini-mod role currently configured — `langmods.json` has just the
+one scope), and Event Organizer (1529976148706984110) all had **no overwrite** on #mod-dashboard
+(1531087673760944331) — they inherit @everyone's channel-level deny there, which overrides any
+category-level allow regardless of role. Also found LGBTQ Mini-Mod was missing the read-only
+staff-info channels (#staff-announcements, #staff-discussions, #staff call) that Trial Mod and
+Event Organizer already both have — a pre-existing gap surfaced by the "any other channels"
+instruction, not something this session created.
+
+Fixed via a second scratch script (`fix_tier_access.js`, `permissionOverwrites.edit()` +
+`permguard.blessChannel()` so the 20-min sweep/boot sweep doesn't silently revert it — per
+[[project_permguard_bless_after_edit]]):
+- FUBU: granted ViewChannel+ReadMessageHistory (read-only, matching the existing Punishments/
+  staff-announcements pattern — no SendMessages, this is a reference+panel channel not a chat) on
+  #mod-dashboard to all 3 roles. Also gave LGBTQ Mini-Mod the same staff-announcements (read-only,
+  explicit SendMessages deny) / staff-discussions (read+send) / staff-call (view+connect+speak)
+  access Trial Mod and Event Organizer already had, for tier parity.
+- Melanin: granted the same #mod-dashboard read-only access (1534656507503710258) to Trial Mod
+  (1534663681504444457) and Event Organizer (1534664249153028257) — no mini-mod role exists there
+  yet, so nothing to extend for that tier. Left Melanin's broader staff-info-channel gap alone
+  (Trial Mod/Event Organizer don't have staff-announcements/discussions/call there either, but
+  that's pre-existing Melanin-vs-FUBU drift outside today's ask, not touched).
+
+Re-audited after the edits to confirm effective access (all 3 FUBU roles now show
+`allow=[ViewChannel,ReadMessageHistory]` on #mod-dashboard). Both scratch scripts deleted from
+bots-vm. No code changes — this was a live Discord permission fix only.
