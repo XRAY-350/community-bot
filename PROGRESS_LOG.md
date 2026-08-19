@@ -683,3 +683,34 @@ pinned in the right order in #mod-dashboard. Both bots restarted clean, `corner-
 registered on both, melanin-bot's pre-existing unconfigured dashboard channel unaffected.
 
 Committed `4699794`, pushed.
+
+## 2026-08-19 22:28 — Reference reworked again: interleaved message+embed per command
+
+Owner: still not what they pictured, clarified via AskUserQuestion it was the layout/grouping —
+wanted each command's message+embed PAIR together (interleaved), not one big index message
+followed by one big detail embed. Realized Discord already supports this natively: a single
+message can carry both `content` (plain text) and `embeds` together, and Discord renders the text
+above the attached embed within that same message bubble — so "message then embed, per command"
+doesn't need two separate Discord messages per command, just one message with both fields set.
+
+Replaced `commandRefText()` + `commandRefDetailEmbeds()` with `commandRefEntries()` — a flat
+ordered list of 18 `{content, embed}` pairs, one per command/group (corner, uncorner,
+corner-status, strike, stats, watchlist, watchlist-terms, watchlist-suggest, unban, an
+anon-tools note, whistleblow, verify, pending/panel/dashboard, staff, promote-*, demote-*, and a
+closing "who can do what" tier note), category headers folded into the first command's content in
+that category rather than as separate divider messages. Rewrote `ensureCommandRef()` to sync all
+18 as individual pinned Discord messages (edit in place if the message exists, create+pin if not),
+tracked as a `messageIds` array in `ops_guide.json` (replacing the old single
+`messageId`/`detailMessageId`/`detailMessageIds` shapes — cleanup logic deletes any leftover
+message ID from every prior layout this session went through).
+
+Verified every entry against Discord's caps (2000-char message content, 6000-char/4096-desc embed)
+via the same extract-and-run-the-real-function technique as before. Deployed: wiped FUBU's 3
+existing pinned messages (old index message, old detail embed, dashboard panel) with a third
+one-off scratch script (`reorder_pins3.js`, deleted after use), reseeded `ops_panel.json` with just
+`channelId`, cleared `ops_guide.json`, restarted. Confirmed clean: `[fops] command reference: 18
+entries synced` then `[fops] dashboard created + pinned` right after — 18 reference messages
+chronologically before the panel, correct order. Both bots restarted clean afterward,
+`corner-status` still registered on both.
+
+Committed `1dd8724`, pushed.
