@@ -537,3 +537,17 @@ the command was missing from `features.js`'s registry — would have been silent
 registration even with a valid description. Fixed both, redeployed clean.
 
 Commit `f82bbf8`, pushed.
+
+## 2026-08-19 21:06 — /corner-status gains "also" for multi-target fixes
+
+Owner: "fix how it works in bulk corners. And also add 'also' to the corner status command for
+multi target changes." Added `also` to `/corner-status`, mirroring `/corner`'s own parsing exactly
+(same `\d{15,}` regex over @mentions or raw pasted IDs, dedup via Set) — one call now fixes several
+mis-classified targets from the same bulk corner instead of one command per person. Results bucket
+into changed/already-correct/denied/not-cornered, one summary reply, one bulk `logCorner` entry.
+
+Updated both bulk-corner "😂 Treated as joke" notes (message-context-menu path and /corner's own
+also/sweep path) to explicitly point at `/corner-status` as the fix, closing the loop between "here's
+what got auto-classified" and "here's how to correct it" in the same message.
+
+Deployed to both bots, clean restart confirmed. Commit `05b5bad`, pushed.
