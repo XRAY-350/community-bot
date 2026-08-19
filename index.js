@@ -5514,6 +5514,25 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 client.on('threadMembersUpdate', async (addedMembers, removedMembers, thread) => {
   try {
     if (!addedMembers.size) return;
+    if (thread.name && thread.name.startsWith('⛓️ Jail ·')) {
+      const targetName = thread.name.replace('⛓️ Jail · ', '').trim().toLowerCase();
+      for (const [id, tm] of addedMembers) {
+        if (id === client.user.id || id === thread.guild.ownerId) continue;
+        const member = await thread.guild.members.fetch(id).catch(() => null);
+        if (!member) continue;
+        const isStaffMember = opspanel.memberTier(member)
+          || (config.modRoleId && member.roles.cache.has(config.modRoleId))
+          || (config.adminRoleId && member.roles.cache.has(config.adminRoleId))
+          || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId));
+        if (isStaffMember) continue;
+        const username = member.user?.username?.toLowerCase() || member.displayName?.toLowerCase();
+        if (username === targetName || id === targetName) continue;
+
+        console.log(`[corner-jail] Auto-ejected non-staff member ${member.user.tag} (${id}) from jail thread "${thread.name}"`);
+        await thread.members.remove(id).catch(e => console.error('[corner-jail] eject error:', e.message));
+      }
+      return;
+    }
     const cfg = modapps.loadConfig();
     let removed = [], kind = '';
     if (cfg.forumId && thread.parentId === cfg.forumId) { removed = await modapps.enforceReviewThreadMembers(thread.guild, thread); kind = 'review thread (mod+ only)'; }
