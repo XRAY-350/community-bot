@@ -6,6 +6,7 @@
 const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
 const hitsquad = require('./hitsquad');
+const opspanel = require('./opspanel');
 const overridesManager = require('./overridesManager');
 
 // ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
@@ -45,6 +46,7 @@ function isLowering(rec, newReleaseAt) {
 // acting on an owner-applied corner specifically (owner, 2026-08-14: admins no longer need a 3-admin
 // override vote to act on an owner's corner — botowner-applied corners are unaffected, still gated).
 function canActSolo(rec, actorId, actorTier) {
+  if (rec.joke) return true;   // joke corner — release/lowering gate is waived entirely, any tier can act solo
   if (rec.by === actorId) return true;
   if (actorTier === 'admin' && (rec.appliedByRank || 0) === RANK.owner) return true;
   return (RANK[actorTier] || 0) >= (rec.appliedByRank || 0);
@@ -344,7 +346,7 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
-  const { adult = false, thread = false, anon = false } = opts || {};
+  const { forceReal = false, adult = false, thread = false, anon = false } = opts || {};
   const now = Date.now();
   // Fetch actor member if byId provided to evaluate role-based granted powers
   let actorMember = null;
@@ -365,8 +367,9 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   }
   if (byId && byId === member.id) {
     // Self-cornering is blocked by default — without this guard, staff could dodge accountability by
-    // "cornering themselves" for a token duration instead of taking a real action. Only an explicit
-    // ALLOW_SELF_CORNER override (or the standing personal exception in overridesManager) lifts it.
+    // "cornering themselves" for a token duration instead of taking a real action, or a joke-corner could
+    // be self-inflicted to game the joke/real detection below. Only an explicit ALLOW_SELF_CORNER override
+    // (or the standing personal exception in overridesManager) lifts it.
     const selfCornerAllowed = overridesManager.canSelfCorner(member);
     if (!selfCornerAllowed) return { ok: false, error: "you can't corner yourself." };
   }
@@ -435,6 +438,8 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
       await member.timeout(restoreTimeoutUntil - Date.now(), 'restoring timeout after corner').catch(e => console.error('[corner] restore timeout:', e.message));
   };
   const strip = rolesToStrip(guild, member);
+  const targetIsStaff = !!(opspanel.memberTier(member) || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId)));
+  const joke = !forceReal && !!actorTier && targetIsStaff;
 
   // Optional Thread Imprisonment & Adult Corner routing
   let threadId = null;
@@ -453,7 +458,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     }
   }
 
-  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, threadId, isAdult: !!adult, channelId: targetChannelId });
+  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke, threadId, isAdult: !!adult, channelId: targetChannelId });
   try {
     // Use .set() with the full computed role list, not sequential .remove()/.add() calls — each role
     // edit is its own API round-trip and a crash/rate-limit between them would leave the member in a
@@ -477,7 +482,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
-  return { ok: true, stripped: strip.length, repeatCount, threadId, targetChannelId };
+  return { ok: true, stripped: strip.length, repeatCount, joke, threadId, targetChannelId };
 }
 
 // Release a member: remove the corner role and restore the roles we stripped.
@@ -569,6 +574,16 @@ async function releaseExpired(guild, state) {
   return released;
 }
 
+// Flip an active corner's joke flag (the "mark as real" / "mark as joke" follow-up prompt). Returns false
+// if the member isn't currently cornered (prompt is stale — e.g. they were already released).
+function setJoke(state, userId, joke) {
+  const rec = state.getCornered(userId);
+  if (!rec) return false;
+  rec.joke = !!joke;
+  state.setCornered(userId, rec);
+  return true;
+}
+
 module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
-  setReleaseHandler, armTimer, clearTimer, rearmAll,
+  setReleaseHandler, armTimer, clearTimer, rearmAll, setJoke,
   RANK, canBypassCornerTier, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };
