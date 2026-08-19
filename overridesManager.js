@@ -16,8 +16,7 @@ const DEFAULT_OVERRIDES = [
   },
   {
     id: 'ov_knylvr_ownerpower',
-    actorType: 'user',
-    actorId: '1211024269149081620',
+    actors: [{ type: 'user', id: '1211024269149081620' }],
     targetType: '*',
     targetId: '*',
     type: 'GRANT_POWER',
@@ -26,8 +25,7 @@ const DEFAULT_OVERRIDES = [
   },
   {
     id: 'ov_approved_1',
-    actorType: 'user',
-    actorId: '1415112053823242250',
+    actors: [{ type: 'user', id: '1415112053823242250' }],
     targetType: 'user',
     targetId: '989615671178575972',
     type: 'BYPASS_TIER',
@@ -35,8 +33,7 @@ const DEFAULT_OVERRIDES = [
   },
   {
     id: 'ov_approved_2',
-    actorType: 'user',
-    actorId: '593371777569390602',
+    actors: [{ type: 'user', id: '593371777569390602' }],
     targetType: 'user',
     targetId: '989615671178575972',
     type: 'BYPASS_TIER',
@@ -44,18 +41,19 @@ const DEFAULT_OVERRIDES = [
   },
   {
     id: 'ov_owner_optin',
-    actorType: '*',
-    actorId: '*',
+    // A tier-type actor entry ("admin+ staff") instead of a wildcard actor + a separate minActorTier field
+    // — same meaning, one mechanism. owner, 2026-08-17: "change the everyone corner to only staff (mod+)",
+    // then 2026-08-18: "should be admin/owner" — a plain mod no longer qualifies.
+    actors: [{ type: 'tier', id: 'admin' }],
     targetType: 'user',
     targetId: '865843812907089940',
     type: 'BYPASS_TIER',
-    minActorTier: 'admin',   // owner, 2026-08-17: "change the everyone corner to only staff (mod+)", then
-                              // 2026-08-18: "should be admin/owner" — a plain mod no longer qualifies
     note: 'Server owner opted-in as cornerable target (admin+ only)'
   }
 ];
-// Tier rank, for minActorTier comparisons on a wildcard-actor BYPASS_TIER rule (an exact-actorId rule
-// always bypasses regardless of tier — minActorTier only matters for the '*' actor case).
+// Tier rank, for tier-type actor entries ("mod+ / admin+ / owner+ / botowner") — the general-purpose
+// version of what used to be a BYPASS_TIER-only minActorTier field (owner, 2026-08-19: "there are more
+// tiers in between" all-members and a single named actor — this is available on every rule type now).
 const TIER_RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
 
 function loadOverrides() {
@@ -89,7 +87,7 @@ function getOverrides() {
   return loadOverrides();
 }
 
-function addOverride({ actorType = 'user', actorId, actors = null, hitSquadExempt = false, targetType = 'user', targetId, type, powerTier = null, minActorTier = null, note = '', createdBy = null }) {
+function addOverride({ actorType = 'user', actorId, actors = null, hitSquadExempt = false, targetType = 'user', targetId, type, powerTier = null, note = '', createdBy = null }) {
   const list = loadOverrides();
   const id = `ov_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const t = type.toUpperCase();
@@ -99,9 +97,6 @@ function addOverride({ actorType = 'user', actorId, actors = null, hitSquadExemp
     targetId: (targetId || '*').trim(),
     type: t,
     powerTier,
-    // Only meaningful on a BYPASS_TIER rule with a wildcard ('*') actor — an exact actorId always bypasses
-    // regardless of tier, same as before.
-    minActorTier: (minActorTier || '').trim().toLowerCase() || null,
     note: note.trim(),
     createdBy,
     createdAt: Date.now()
@@ -179,16 +174,15 @@ function getOverride(id) {
   return loadOverrides().find(o => o.id === id) || null;
 }
 
-// Editable in place, without a delete+recreate: just the note and (for a wildcard-actor BYPASS_TIER rule)
-// its tier floor — both are metadata, not the actor/target/type identity that defines what a rule DOES.
-// Changing WHO a rule applies to or what it grants is a structural change, done as delete + re-add via the
-// wizard, so a mis-click can't silently repurpose a live security rule.
-function updateOverride(id, { note, minActorTier } = {}) {
+// Editable in place, without a delete+recreate: just the note — the actor/target/type identity is what
+// defines what a rule DOES, and changing WHO it applies to is a structural change, done via the actor
+// list (addRuleActor/removeRuleActor) or delete + re-add, so a mis-click can't silently repurpose a live
+// security rule.
+function updateOverride(id, { note } = {}) {
   const list = loadOverrides();
   const entry = list.find(o => o.id === id);
   if (!entry) return null;
   if (note !== undefined) entry.note = String(note).trim();
-  if (minActorTier !== undefined) entry.minActorTier = (String(minActorTier || '').trim().toLowerCase()) || null;
   entry.updatedAt = Date.now();
   saveOverrides(list);
   return entry;
@@ -202,29 +196,45 @@ function matchEntity(ruleType, ruleId, entity) {
   return userId === ruleId || roleIds.includes(ruleId);
 }
 
+// One actor-entry matcher used everywhere an actors[] list is checked. Three entry shapes:
+//  - { type: 'user'|'role', id }   — a named person or role (matchEntity, so a role entry matches by
+//    membership even when only a bare actorId string is available — no member object required).
+//  - { type: 'tier', id: 'mod'|'admin'|'owner'|'botowner' }  — anyone AT OR ABOVE that staff tier. This is
+//    the general form of what used to be BYPASS_TIER's one-off minActorTier field.
+//  - { id: '*' } (any type) — literally anyone, no floor at all.
+function matchActor(entry, actorMember, actorId, actorTier) {
+  if (entry.id === '*') return true;
+  if (entry.type === 'tier') return (TIER_RANK[actorTier] || 0) >= (TIER_RANK[entry.id] || 0);
+  return matchEntity(entry.type, entry.id, actorMember || actorId);
+}
+
 // actorMember (optional, full GuildMember) lets a role-based allowed-actor entry match — a bare actorId
 // string can only ever match a user-type entry, same class of gap fixed elsewhere this session (N1).
-function checkExclusiveProtection(targetMember, actorId, actorMember = null) {
+// actorTier lets a tier-type actor entry match (e.g. "admin+ staff can corner them, not just this list").
+function checkExclusiveProtection(targetMember, actorId, actorMember = null, actorTier = null) {
   const list = loadOverrides();
   const rules = list.filter(o => o.type === 'EXCLUSIVE_CORNERER' && matchEntity(o.targetType, o.targetId, targetMember));
   if (!rules.length) return { allowed: true };
   const hitsquad = require('./hitsquad');
   for (const rule of rules) {
     const actors = normalizeActors(rule);
-    if (actors.some(a => a.id === '*')) return { allowed: true };
-    if (actors.some(a => matchEntity(a.type, a.id, actorMember || actorId))) return { allowed: true };
+    if (actors.some(a => matchActor(a, actorMember, actorId, actorTier))) return { allowed: true };
     if (rule.hitSquadExempt && actorId && hitsquad.isSquadMember(actorId)) return { allowed: true };
   }
   return { allowed: false, requiredActors: normalizeActors(rules[0]), hitSquadExempt: rules.some(r => r.hitSquadExempt) };
 }
 
-function getGrantedPower(actorMember, targetMember = null) {
+// actorTier is the actor's OWN current tier (not a granted one) — needed to evaluate a tier-type actor
+// entry on a GRANT_POWER rule itself. Callers pass the raw tier (e.g. opspanel.tierOf), never the result
+// of this same function, to avoid a rule granting itself eligibility.
+function getGrantedPower(actorMember, targetMember = null, actorTier = null) {
   const list = loadOverrides();
   if (!actorMember) return null;
+  const actorId = typeof actorMember === 'string' ? actorMember : actorMember?.id;
   for (const o of list) {
     if (o.type !== 'GRANT_POWER') continue;
     if (!targetMember || matchEntity(o.targetType, o.targetId, targetMember)) {
-      if (normalizeActors(o).some(a => matchEntity(a.type, a.id, actorMember))) return o.powerTier || 'owner';
+      if (normalizeActors(o).some(a => matchActor(a, actorMember, actorId, actorTier))) return o.powerTier || 'owner';
     }
   }
   return null;
@@ -246,15 +256,7 @@ function canBypassTier(actorMember, targetMember, actorTier = null) {
     if (o.type !== 'BYPASS_TIER') return false;
     const tType = o.targetType || 'user';
     if (!matchEntity(tType, o.targetId, targetMember || targetId)) return false;
-    return normalizeActors(o).some(a => {
-      if (a.id === '*') {
-        // A wildcard actor may still require a minimum staff tier (e.g. the owner opt-in is admin+ only,
-        // not "any staff/any member") — named/exact-actor entries are unaffected by minActorTier.
-        if (!o.minActorTier) return true;
-        return (TIER_RANK[actorTier] || 0) >= (TIER_RANK[o.minActorTier] || 0);
-      }
-      return matchEntity(a.type, a.id, actorMember || actorId);
-    });
+    return normalizeActors(o).some(a => matchActor(a, actorMember, actorId, actorTier));
   });
 }
 

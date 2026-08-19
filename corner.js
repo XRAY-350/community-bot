@@ -351,7 +351,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   if (byId && guild) {
     actorMember = await guild.members.fetch(byId).catch(() => null);
   }
-  const grantedPower = overridesManager.getGrantedPower(actorMember || byId, member);
+  const grantedPower = overridesManager.getGrantedPower(actorMember || byId, member, actorTier);
   if (grantedPower) actorTier = grantedPower;
 
   if (member.id === guild.ownerId && !(byId && canBypassCornerTier(actorMember || byId, member, actorTier))) {
@@ -368,7 +368,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
   }
   // Dynamic Exclusive Target Protection check
-  const exclusive = overridesManager.checkExclusiveProtection(member, byId, actorMember);
+  const exclusive = overridesManager.checkExclusiveProtection(member, byId, actorMember, actorTier);
   if (!exclusive.allowed) {
     const who = (exclusive.requiredActors || []).map(a => a.type === 'role' ? `<@&${a.id}>` : `<@${a.id}>`);
     if (exclusive.hitSquadExempt) who.push('🚔 hit squad (while active)');

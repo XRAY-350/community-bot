@@ -22,8 +22,9 @@ const overridesManager = require('./overridesManager');
 
 function effectiveTierOf(interaction, targetMember = null) {
   const actor = interaction?.member || interaction?.user?.id;
-  const granted = overridesManager.getGrantedPower(actor, targetMember);
-  return granted || opspanel.tierOf(interaction);
+  const rawTier = opspanel.tierOf(interaction);
+  const granted = overridesManager.getGrantedPower(actor, targetMember, rawTier);
+  return granted || rawTier;
 }
 const watchlist = require('./watchlist');
 const wordfilter = require('./wordfilter');
