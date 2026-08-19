@@ -4497,8 +4497,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('hitsquad').setDescription('Hit squad: activate (admin), or squad-member chaos powers during the window')
         .addSubcommand(s => s.setName('activate').setDescription('Admin: name who\'s on the squad for the next 10 minutes')
           .addStringOption(o => o.setName('members').setDescription('@mention or paste IDs, space-separated').setRequired(true)))
-        .addSubcommand(s => s.setName('slowmode').setDescription('Squad only: set slowmode on a channel you can see (reverts at window end)')
-          .addChannelOption(o => o.setName('channel').setDescription('Which channel').setRequired(true))
+        .addSubcommand(s => s.setName('slowmode').setDescription('Squad only: set slowmode in current channel (reverts at window end)')
           .addIntegerOption(o => o.setName('seconds').setDescription('Slowmode in seconds, 0-21600 (0 = off)').setRequired(true).setMinValue(0).setMaxValue(21600)))
         .addSubcommand(s => s.setName('nickname').setDescription('Squad only: change someone\'s nickname (reverts at window end)')
           .addUserOption(o => o.setName('user').setDescription('Who to rename').setRequired(true))
@@ -9510,16 +9509,13 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: 'Only a currently-active hit squad member can do that.', flags: MessageFlags.Ephemeral });
       const guild = interaction.guild;
       if (sub === 'slowmode') {
-        const channel = interaction.options.getChannel('channel');
         const seconds = interaction.options.getInteger('seconds');
-        const ch = channel && await guild.channels.fetch(channel.id).catch(() => null);
-        if (!ch || typeof ch.setRateLimitPerUser !== 'function') return interaction.reply({ content: 'That channel doesn’t support slowmode.', flags: MessageFlags.Ephemeral });
-        if (!ch.permissionsFor(interaction.member)?.has(PermissionsBitField.Flags.ViewChannel))
-          return interaction.reply({ content: 'You can only set slowmode on a channel you can actually see.', flags: MessageFlags.Ephemeral });
+        const ch = interaction.channel;
+        if (!ch || typeof ch.setRateLimitPerUser !== 'function') return interaction.reply({ content: 'This channel doesn’t support slowmode.', flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         hitsquad.recordOriginal('slowmode', ch.id, null, ch.rateLimitPerUser || 0);
         await ch.setRateLimitPerUser(seconds, `Hit squad chaos by ${interaction.user.tag}`).catch(e => console.error('[hitsquad] slowmode:', e.message));
-        return interaction.editReply(`🔪 Slowmode on <#${ch.id}> set to **${seconds}s**. Reverts to **${ch.rateLimitPerUser || 0}s** when the window ends.`);
+        return interaction.editReply(`🔪 Slowmode in <#${ch.id}> set to **${seconds}s**. Reverts to **${ch.rateLimitPerUser || 0}s** when the window ends.`);
       }
       // nickname
       const target = interaction.options.getUser('user');
