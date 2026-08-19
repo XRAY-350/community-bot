@@ -358,35 +358,40 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // and since it was never snapshotted, it's lost forever on release. This is the root of "came back
   // from the corner missing some roles". Fetching fresh here closes that whole class.
   try { member = await member.fetch(true); } catch (e) { console.error('[corner] member refresh before strip:', e.message); }
+  const targetChannelId = adult && config.adultCornerChannelId ? config.adultCornerChannelId : config.cornerChannelId;
   const existing = state.getCornered(member.id);
   if (existing) {
-    // Already cornered — just update the release time (don't re-strip). Routed through the same
-    // severity gate as /uncorner's reschedule (owner, 2026-08-13) — re-running /corner with a shorter
-    // duration is just as much a "lowering" as scheduling one via /uncorner, and this path used to
-    // bypass the gate entirely AND silently reassign `by` to whoever re-ran it (letting anyone "adopt"
-    // solo-override rights over someone else's corner just by re-cornering them). `by` is preserved now.
     const newReleaseAt = durationMs ? now + durationMs : null;
     const res = attemptSeverityChange(state, member.id, byId, actorTier, newReleaseAt);
     if (!res.ok) return { ok: false, error: 'gated', needsOverride: res.needsOverride, have: res.have, need: res.need };
     armTimer(guild, member.id, newReleaseAt);   // re-arm on a re-corner / duration change
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
-    return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
+    let threadId = existing.threadId || null;
+    if (thread && !threadId) {
+      try {
+        const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
+        if (ch && ch.isTextBased()) {
+          const name = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
+          const th = await ch.threads.create({ name, autoArchiveDuration: 1440, type: 12, reason: 'Corner thread imprisonment' }).catch(async () => {
+            return await ch.threads.create({ name, autoArchiveDuration: 1440, type: 11, reason: 'Corner thread imprisonment' }).catch(() => null);
+          });
+          if (th) {
+            await th.members.add(member.id).catch(() => {});
+            threadId = th.id;
+            existing.threadId = threadId;
+            state.setCornered(member.id, existing);
+          }
+        }
+      } catch (err) { console.error('[corner] existing thread create:', err.message); }
+    }
+    return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount, threadId, targetChannelId };
   }
-  // Guard: the bot can't touch roles positioned at/above its OWN highest role — trying would fail with a
-  // raw "Missing Permissions". Only roles we'd actually STRIP matter here — a KEPT role above the bot is
-  // fine, because we never touch it. (The bot's role sits at the very top by design, so this is mostly a
-  // backstop.) The actual guild owner is already fully blocked above; someone who merely HOLDS the
-  // OWNER⚜️ role without being guild.ownerId (owner tier also requires the Administrator permission — see
-  // opspanel.memberTier) is still cornerable by an equal-or-higher tier actor, and OWNER⚜️ strips along
-  // with everything else — it's an access-granting role, not a kept identifying one.
   const me = await guild.members.fetchMe();
   const stripIds = new Set(rolesToStrip(guild, member));
   const blockers = member.roles.cache.filter(r => stripIds.has(r.id) && r.position >= me.roles.highest.position);
   if (blockers.size) {
     return { ok: false, error: `she has a role I'd need to strip that sits above mine (${[...blockers.values()].map(r => r.name).join(', ')}), so I can't corner her. ask an admin to drag my role above hers in Server Settings → Roles.` };
   }
-  // Discord rejects role edits on a TIMED-OUT member with a raw "Missing Permissions". Lift the timeout
-  // just long enough to change roles, then RESTORE it (with its original expiry) so it still stands.
   let restoreTimeoutUntil = null;
   if (member.isCommunicationDisabled?.()) {
     restoreTimeoutUntil = member.communicationDisabledUntilTimestamp;
@@ -402,17 +407,14 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
 
   // Optional Thread Imprisonment & Adult Corner routing
   let threadId = null;
-  const targetChannelId = adult && config.adultCornerChannelId ? config.adultCornerChannelId : config.cornerChannelId;
   if (thread) {
     try {
       const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
       if (ch && ch.isTextBased()) {
-        const th = await ch.threads.create({
-          name: `⛓️ Jail · ${member.user.username}`,
-          autoArchiveDuration: 1440,
-          type: 12, // PrivateThread
-          reason: 'Corner thread imprisonment'
-        }).catch(() => null);
+        const name = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
+        const th = await ch.threads.create({ name, autoArchiveDuration: 1440, type: 12, reason: 'Corner thread imprisonment' }).catch(async () => {
+          return await ch.threads.create({ name, autoArchiveDuration: 1440, type: 11, reason: 'Corner thread imprisonment' }).catch(() => null);
+        });
         if (th) {
           await th.members.add(member.id).catch(() => {});
           threadId = th.id;
