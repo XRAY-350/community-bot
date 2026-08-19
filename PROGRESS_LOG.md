@@ -632,3 +632,24 @@ Deployed to both bots (node --check clean local+remote, clean restart, corner-st
 registered on both). Confirmed live on bots-vm: `ops_guide.json` now shows
 `detailMessageIds:["1539754441954300027","1539754444764217354"]` alongside the existing index
 `messageId`, both pinned in FUBU's mod-dashboard channel. Committed `88a3780`, pushed.
+
+## 2026-08-19 21:57 — Reference was posting below the dashboard, not above
+
+Owner: "not exactly what I was expecting but this needs to go above the dashboard." The comment in
+index.js already claimed the reference sat "at the top of #mod-dashboard," but `ensurePanel()` was
+called before `ensureCommandRef()` at startup — since Discord channel order is chronological, the
+panel (created first) was always the older/higher message and the reference landed below it.
+
+Fixed in index.js: chained `ensureCommandRef(client).then(() => ensurePanel(client))` so the
+reference fully posts/pins before the panel starts. Code-only wouldn't reorder messages already
+posted, so also deleted FUBU's 4 existing pinned messages (old panel + old ref embed + 2 detail
+messages) via a one-off scratch script and cleared `ops_panel.json`/`ops_guide.json` on bots-vm so
+the restart would recreate everything fresh. Hit one self-inflicted snag: clearing those files
+wiped `channelId` too (not just the stale message IDs), so `ensureCommandRef`
+briefly had no channel to post to right after restart ("no dashboard channel set" in logs) — fixed
+by re-seeding `ops_panel.json` with just `{"channelId":"1531087673760944331"}` and restarting
+`fubu-bot` again. Confirmed clean: reference (`1539755166256078861` + 2 detail msgs) now posts and
+pins before the dashboard (`1539755176993230889`), correct order in #mod-dashboard. melanin-bot
+untouched (still has no dashboard channel configured, pre-existing, unrelated to this).
+
+Deleted `reorder_pins.js` scratch script from bots-vm after use. Committed `f2692d1`, pushed.
