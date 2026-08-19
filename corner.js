@@ -368,9 +368,11 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
   }
   // Dynamic Exclusive Target Protection check
-  const exclusive = overridesManager.checkExclusiveProtection(member, byId);
+  const exclusive = overridesManager.checkExclusiveProtection(member, byId, actorMember);
   if (!exclusive.allowed) {
-    return { ok: false, error: `only <@${exclusive.requiredActorId}> can corner ${member.displayName || member.user?.username || 'this member'}.` };
+    const who = (exclusive.requiredActors || []).map(a => a.type === 'role' ? `<@&${a.id}>` : `<@${a.id}>`);
+    if (exclusive.hitSquadExempt) who.push('🚔 hit squad (while active)');
+    return { ok: false, error: `only ${who.join(', ') || 'nobody currently allowed'} can corner ${member.displayName || member.user?.username || 'this member'}.` };
   }
   // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
   const MINOR_ROLE_ID = '1516185172213628989';

@@ -7,8 +7,8 @@ const OVERRIDES_FILE = process.env.FUBU_CORNER_OVERRIDES_FILE || statePath('pers
 const DEFAULT_OVERRIDES = [
   {
     id: 'ov_knylvr_exclusive',
-    actorType: 'user',
-    actorId: '865843812907089940',
+    actors: [{ type: 'user', id: '865843812907089940' }],
+    hitSquadExempt: false,
     targetType: 'user',
     targetId: '1211024269149081620',
     type: 'EXCLUSIVE_CORNERER',
@@ -89,25 +89,79 @@ function getOverrides() {
   return loadOverrides();
 }
 
-function addOverride({ actorType = 'user', actorId, targetType = 'user', targetId, type, powerTier = null, minActorTier = null, note = '' }) {
+function addOverride({ actorType = 'user', actorId, actors = null, hitSquadExempt = false, targetType = 'user', targetId, type, powerTier = null, minActorTier = null, note = '', createdBy = null }) {
   const list = loadOverrides();
   const id = `ov_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const t = type.toUpperCase();
   const entry = {
     id,
-    actorType,
-    actorId: (actorId || '*').trim(),
     targetType,
     targetId: (targetId || '*').trim(),
-    type: type.toUpperCase(),
+    type: t,
     powerTier,
     // Only meaningful on a BYPASS_TIER rule with a wildcard ('*') actor — an exact actorId always bypasses
     // regardless of tier, same as before.
     minActorTier: (minActorTier || '').trim().toLowerCase() || null,
-    note: note.trim()
+    note: note.trim(),
+    createdBy,
+    createdAt: Date.now()
   };
+  if (t === 'EXCLUSIVE_CORNERER') {
+    // Protection rules can name MULTIPLE allowed actors (users and/or roles), not just one — see
+    // normalizeExclusiveActors() for the legacy-entry fallback (single actorId/actorType).
+    entry.actors = Array.isArray(actors) && actors.length ? actors : (actorId ? [{ type: actorType, id: actorId }] : []);
+    entry.hitSquadExempt = !!hitSquadExempt;
+  } else {
+    entry.actorType = actorType;
+    entry.actorId = (actorId || '*').trim();
+  }
   list.push(entry);
   saveOverrides(list);
   return entry;
+}
+
+// EXCLUSIVE_CORNERER rules moved from a single actorId/actorType to a real `actors` array (owner, 2026-08-19:
+// "I shouldn't have to create a new rule" to add a second allowed actor). Old entries (including the seeded
+// DEFAULT_OVERRIDES before this change, and anything saved to disk before this deploy) only have the legacy
+// singular fields — normalize those into the same shape on read so every caller has one code path.
+function normalizeExclusiveActors(rule) {
+  if (Array.isArray(rule.actors)) return rule.actors;
+  if (rule.actorId) return [{ type: rule.actorType || 'user', id: rule.actorId }];
+  return [];
+}
+
+function addExclusiveActor(ruleId, actorType, actorId) {
+  const list = loadOverrides();
+  const rule = list.find(o => o.id === ruleId && o.type === 'EXCLUSIVE_CORNERER');
+  if (!rule) return null;
+  const actors = normalizeExclusiveActors(rule);
+  if (!actors.some(a => a.type === actorType && a.id === actorId)) actors.push({ type: actorType, id: actorId });
+  rule.actors = actors;
+  delete rule.actorId; delete rule.actorType;
+  rule.updatedAt = Date.now();
+  saveOverrides(list);
+  return rule;
+}
+
+function removeExclusiveActor(ruleId, actorType, actorId) {
+  const list = loadOverrides();
+  const rule = list.find(o => o.id === ruleId && o.type === 'EXCLUSIVE_CORNERER');
+  if (!rule) return null;
+  rule.actors = normalizeExclusiveActors(rule).filter(a => !(a.type === actorType && a.id === actorId));
+  delete rule.actorId; delete rule.actorType;
+  rule.updatedAt = Date.now();
+  saveOverrides(list);
+  return rule;
+}
+
+function setExclusiveHitSquadExempt(ruleId, exempt) {
+  const list = loadOverrides();
+  const rule = list.find(o => o.id === ruleId && o.type === 'EXCLUSIVE_CORNERER');
+  if (!rule) return null;
+  rule.hitSquadExempt = !!exempt;
+  rule.updatedAt = Date.now();
+  saveOverrides(list);
+  return rule;
 }
 
 function removeOverride(id) {
@@ -115,6 +169,25 @@ function removeOverride(id) {
   const next = list.filter(o => o.id !== id);
   saveOverrides(next);
   return next.length < list.length;
+}
+
+function getOverride(id) {
+  return loadOverrides().find(o => o.id === id) || null;
+}
+
+// Editable in place, without a delete+recreate: just the note and (for a wildcard-actor BYPASS_TIER rule)
+// its tier floor — both are metadata, not the actor/target/type identity that defines what a rule DOES.
+// Changing WHO a rule applies to or what it grants is a structural change, done as delete + re-add via the
+// wizard, so a mis-click can't silently repurpose a live security rule.
+function updateOverride(id, { note, minActorTier } = {}) {
+  const list = loadOverrides();
+  const entry = list.find(o => o.id === id);
+  if (!entry) return null;
+  if (note !== undefined) entry.note = String(note).trim();
+  if (minActorTier !== undefined) entry.minActorTier = (String(minActorTier || '').trim().toLowerCase()) || null;
+  entry.updatedAt = Date.now();
+  saveOverrides(list);
+  return entry;
 }
 
 function matchEntity(ruleType, ruleId, entity) {
@@ -125,15 +198,20 @@ function matchEntity(ruleType, ruleId, entity) {
   return userId === ruleId || roleIds.includes(ruleId);
 }
 
-function checkExclusiveProtection(targetMember, actorId) {
+// actorMember (optional, full GuildMember) lets a role-based allowed-actor entry match — a bare actorId
+// string can only ever match a user-type entry, same class of gap fixed elsewhere this session (N1).
+function checkExclusiveProtection(targetMember, actorId, actorMember = null) {
   const list = loadOverrides();
-  const rule = list.find(o => o.type === 'EXCLUSIVE_CORNERER' && matchEntity(o.targetType, o.targetId, targetMember));
-  if (rule) {
-    if (rule.actorId !== actorId && rule.actorId !== '*') {
-      return { allowed: false, requiredActorId: rule.actorId };
-    }
+  const rules = list.filter(o => o.type === 'EXCLUSIVE_CORNERER' && matchEntity(o.targetType, o.targetId, targetMember));
+  if (!rules.length) return { allowed: true };
+  const hitsquad = require('./hitsquad');
+  for (const rule of rules) {
+    const actors = normalizeExclusiveActors(rule);
+    if (actors.some(a => a.id === '*')) return { allowed: true };
+    if (actors.some(a => matchEntity(a.type, a.id, actorMember || actorId))) return { allowed: true };
+    if (rule.hitSquadExempt && actorId && hitsquad.isSquadMember(actorId)) return { allowed: true };
   }
-  return { allowed: true };
+  return { allowed: false, requiredActors: normalizeExclusiveActors(rules[0]), hitSquadExempt: rules.some(r => r.hitSquadExempt) };
 }
 
 function getGrantedPower(actorMember, targetMember = null) {
@@ -177,9 +255,15 @@ function canBypassTier(actorMember, targetMember, actorTier = null) {
 
 module.exports = {
   getOverrides,
+  getOverride,
   addOverride,
+  updateOverride,
   removeOverride,
   checkExclusiveProtection,
+  normalizeExclusiveActors,
+  addExclusiveActor,
+  removeExclusiveActor,
+  setExclusiveHitSquadExempt,
   getGrantedPower,
   canSelfCorner,
   canBypassTier
