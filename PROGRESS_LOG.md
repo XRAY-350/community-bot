@@ -334,3 +334,12 @@ on someone else, while jailed. Owner wants this fixed across EVERY staff-gated c
 not just corner/uncorner — scoped as its own follow-up pass, not bundled into this session's work.
 
 Files touched: `index.js`, `modapps.js`. Commits `a4d6775` (code) + this log entry, on `main`, pushed.
+
+## 2026-08-19 17:35 — FUBU: two small corrections to the Staff category work above
+
+Owner caught the two new text channels (staff-announcements, staff-discussions) went out in plain
+lowercase instead of the small-caps style every other channel on the server uses — renamed to
+`📣┆sᴛᴀꜰꜰ-ᴀɴɴᴏᴜɴᴄᴇᴍᴇɴᴛs` / `💬┆sᴛᴀꜰꜰ-ᴅɪsᴄᴜssɪᴏɴs`. Also caught that the planned `staff call` voice
+channel (staff+ tier, mirroring `mod call` staying mod+-only) never actually got created during the
+restructure — created `📞┆sᴛᴀꜰꜰ ᴄᴀʟʟ` in the Staff category with the same access group as
+staff-discussions (Mods, Admins, Trial Mods, Mini-Mods, Event Organizer can connect/speak).
