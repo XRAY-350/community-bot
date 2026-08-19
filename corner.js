@@ -7,6 +7,7 @@ const { PermissionsBitField } = require('discord.js');
 const config = require('./config');
 const hitsquad = require('./hitsquad');
 const opspanel = require('./opspanel');
+const overridesManager = require('./overridesManager');
 
 // ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
 // /corner already refuses to corner someone of a HIGHER tier than the actor. This closes the mirror
@@ -14,33 +15,9 @@ const opspanel = require('./opspanel');
 // trial mod could undo a decision an admin or owner deliberately made. Canonical RANK lives here now;
 // index.js and opspanel.js reference corner.RANK instead of each keeping their own copy.
 const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-// One-off personal overrides (owner request, 2026-08-14/15): specific actors may corner specific targets,
-// bypassing the normal higher-tier block below — regardless of either party's tier now or later. Not a
-// general rule; keep this list short and named, same pattern as index.js's SELF_CORNER_EXEMPT_ID.
-// actorId '*' = ANY actor (still subject to their own tier's normal duration/reason/daily-cap limits —
-// this only lifts the "can't touch someone above your tier" gate, nothing else) — used for the real
-// Discord server owner opting themselves in as a cornerable target (2026-08-15): purely cosmetic for them
-// specifically, since the actual guild owner keeps full Discord permissions regardless of stripped roles.
-const PERSONAL_CORNER_OVERRIDES = [
-  { actorId: '1415112053823242250', targetId: '989615671178575972' },   // approved actor -> approved target
-  { actorId: '593371777569390602', targetId: '989615671178575972' },    // second approved actor -> same target
-  { actorId: '*', targetId: '865843812907089940' },                     // any STAFF actor -> the server owner (opted in) — narrowed from any verified member (owner, 2026-08-17: "change the everyone corner to only staff (mod+)")
-];
-// actorTier: pass the actor's recognized staff tier (opspanel.tierOf/memberTier — 'mod'/'admin'/'owner'/
-// 'botowner'), or null/undefined for a plain verified member. Named overrides (exact actorId match) work
-// regardless of tier; the wildcard '*' entry only matches a STAFF actorTier now — a regular member no
-// longer qualifies for it even though the target opted in to being corner-able by "anyone."
+
 function canBypassCornerTier(actorId, targetId, actorTier = null) {
-  return PERSONAL_CORNER_OVERRIDES.some(o => {
-    if (o.targetId !== targetId) return false;
-    if (o.actorId === actorId) return true;
-    // The wildcard entry (currently just the server owner opting in) requires admin+ specifically, not any
-    // staff tier — narrowed from "any staff" (owner, 2026-08-18: "the ability for people to corner me as
-    // the owner should be admin/owner"), so a plain mod no longer qualifies even though they still can't
-    // corner an admin/owner under the normal tier rule either way.
-    if (o.actorId === '*') return (RANK[actorTier] || 0) >= RANK.admin;
-    return false;
-  });
+  return overridesManager.canBypassTier(actorId, targetId, actorTier);
 }
 // Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
 // tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
@@ -207,6 +184,29 @@ async function ensureCornerPerms(guild) {
         }
         continue;
       }
+      if (config.adultCornerChannelId && ch.id === config.adultCornerChannelId) {
+        // Adult Corner: @everyone denied view; 16-17 role explicitly denied; corner role + staff allowed
+        const everyoneDesired = { ViewChannel: false };
+        if (!overwriteMatches(ch, everyone, everyoneDesired)) {
+          await ch.permissionOverwrites.edit(everyone, everyoneDesired, { reason: 'adult corner self-heal' }); fixed++;
+        }
+        const minorRoleId = '1516185172213628989';   // ✰ • 16-17 role
+        const minorDesired = { ViewChannel: false, SendMessages: false, ReadMessageHistory: false };
+        if (!overwriteMatches(ch, minorRoleId, minorDesired)) {
+          await ch.permissionOverwrites.edit(minorRoleId, minorDesired, { reason: 'adult corner minor deny self-heal' }).catch(() => {}); fixed++;
+        }
+        const cornerDesired = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, EmbedLinks: true, AddReactions: true };
+        if (!overwriteMatches(ch, config.cornerRoleId, cornerDesired)) {
+          await ch.permissionOverwrites.edit(config.cornerRoleId, cornerDesired, { reason: 'adult corner self-heal' }); fixed++;
+        }
+        if (config.modRoleId && !overwriteMatches(ch, config.modRoleId, { ViewChannel: true, SendMessages: true })) {
+          await ch.permissionOverwrites.edit(config.modRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'adult corner self-heal' }); fixed++;
+        }
+        if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true })) {
+          await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'adult corner self-heal' }); fixed++;
+        }
+        continue;
+      }
       if (ch.id === config.cornerVcId) {
         // Corner VC: @everyone can SEE but not join; cornered can join + talk (no screen-share/soundboard);
         // mods get full voice moderation. (This channel sits IN the view category, so it needs its own
@@ -295,9 +295,6 @@ function rolesToStrip(guild, member) {
 function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Date.now()) {
   const all = state.getMeta('cornerLog') || {};
   const list = all[memberId] || [];
-  // durationMs = the sentence length (null = indefinite); servedMs is filled in on release (uncorner).
-  // `at` is passed from corner() so it MATCHES the active record's start time, letting uncorner attribute
-  // served time to the right entry.
   list.push({ ruleIndex: ruleIndex || null, at, durationMs: durationMs || null, servedMs: null });
   all[memberId] = list;
   state.setMeta('cornerLog', all);
@@ -305,33 +302,79 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
   return list.filter(e => e.ruleIndex === ruleIndex).length;
 }
 
+// Find existing dedicated jail thread or create a new private thread for cornered member
+async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
+  try {
+    const parentChannel = await guild.channels.fetch(targetChannelId).catch(() => null);
+    if (!parentChannel || !parentChannel.threads) return null;
+
+    const threadName = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
+    
+    // Search active threads
+    const activeThreads = await parentChannel.threads.fetchActive().catch(() => null);
+    let thread = activeThreads?.threads?.find(t => t.name === threadName || t.name.includes(member.id));
+
+    // Search archived threads if not in active
+    if (!thread) {
+      const archived = await parentChannel.threads.fetchArchived({ type: 'private', fetchAll: true }).catch(() => null);
+      thread = archived?.threads?.find(t => t.name === threadName || t.name.includes(member.id));
+    }
+
+    if (thread) {
+      if (thread.archived) await thread.setArchived(false).catch(() => {});
+      if (thread.locked) await thread.setLocked(false).catch(() => {});
+      await thread.members.add(member.id).catch(() => {});
+      return thread.id;
+    }
+
+    // Create new private thread (Type 12 PrivateThread)
+    const newThread = await parentChannel.threads.create({
+      name: threadName,
+      autoArchiveDuration: 1440,
+      type: 12, // ChannelType.PrivateThread
+      reason: `Corner jail thread for ${member.user?.tag || member.id}`
+    });
+
+    await newThread.members.add(member.id).catch(() => {});
+    return newThread.id;
+  } catch (err) {
+    console.error('[corner] getOrCreateCornerJailThread error:', err.message);
+    return null;
+  }
+}
+
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
-async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTier = null, opts = {}) {
-  const { forceReal = false } = opts;
+async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
+  const { forceReal = false, adult = false, thread = false, anon = false } = opts || {};
   const now = Date.now();
-  // Nobody can corner themselves — every entry point (slash /corner, "Send to corner", the dashboard
-  // picker, the re-corner button) funnels through here, so one central guard closes them all. The tier
-  // check upstream lets equal tiers act on each other (mod↔mod), which — with no self-check — also let a
-  // mod corner their OWN account and self-strip their roles. Auto-corner (rule 9) passes the bot's id as
-  // byId against a member target, so byId===member.id only ever means a genuine self-corner attempt.
-  if (byId && byId === member.id) {
-    return { ok: false, error: "you can't corner yourself." };
+  // Fetch actor member if byId provided to evaluate role-based granted powers
+  let actorMember = null;
+  if (byId && guild) {
+    actorMember = await guild.members.fetch(byId).catch(() => null);
   }
-  // The server owner is never cornerable, full stop — centralized here (not left to each of the ~8
-  // callers to remember) after finding one caller (the Send-to-corner reason-modal submit handler) with
-  // NO owner check at all: the upstream command that opens the modal validates the target, but the modal
-  // submit step that actually strips roles trusted the embedded id with no re-check. One guard here closes
-  // every entry point, present and future, regardless of what each caller does or forgets to do upstream.
-  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(byId, member.id, actorTier))) {
+  const grantedPower = overridesManager.getGrantedPower(actorMember || byId, member);
+  if (grantedPower) actorTier = grantedPower;
+
+  if (member.id === guild.ownerId && !(byId && canBypassCornerTier(actorMember || byId, member, actorTier))) {
     return { ok: false, error: "you can't corner the server owner." };
   }
-  // A current hit-squad member is immune to being cornered (by anyone, staff included) for as long as
-  // their activation window is live (owner, 2026-08-17: "they can't be cornered during the window") — same
-  // central choke point every entry point already funnels through, so this can't be dodged via a path that
-  // forgot to check it.
+  if (byId && byId === member.id) {
+    const selfCornerAllowed = overridesManager.canSelfCorner(member);
+    if (!selfCornerAllowed) return { ok: false, error: "you can't corner yourself." };
+  }
   if (hitsquad.isSquadMember(member.id)) {
     return { ok: false, error: "they're on hit squad duty right now and can't be cornered until the window ends." };
+  }
+  // Dynamic Exclusive Target Protection check
+  const exclusive = overridesManager.checkExclusiveProtection(member, byId);
+  if (!exclusive.allowed) {
+    return { ok: false, error: `only <@${exclusive.requiredActorId}> can corner ${member.displayName || member.user?.username || 'this member'}.` };
+  }
+  // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
+  const MINOR_ROLE_ID = '1516185172213628989';
+  if (adult && member.roles?.cache?.has(MINOR_ROLE_ID)) {
+    return { ok: false, error: 'members with the 16-17 role cannot be sent to the 18+ Adult Corner.' };
   }
   // Refresh the member so .roles.cache is COMPLETE before we snapshot + strip. discord.js role edits
   // use PUT semantics computed off the LOCAL cache — a stale/partial member (e.g. from a message event,
@@ -340,35 +383,39 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
   // and since it was never snapshotted, it's lost forever on release. This is the root of "came back
   // from the corner missing some roles". Fetching fresh here closes that whole class.
   try { member = await member.fetch(true); } catch (e) { console.error('[corner] member refresh before strip:', e.message); }
+  const targetChannelId = adult && config.adultCornerChannelId ? config.adultCornerChannelId : config.cornerChannelId;
   const existing = state.getCornered(member.id);
   if (existing) {
-    // Already cornered — just update the release time (don't re-strip). Routed through the same
-    // severity gate as /uncorner's reschedule (owner, 2026-08-13) — re-running /corner with a shorter
-    // duration is just as much a "lowering" as scheduling one via /uncorner, and this path used to
-    // bypass the gate entirely AND silently reassign `by` to whoever re-ran it (letting anyone "adopt"
-    // solo-override rights over someone else's corner just by re-cornering them). `by` is preserved now.
     const newReleaseAt = durationMs ? now + durationMs : null;
     const res = attemptSeverityChange(state, member.id, byId, actorTier, newReleaseAt);
     if (!res.ok) return { ok: false, error: 'gated', needsOverride: res.needsOverride, have: res.have, need: res.need };
     armTimer(guild, member.id, newReleaseAt);   // re-arm on a re-corner / duration change
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
-    return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount };
+    let threadId = existing.threadId || null;
+    if (thread && !threadId) {
+      threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member);
+      if (threadId) {
+        existing.threadId = threadId;
+        state.setCornered(member.id, existing);
+        const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
+        if (ch) {
+          await ch.permissionOverwrites.edit(member.id, {
+            SendMessages: false,
+            SendMessagesInThreads: true,
+            ViewChannel: true,
+            ReadMessageHistory: true
+          }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
+        }
+      }
+    }
+    return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount, threadId, targetChannelId };
   }
-  // Guard: the bot can't touch roles positioned at/above its OWN highest role — trying would fail with a
-  // raw "Missing Permissions". Only roles we'd actually STRIP matter here — a KEPT role above the bot is
-  // fine, because we never touch it. (The bot's role sits at the very top by design, so this is mostly a
-  // backstop.) The actual guild owner is already fully blocked above; someone who merely HOLDS the
-  // OWNER⚜️ role without being guild.ownerId (owner tier also requires the Administrator permission — see
-  // opspanel.memberTier) is still cornerable by an equal-or-higher tier actor, and OWNER⚜️ strips along
-  // with everything else — it's an access-granting role, not a kept identifying one.
   const me = await guild.members.fetchMe();
   const stripIds = new Set(rolesToStrip(guild, member));
   const blockers = member.roles.cache.filter(r => stripIds.has(r.id) && r.position >= me.roles.highest.position);
   if (blockers.size) {
     return { ok: false, error: `she has a role I'd need to strip that sits above mine (${[...blockers.values()].map(r => r.name).join(', ')}), so I can't corner her. ask an admin to drag my role above hers in Server Settings → Roles.` };
   }
-  // Discord rejects role edits on a TIMED-OUT member with a raw "Missing Permissions". Lift the timeout
-  // just long enough to change roles, then RESTORE it (with its original expiry) so it still stands.
   let restoreTimeoutUntil = null;
   if (member.isCommunicationDisabled?.()) {
     restoreTimeoutUntil = member.communicationDisabledUntilTimestamp;
@@ -379,40 +426,42 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
       await member.timeout(restoreTimeoutUntil - Date.now(), 'restoring timeout after corner').catch(e => console.error('[corner] restore timeout:', e.message));
   };
   const strip = rolesToStrip(guild, member);
-  // Persist BEFORE mutating roles so a mid-way failure is still recoverable via /uncorner.
-  // joke: staff-on-staff corners default to "joke" (owner, 2026-08-18: "All cornering of staff on other
-  // staff should be treated as a joke unless specified otherwise") — waives the release/lowering tier gate
-  // below (canActSolo) for THIS corner instance, flippable afterward via the "mark as real" follow-up
-  // prompt index.js shows right after. actorTier truthy already implies a recognized staff actor (trial
-  // mods pass null here and can't reach a staff target anyway, so no separate trial check is needed).
-  // forceReal (owner, 2026-08-18: "strike corner paths don't need it cause strikes are always serious") —
-  // a corner attached to a strike is never a joke regardless of staff-on-staff, so those callers pass this
-  // to skip the default entirely rather than defaulting to joke and needing a prompt to walk it back.
   const targetIsStaff = !!(opspanel.memberTier(member) || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId)));
   const joke = !forceReal && !!actorTier && targetIsStaff;
-  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke });
+
+  // Optional Thread Imprisonment & Adult Corner routing
+  let threadId = null;
+  if (thread) {
+    threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member);
+    if (threadId) {
+      const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
+      if (ch) {
+        await ch.permissionOverwrites.edit(member.id, {
+          SendMessages: false,
+          SendMessagesInThreads: true,
+          ViewChannel: true,
+          ReadMessageHistory: true
+        }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
+      }
+    }
+  }
+
+  state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke, threadId, isAdult: !!adult, channelId: targetChannelId });
   try {
-    // ONE atomic role.set() instead of a separate remove() then add() (owner-reported, 2026-08-12: "cornered
-    // people are still getting tribe roles back"). Two separate calls fired two separate guildMemberUpdate
-    // events — in the gap between them (roles stripped, corner role not yet added), enforceTribeMembership's
-    // guildMemberUpdate handler saw no corner role, treated the tribe-role strip as unauthorized tampering,
-    // and immediately re-added it, moments before the corner role itself landed. A single set() has only one
-    // resulting state, with the corner role already present in it — no gap for that race to land in.
     const stripSet = new Set(strip);
     const keptIds = member.roles.cache.filter(r => r.id !== guild.id && !stripSet.has(r.id)).map(r => r.id);
-    await member.roles.set([...keptIds, config.cornerRoleId], 'Sent to the corner');
+    const targetRoles = [...new Set([...keptIds, config.cornerRoleId])];
+    await member.roles.set(targetRoles, 'Sent to the corner');
   } catch (err) {
     await restoreTimeout();
     state.clearCornered(member.id); // don't leave a stale "cornered" record on a failed corner
     return { ok: false, error: err.message };
   }
   await restoreTimeout(); // put the Discord timeout back - cornering doesn't cancel it
-  // They just lost access to every normal channel, but Discord does NOT reliably eject someone from a voice
-  // channel they're already in on a permission change — so pull them out of voice explicitly.
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
-  return { ok: true, stripped: strip.length, repeatCount, joke };
+  return { ok: true, stripped: strip.length, repeatCount, joke, threadId, targetChannelId };
 }
 
 // Release a member: remove the corner role and restore the roles we stripped.
@@ -428,6 +477,20 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
       const entry = [...list].reverse().find(e => e.at === rec.at);
       if (entry && entry.servedMs == null) { entry.servedMs = servedMs; state.setMeta('cornerLog', all); }
     }
+  }
+  if (rec && rec.threadId) {
+    try {
+      const targetChId = rec.channelId || (rec.isAdult && config.adultCornerChannelId ? config.adultCornerChannelId : config.cornerChannelId);
+      const ch = await guild.channels.fetch(targetChId).catch(() => null);
+      if (ch) {
+        await ch.permissionOverwrites.delete(userId, 'Released from corner thread imprisonment').catch(() => {});
+      }
+      const th = await guild.channels.fetch(rec.threadId).catch(() => null);
+      if (th && th.isThread()) {
+        await th.setArchived(true, reason).catch(() => {});
+        await th.setLocked(true, reason).catch(() => {});
+      }
+    } catch (e) { console.error('[corner] thread archive on release:', e.message); }
   }
   const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null);
   if (!member) { clearTimer(userId); state.clearCornered(userId); return { ok: true, left: true, servedMs }; }

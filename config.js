@@ -60,6 +60,7 @@ const config = {
   // --- The Corner (jail) ---
   cornerRoleId: opt('CORNER_ROLE_ID', '1529459820795789382'),
   cornerChannelId: opt('CORNER_CHANNEL_ID', '1529552895262068846'),
+  adultCornerChannelId: opt('ADULT_CORNER_CHANNEL_ID', ''),  // 18+/MDNI adult corner channel
   cornerLogChannelId: opt('CORNER_LOG_CHANNEL_ID', '1531004789025013982'),  // public read-only audit log
   cornerVcId: opt('CORNER_VC_ID', '1531113277776724189'),  // corner voice channel: public see, cornered+mods join+talk
   // Repeat-cornering-for-the-same-rule alert threshold (NOT auto-strike — just tells staff to consider

@@ -6,10 +6,11 @@
 const fs = require('fs');
 const { statePath } = require('./statepath');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
-  UserSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
+  UserSelectMenuBuilder, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const { MessageFlags } = require('discord.js');
 const copy = require('./copy');   // single source of truth for public-facing text (see copy.js)
 const { ensureMembers } = require('./memberCache');
+const overridesManager = require('./overridesManager');
 
 const PANEL_FILE = process.env.FUBU_OPS_PANEL_FILE || statePath('ops_panel.json');
 // Separate pinned message: a static staff command reference (the "what every command does" list that used
@@ -87,6 +88,7 @@ const PAGES = [
   { emoji: '⚙️', name: 'Settings', tier: 'admin', blurb: 'turn helpers on/off (needs Admin)' },
   { emoji: '🧩', name: 'Setup', tier: 'admin', blurb: 'create channels + (re)post member panels (needs Admin)' },
   { emoji: '⚠️', name: 'Danger', tier: 'owner', blurb: 'removal policy (needs Owner)' },
+  { emoji: '🛡️', name: 'Overrides', tier: 'owner', blurb: 'personal corner overrides & special powers (needs Owner)' },
 ];
 const pageIdx = (name) => PAGES.findIndex(p => p.name === name);   // reorder-safe page lookup
 const watchlist = require('./watchlist');
@@ -391,7 +393,8 @@ function buildSetup() {
     new ButtonBuilder().setCustomId('fops_setup:whistleblow').setEmoji('🕊️').setLabel('Whistleblow').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_setup:dashboard').setEmoji('🤖').setLabel('Member hub').setStyle(ButtonStyle.Secondary));
   const row3 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('fops_setup:eventorg').setEmoji('🎪').setLabel('Event Organizer apps').setStyle(ButtonStyle.Secondary));
+    new ButtonBuilder().setCustomId('fops_setup:eventorg').setEmoji('🎪').setLabel('Event Organizer apps').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('fops_setup:adultcorner').setEmoji('🔞').setLabel('Adult Corner').setStyle(ButtonStyle.Secondary));
   return { content: '## 🧩 FUBU Ops · Setup', embeds: [embed], components: [row1, row2, row3, navRow(pageIdx('Setup'))] };
 }
 
@@ -491,6 +494,40 @@ async function buildPromotions() {
   return { content: '## 🏅 FUBU Ops · Promotions', embeds: [embed], components: rows };
 }
 
+function buildOverrides() {
+  const list = overridesManager.getOverrides();
+  const lines = list.map((o, idx) => {
+    const typeLabel = o.type === 'EXCLUSIVE_CORNERER' ? '🔒 Exclusive' : o.type === 'GRANT_POWER' ? `⚡ Grant (${o.powerTier || 'owner'})` : o.type === 'ALLOW_SELF_CORNER' ? '🙋 Self-Corner' : o.type === 'BYPASS_TIER' ? '🔓 Bypass' : '🛡️ Immunity';
+    const actorFmt = o.actorId === '*' ? '* (all staff)' : (o.actorType === 'role' ? `<@&${o.actorId}>` : `<@${o.actorId}>`);
+    const targetFmt = o.targetId === '*' ? '*' : (o.targetType === 'role' ? `<@&${o.targetId}>` : `<@${o.targetId}>`);
+    return `\`${idx + 1}.\` **${typeLabel}** · Actor: ${actorFmt} → Target: ${targetFmt}${o.note ? ` _(${o.note})_` : ''}`;
+  });
+
+  const embed = new EmbedBuilder().setColor(0x5865F2)
+    .setTitle('🛡️ Personal Corner Overrides')
+    .setDescription('**👑 Owner only.** Manage personal corner rules live with point-and-click pickers.\n\n'
+      + (lines.length ? lines.join('\n') : '_No personal overrides active._'))
+    .setFooter({ text: 'Owner only. Point-and-click personal corner rules.' });
+
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('fops_ov_addstart').setEmoji('➕').setLabel('Add Rule (Pick Member / Role)').setStyle(ButtonStyle.Success),
+  );
+
+  const rows = [row1];
+  if (list.length) {
+    const opts = list.slice(0, 25).map((o, idx) => ({
+      label: `${idx + 1}. ${o.type} (${o.actorId.slice(-4)} → ${o.targetId.slice(-4)})`.slice(0, 100),
+      value: o.id,
+      description: (o.note || `${o.actorId} -> ${o.targetId}`).slice(0, 100)
+    }));
+    rows.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('fops_ov_delpicker').setPlaceholder('🗑️ Select a rule to delete…').addOptions(opts)
+    ));
+  }
+  rows.push(navRow(pageIdx('Overrides')));
+  return { content: '## 🛡️ FUBU Ops · Personal Overrides', embeds: [embed], components: rows };
+}
+
 async function buildPage(page) {
   const name = PAGES[page] && PAGES[page].name;   // name-based so the array can be reordered freely
   if (name === 'Moderation') return buildModeration();
@@ -504,6 +541,7 @@ async function buildPage(page) {
   if (name === 'Settings') return buildSettings();
   if (name === 'Setup') return buildSetup();
   if (name === 'Danger') return buildDanger();
+  if (name === 'Overrides') return buildOverrides();
   return await buildOverview();
 }
 
@@ -747,13 +785,29 @@ async function handlePanel(interaction) {
   // follow-up modal (customId carries the uid); everything else executes straight away.
   if (id === 'fops_pick_corner') {
     const uid = interaction.values[0];
-    return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner: duration',
-      [{ id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` }]));
+    return interaction.showModal(followupModal(`fops_cornermodal2:${uid}`, 'Corner member',
+      [
+        { id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` },
+        { id: 'options', label: 'Options: type "thread", "adult", or "both"', placeholder: 'blank = standard corner' }
+      ]));
   }
   if (id === 'fops_pick_cornermulti') {
     _cornerMultiStash.set(interaction.user.id, { ids: interaction.values, at: Date.now() });
-    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s): duration`,
-      [{ id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` }]));
+    return interaction.showModal(followupModal('fops_cornermulti_dur', `Corner ${interaction.values.length} member(s)`,
+      [
+        { id: 'dur', label: `Duration (${copy.corner.units}, blank = indefinite)` },
+        { id: 'options', label: 'Options: type "thread", "adult", or "both"', placeholder: 'blank = standard corner' }
+      ]));
+  }
+  if (id === 'fops_ov_addmodal') {
+    if (!isBotOwner(interaction) && !meets(tier, 'owner')) return denyReply('owner');
+    return interaction.showModal(followupModal('fops_ov_submitadd', 'Add Personal Corner Override', [
+      { id: 'actor_id', label: 'Actor User ID (or * for any staff)', placeholder: '865843812907089940 or *' },
+      { id: 'target_id', label: 'Target User ID (or * for any target)', placeholder: '1211024269149081620 or *' },
+      { id: 'rule_type', label: 'Type: exclusive, grant_power, or bypass', placeholder: 'exclusive' },
+      { id: 'power_tier', label: 'Power Tier if grant_power (owner/admin/mod)', placeholder: 'owner' },
+      { id: 'note', label: 'Note / Description (optional)', placeholder: 'e.g. Knylvr owner-only protection' }
+    ]));
   }
   if (id === 'fops_pick_ban') {
     if (!meets(tier, 'admin')) return denyReply('admin');
@@ -994,7 +1048,6 @@ async function handlePanel(interaction) {
       const uid = id.split(':')[1];
       const member = await interaction.guild.members.fetch(uid).catch(() => null);
       if (!member) return interaction.editReply(copy.common.noMemberInServer);
-      // Same tier hierarchy as every other corner entry point — this dashboard modal had no check at all.
       const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
       const targetTier = memberTier(member);
       if ((RANK[targetTier] || 0) > (RANK[tier] || 0))
@@ -1002,7 +1055,10 @@ async function handlePanel(interaction) {
       const dur = interaction.fields.getTextInputValue('dur').trim();
       const ms = dur ? D.corner.parseDuration(dur) : null;
       if (dur && !ms) return interaction.editReply(copy.corner.badDuration);
-      const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id, null, tier);
+      let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch {}
+      const isAdult = optsStr.includes('adult');
+      const isThread = optsStr.includes('thread');
+      const r = await D.corner.corner(interaction.guild, member, ms, D.state, interaction.user.id, null, tier, { adult: isAdult, thread: isThread });
       if (!r.ok) {
         if (r.error === 'gated') {
           return interaction.editReply(r.need
@@ -1011,7 +1067,7 @@ async function handlePanel(interaction) {
         }
         return interaction.editReply(`Failed: ${r.error}`);
       }
-      if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null);
+      if (D.announceCorner) await D.announceCorner(interaction.guild, member.id, ms, interaction.user.id, null, r.threadId, r.targetChannelId);
       await interaction.editReply(`⛓️ Cornered <@${member.id}> (\`${member.user.tag}\`)${dur ? ` for ${dur}` : ' indefinitely'}, stripped ${r.stripped} role(s).`);
       return refreshPanel(interaction.client);
     }
@@ -1025,7 +1081,10 @@ async function handlePanel(interaction) {
       const members = [];
       for (const uid of stash.ids) { const m = await interaction.guild.members.fetch(uid).catch(() => null); if (m) members.push(m); }
       const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[tierOf(interaction)] || 0;
-      const { done, skipped } = await D.cornerMany(interaction.guild, interaction.user.id, actorRank, members, ms, {});
+      let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch {}
+      const isAdult = optsStr.includes('adult');
+      const isThread = optsStr.includes('thread');
+      const { done, skipped } = await D.cornerMany(interaction.guild, interaction.user.id, actorRank, members, ms, { adult: isAdult, thread: isThread });
       const lines = [];
       if (done.length) lines.push(`⛓️ Cornered **${done.length}**${dur ? ` for ${dur}` : ' indefinitely'}: ${done.map(x => `<@${x}>`).join(', ')}`);
       if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
@@ -1101,6 +1160,158 @@ async function handlePanel(interaction) {
       if (!term) return interaction.editReply('Enter a term.');
       const t = id === 'fops_wl_wtermaddmodal' ? watchlist.addWelfare(term) : watchlist.removeWelfare(term);
       await interaction.editReply(`${id === 'fops_wl_wtermaddmodal' ? '➕ Added' : '➖ Removed'} welfare term \`${term}\`. ${t.length} welfare term(s) now.`);
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_ov_addstart') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return denyReply('owner');
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId('fops_ov_picktype').setPlaceholder('Select Rule Type…').addOptions([
+          { label: '⚡ Grant Corner Power', value: 'GRANT_POWER', description: 'Grant Owner, Admin, or Mod cornering authority' },
+          { label: '🔒 Exclusive Protection', value: 'EXCLUSIVE_CORNERER', description: 'Make a Member or Role cornerable ONLY by you (Server Owner)' },
+          { label: '🙋 Allow Self-Corner', value: 'ALLOW_SELF_CORNER', description: 'Allow a Member or Role to corner themselves' },
+          { label: '🔓 Bypass Tier Gate', value: 'BYPASS_TIER', description: 'Allow a Member or Role to bypass tier hierarchy gates' },
+        ])
+      );
+      return interaction.editReply({ content: '### ➕ Add Personal Override Rule\nChoose the type of rule you want to create:', components: [row] });
+    }
+    if (id === 'fops_ov_picktype') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const ruleType = interaction.values[0];
+      if (ruleType === 'GRANT_POWER') {
+        const pRow = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder().setCustomId('fops_ov_grantlevel').setPlaceholder('Select Power Level to Grant…').addOptions([
+            { label: '👑 Owner-Level Power', value: 'owner', description: 'Can corner anyone, including Admins & Owners' },
+            { label: '★ Admin-Level Power', value: 'admin', description: 'Can corner up to Admins' },
+            { label: '✰ Mod-Level Power', value: 'mod', description: 'Can corner up to Mods' },
+          ])
+        );
+        return interaction.editReply({ content: '### ⚡ Grant Corner Power: Step 1 of 3\nSelect the **Power Level** you want to grant:', components: [pRow] });
+      }
+      const userRow = new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder().setCustomId(`fops_ov_userpick:${ruleType}`).setPlaceholder('👤 Select a Member for this rule…')
+      );
+      const roleRow = new ActionRowBuilder().addComponents(
+        new RoleSelectMenuBuilder().setCustomId(`fops_ov_rolepick:${ruleType}`).setPlaceholder('🎭 OR Select a Role for this rule…')
+      );
+      return interaction.editReply({ content: `### ➕ Add Override Rule: \`${ruleType}\`\nPick either a **Member** OR a **Role** below:`, components: [userRow, roleRow] });
+    }
+    if (id === 'fops_ov_grantlevel') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const powerLevel = interaction.values[0];
+      const userRow = new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder().setCustomId(`fops_ov_grantactor:user:${powerLevel}`).setPlaceholder('👤 Select Member receiving this power…')
+      );
+      const roleRow = new ActionRowBuilder().addComponents(
+        new RoleSelectMenuBuilder().setCustomId(`fops_ov_grantactor:role:${powerLevel}`).setPlaceholder('🎭 OR Select Role receiving this power…')
+      );
+      return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 2 of 3\nWho receives this power? Pick a **Member** OR a **Role** below:`, components: [userRow, roleRow] });
+    }
+    if (id.startsWith('fops_ov_grantactor:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, actorType, powerLevel] = id.split(':');
+      const actorId = interaction.values[0];
+      const scopeRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId(`fops_ov_grantscope:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('Select Target Scope…').addOptions([
+          { label: '🌐 Everyone (All Members & Staff)', value: 'all', description: 'Power applies over everyone in the server' },
+          { label: '👤 Specific Member', value: 'user', description: 'Pick a specific member this power applies over' },
+          { label: '🎭 Specific Role', value: 'role', description: 'Pick a specific role this power applies over' },
+        ])
+      );
+      return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 3 of 3\nPower over whom? Select the **Target Scope** below:`, components: [scopeRow] });
+    }
+    if (id.startsWith('fops_ov_grantscope:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, actorType, actorId, powerLevel] = id.split(':');
+      const scope = interaction.values[0];
+      if (scope === 'all') {
+        const entry = overridesManager.addOverride({
+          actorType,
+          actorId,
+          targetType: '*',
+          targetId: '*',
+          type: 'GRANT_POWER',
+          powerTier: powerLevel,
+          note: `Granted ${powerLevel}-level power over everyone`
+        });
+        const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
+        await interaction.editReply({ content: `✅ Granted **${powerLevel.toUpperCase()}**-level cornering power to ${actorFmt} over **Everyone**.`, components: [] });
+        return refreshPanel(interaction.client);
+      }
+      if (scope === 'user') {
+        const userRow = new ActionRowBuilder().addComponents(
+          new UserSelectMenuBuilder().setCustomId(`fops_ov_granttarget:user:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('👤 Select Target Member…')
+        );
+        return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power\nSelect the **Target Member** this power applies over:`, components: [userRow] });
+      }
+      if (scope === 'role') {
+        const roleRow = new ActionRowBuilder().addComponents(
+          new RoleSelectMenuBuilder().setCustomId(`fops_ov_granttarget:role:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('🎭 Select Target Role…')
+        );
+        return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power\nSelect the **Target Role** this power applies over:`, components: [roleRow] });
+      }
+    }
+    if (id.startsWith('fops_ov_granttarget:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, targetType, actorType, actorId, powerLevel] = id.split(':');
+      const targetId = interaction.values[0];
+      const entry = overridesManager.addOverride({
+        actorType,
+        actorId,
+        targetType,
+        targetId,
+        type: 'GRANT_POWER',
+        powerTier: powerLevel,
+        note: `Granted ${powerLevel}-level power`
+      });
+      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
+      const targetFmt = targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`;
+      await interaction.editReply({ content: `✅ Granted **${powerLevel.toUpperCase()}**-level cornering power to ${actorFmt} over ${targetFmt}.`, components: [] });
+      return refreshPanel(interaction.client);
+    }
+    if (id.startsWith('fops_ov_userpick:') || id.startsWith('fops_ov_rolepick:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const isUser = id.startsWith('fops_ov_userpick:');
+      const ruleType = id.split(':')[1];
+      const pickedId = interaction.values[0];
+
+      let entry = null;
+      if (ruleType === 'EXCLUSIVE_CORNERER') {
+        entry = overridesManager.addOverride({
+          actorType: 'user',
+          actorId: interaction.guild.ownerId,
+          targetType: isUser ? 'user' : 'role',
+          targetId: pickedId,
+          type: 'EXCLUSIVE_CORNERER',
+          note: 'Owner-only protection'
+        });
+      } else if (ruleType === 'ALLOW_SELF_CORNER') {
+        entry = overridesManager.addOverride({
+          actorType: isUser ? 'user' : 'role',
+          actorId: pickedId,
+          targetType: isUser ? 'user' : 'role',
+          targetId: pickedId,
+          type: 'ALLOW_SELF_CORNER',
+          note: 'Self-corner allowed'
+        });
+      } else {
+        entry = overridesManager.addOverride({
+          actorType: isUser ? 'user' : 'role',
+          actorId: pickedId,
+          targetType: '*',
+          targetId: '*',
+          type: 'BYPASS_TIER',
+          note: 'Tier gate bypass'
+        });
+      }
+
+      await interaction.editReply({ content: `✅ Added personal override rule \`${entry.id}\` for ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} (${ruleType}).`, components: [] });
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_ov_delpicker') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const ruleId = interaction.values[0];
+      const ok = overridesManager.removeOverride(ruleId);
+      await interaction.editReply(ok ? `🗑️ Deleted rule \`${ruleId}\`.` : 'Rule not found.');
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_wl_termlist') {

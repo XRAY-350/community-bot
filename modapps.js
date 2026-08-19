@@ -302,17 +302,25 @@ async function resolve(interaction, accepted, config, grantOverride = null) {
 // Accept no longer grants immediately — it shows an ephemeral picker (defaulting to whatever they
 // actually applied for) so staff can grant a DIFFERENT position when that's the right call.
 function acceptGrantRow(post) {
-  const opts = [{ label: 'Trial Mod', value: 'mod', emoji: '🛡️', default: post.track !== 'lang' }];
-  for (const lang of langmods.languages()) opts.push({ label: `${lang} Mini-Mod`, value: `lang:${lang}`, emoji: '🌐', default: post.track === 'lang' && post.lang === lang });
-  const menu = new StringSelectMenuBuilder().setCustomId('modapp_accept_grant').setPlaceholder('Grant which role?').addOptions(opts.slice(0, 25));
+  const opts = [{ label: 'Trial Mod', value: 'mod', emoji: '🛡️' }];
+  for (const lang of langmods.languages()) opts.push({ label: `${lang} Mini-Mod`, value: `lang:${lang}`, emoji: '🌐' });
+  const menu = new StringSelectMenuBuilder().setCustomId('modapp_accept_grant').setPlaceholder('Or grant a DIFFERENT position...').addOptions(opts.slice(0, 25));
   return new ActionRowBuilder().addComponents(menu);
 }
+const acceptAsAppliedRow = (post) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('modapp_accept_as_applied').setEmoji('✅').setLabel(`Accept as ${positionLabel(post)}`).setStyle(ButtonStyle.Success));
+
 async function beginAccept(interaction) {
   const state = loadState();
   const post = state.posts[interaction.channelId];
   if (!post) return interaction.reply({ content: copy.modapps.untracked, flags: MessageFlags.Ephemeral });
   if (post.status !== 'open') return interaction.reply({ content: copy.modapps.alreadyResolved, flags: MessageFlags.Ephemeral });
-  return interaction.reply({ content: `Accepting <@${post.applicantId}> — which role should they actually get? Defaults to what they applied for (**${positionLabel(post)}**).`, components: [acceptGrantRow(post)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  return interaction.reply({
+    content: `Accepting <@${post.applicantId}> (${positionLabel(post)}) — click below to grant what they applied for, or pick a different role:`,
+    components: [acceptAsAppliedRow(post), acceptGrantRow(post)],
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] }
+  });
 }
 async function finishAccept(interaction, config) {
   await interaction.deferUpdate();
@@ -430,6 +438,7 @@ async function handleButton(interaction, config) {
   if (id === 'modapp_up') return vote(interaction, 'up');
   if (id === 'modapp_down') return vote(interaction, 'down');
   if (id === 'modapp_accept') return beginAccept(interaction);
+  if (id === 'modapp_accept_as_applied') return resolve(interaction, true, config, null);
   if (id === 'modapp_accept_grant') return finishAccept(interaction, config);
   if (id === 'modapp_deny') return resolve(interaction, false, config);
   if (id === 'modapp_askanon') return askAnonModal(interaction);
