@@ -4401,6 +4401,7 @@ client.once('ready', async () => {
         .addUserOption(o => o.setName('user').setDescription('Member currently in the corner').setRequired(true))
         .addStringOption(o => o.setName('status').setDescription('joke = release tier lock waived · real = normal tier lock applies').setRequired(true)
           .addChoices({ name: 'joke — waive the release tier lock', value: 'joke' }, { name: 'real — normal release tier lock applies', value: 'real' }))
+        .addStringOption(o => o.setName('also').setDescription('Change more members too: @mention them or paste IDs, space-separated (same status)').setRequired(false))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // mod+ only (handler excludes Trial Mods — owner, 2026-08-19: "they're the only ones who should have this ability anyway")
       new SlashCommandBuilder().setName('wordfilter').setDescription('Auto-delete messages containing a word/phrase for a period going forward')
         .addSubcommand(s => s.setName('add').setDescription('Start auto-deleting messages that contain a word/phrase')
@@ -7224,7 +7225,7 @@ client.on('interactionCreate', async (interaction) => {
         const actorRank = { botowner: 4, owner: 3, admin: 2, mod: 1 }[opspanel.tierOf(interaction)] || 0;
         const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { reasonText: reason, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
         extraNote = `\n➕ Also cornered **${done.length}**${done.length ? ` (${done.map(id => `<@${id}>`).join(', ')})` : ''}${sweptCount ? ` · swept ${Math.min(mins, 120)}m` : ''}${skipped.length ? ` · skipped ${skipped.length}` : ''}`;
-        if (jokes.length) extraNote += `\n😂 Treated as joke (staff-on-staff, release tier lock waived): ${jokes.map(id => `<@${id}>`).join(', ')}`;
+        if (jokes.length) extraNote += `\n😂 Treated as joke (staff-on-staff, release tier lock waived): ${jokes.map(id => `<@${id}>`).join(', ')} — \`/corner-status\` to fix`;
         if (done.length) await target.channel.send({
           content: `🧹 <@${interaction.user.id}> also sent ${done.map(id => `<@${id}>`).join(', ')} to the corner ${whenPhrase}.`,
           allowedMentions: { parse: [] } }).catch(e => console.error('[corner-extra] public announce:', e.message));
@@ -8959,31 +8960,41 @@ client.on('interactionCreate', async (interaction) => {
     // the only ones who should have this ability anyway") — marking "joke" waives a protection Trial Mods
     // don't have the authority to waive themselves via a normal release.
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can change a corner’s joke/real status.', flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const targetUser = interaction.options.getUser('user');
     const wantStatus = interaction.options.getString('status');
     const wantJoke = wantStatus === 'joke';
-    const rec = state.getCornered(targetUser.id);
-    if (!rec) return interaction.reply({ content: `${targetUser} is not currently in the corner.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    if (!!rec.joke === wantJoke) return interaction.reply({ content: `${targetUser}’s corner is already marked **${wantStatus}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    // Marking "joke" is equivalent in severity to releasing them solo — it waives the SAME tier-lock
-    // protection for everyone else too — so it needs the SAME authority a solo release would (same check
-    // canActSolo already gates release/lowering with), not just plain mod access. Tightening to "real" only
-    // ever ADDS protection, so any mod+ can do that freely.
-    if (wantJoke) {
-      const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
-      const actorTier = effectiveTierOf(interaction, targetMember);
-      if (!corner.canActSolo(rec, interaction.user.id, actorTier)) {
-        return interaction.reply({ content: `🔒 You can't mark ${targetUser}'s corner as a joke — they were cornered/held at a higher tier, same gate as releasing them solo. Your tier can't waive that protection alone.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    const alsoStr = interaction.options.getString('also');
+    // Mirrors /corner's own `also` — same regex, same dedup-by-Set pattern (matches mentions and raw
+    // pasted IDs alike, since a mention's digits satisfy \d{15,} same as a plain ID).
+    const ids = [targetUser.id, ...new Set(alsoStr ? (alsoStr.match(/\d{15,}/g) || []) : [])];
+    const changed = [], already = [], notCornered = [], denied = [];
+    for (const id of new Set(ids)) {
+      const rec = state.getCornered(id);
+      if (!rec) { notCornered.push(id); continue; }
+      if (!!rec.joke === wantJoke) { already.push(id); continue; }
+      // Marking "joke" is equivalent in severity to releasing them solo — it waives the SAME tier-lock
+      // protection for everyone else too — so it needs the SAME authority a solo release would (same check
+      // canActSolo already gates release/lowering with), not just plain mod access. Tightening to "real"
+      // only ever ADDS protection, so any mod+ can do that freely.
+      if (wantJoke) {
+        const targetMember = await interaction.guild.members.fetch(id).catch(() => null);
+        const actorTier = effectiveTierOf(interaction, targetMember);
+        if (!corner.canActSolo(rec, interaction.user.id, actorTier)) { denied.push(id); continue; }
       }
+      corner.setJoke(state, id, wantJoke);
+      changed.push(id);
     }
-    corner.setJoke(state, targetUser.id, wantJoke);
-    await logCorner(interaction.guild, { emoji: wantJoke ? '😂' : '🔒', title: wantJoke ? 'MARKED AS JOKE' : 'MARKED AS REAL', color: wantJoke ? CORNER_AMBER : CORNER_RED,
-      desc: `${targetUser}’s corner was manually marked **${wantStatus}**.\n**By:** <@${interaction.user.id}>` });
-    return interaction.reply({
-      content: wantJoke
-        ? `😂 Marked ${targetUser}'s corner as a joke — the release tier lock is now waived, anyone can let them out early.`
-        : `🔒 Marked ${targetUser}'s corner as real — the normal release tier lock now applies.`,
-      flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (changed.length) {
+      await logCorner(interaction.guild, { emoji: wantJoke ? '😂' : '🔒', title: wantJoke ? `MARKED AS JOKE (×${changed.length})` : `MARKED AS REAL (×${changed.length})`, color: wantJoke ? CORNER_AMBER : CORNER_RED,
+        desc: `${changed.map(id => `<@${id}>`).join(', ')}: manually marked **${wantStatus}**.\n**By:** <@${interaction.user.id}>` });
+    }
+    const lines = [];
+    if (changed.length) lines.push(`${wantJoke ? '😂' : '🔒'} Marked **${changed.length}** as **${wantStatus}**: ${changed.map(id => `<@${id}>`).join(', ')}`);
+    if (already.length) lines.push(`ℹ️ Already **${wantStatus}**: ${already.map(id => `<@${id}>`).join(', ')}`);
+    if (denied.length) lines.push(`🔒 Can't mark as joke (held at a higher tier, same gate as a solo release): ${denied.map(id => `<@${id}>`).join(', ')}`);
+    if (notCornered.length) lines.push(`❓ Not currently in the corner: ${notCornered.map(id => `<@${id}>`).join(', ')}`);
+    return interaction.editReply({ content: lines.join('\n') || 'Nobody to change.', allowedMentions: { parse: [] } });
   }
   if (name === 'appeal-reset') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can reset a ban appeal.', flags: MessageFlags.Ephemeral });
@@ -10757,7 +10768,7 @@ client.on('interactionCreate', async (interaction) => {
         if (sweptCount) lines.push(`🧹 Swept the last ${Math.min(sweepMins, 120)}m of this channel.`);
         if (skipped.length) lines.push(`⚠️ Skipped: ${skipped.join(', ')}`);
         if (unknown.length) lines.push(`❓ Not found: ${unknown.map(id => `\`${id}\``).join(', ')}`);
-        if (jokes.length) lines.push(`😂 Treated as joke (staff-on-staff, release tier lock waived): ${jokes.map(id => `<@${id}>`).join(', ')}`);
+        if (jokes.length) lines.push(`😂 Treated as joke (staff-on-staff, release tier lock waived): ${jokes.map(id => `<@${id}>`).join(', ')} — \`/corner-status\` to fix`);
         return interaction.editReply({ content: lines.join('\n') || 'Nobody to corner.', allowedMentions: { parse: [] } });
       }
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
