@@ -610,3 +610,25 @@ Deployed opspanel.js changes to both bots (`node --check` clean local+remote, cl
 `corner-status` still registered on both, melanin-bot's pre-existing "no dashboard channel set"
 log line is unrelated — melanin never had /panel's channel configured). Commits `13da055`
 (opspanel fixes) and `60ade06` (config.js catch-up), both pushed to origin/main.
+
+## 2026-08-19 21:54 — Command reference now explains arguments (hybrid: embed index + plain-message detail)
+
+Owner: the pinned reference never explained arguments on commands, and thought an embed was the
+wrong shape for that ("much better suited as a message... or maybe a hybrid"). Asked which split
+they wanted; chose: keep the existing embed as a compact index, add a full per-argument breakdown
+as a separate plain message. Embed field values cap at 1024 chars, nowhere near enough for every
+option on every moderation/watchlist/staff command — plain messages have no such per-field cap
+(just the 2000-char whole-message cap, worked around with 2 chunks).
+
+Added `commandRefDetailTexts()` (opspanel.js) — two plain-text chunks (1894/1576 chars), one
+covering Moderation (corner/uncorner/corner-status/strike/stats), the other covering
+Watchlist+Anon+Other+Staff, each command documented option-by-option with required/optional and
+what it does. Rewrote `ensureCommandRef()` to create/edit/pin both the index embed AND the two
+detail messages (previously it early-returned after the embed alone), tracking all message IDs in
+`ops_guide.json` (`detailMessageIds` array, new field) so restarts edit in place instead of
+reposting, plus cleanup logic if the chunk count ever shrinks later.
+
+Deployed to both bots (node --check clean local+remote, clean restart, corner-status still
+registered on both). Confirmed live on bots-vm: `ops_guide.json` now shows
+`detailMessageIds:["1539754441954300027","1539754444764217354"]` alongside the existing index
+`messageId`, both pinned in FUBU's mod-dashboard channel. Committed `88a3780`, pushed.
