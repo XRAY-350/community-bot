@@ -398,3 +398,32 @@ touched by this fix.
 
 Deployed to both `fubu-bot` and `melanin-bot`, clean restart confirmed (both registered their full
 command lists, no errors). Files: `index.js`, `opspanel.js`, `corner.js`. Commit `9cb6526`, pushed.
+
+## 2026-08-19 18:03 — Closed the two flagged residuals + /staff census gains Event Org/Mini-Mods
+
+Owner asked for an explanation of the two items flagged (not fixed) in the security pass above,
+then said to fix both, and separately caught that `/staff`'s census never listed Event Organizer or
+Mini-Mods despite those now sharing trial-tier cornering authority.
+
+**messageReactionAdd's live-tally authorization — real gap, fixed.** Reactions aren't interactions
+(a totally separate Discord event, `(reaction, user)` not `interaction`), so `opspanel.tierOf()`'s
+corner-status check never runs for it — this handler called `opspanel.memberTier(reactorMember)`
+directly. Added an explicit `!state.getCornered(user.id)` check before honoring the reactor's tier
+or Event Organizer status.
+
+**miniModCanActOn — investigated further, corrected the earlier claim.** While implementing the
+fix, checked whether cornering actually strips the Mini-Mod/Trial Mod/Event Organizer roles from a
+member's LIVE role list (`corner.js`'s `rolesToStrip()` — strips everything except
+`config.identifyingRoleIds`, the unverified role, and the corner role itself; confirmed via the live
+`.community_env` that none of the three overlap with `IDENTIFYING_ROLE_IDS`). They do get stripped.
+Since `langmods.canActOn()` checks LIVE role membership with no snapshot fallback (unlike
+`opspanel.memberTier()`, which is what made the mod/admin case real), a cornered Mini-Mod's role
+would already be gone and the check would already correctly deny them — **this was never actually
+exploitable**, unlike the mod/admin case. Added the check anyway (free, makes intent explicit) but
+corrected the record with the owner rather than let the earlier overstated claim stand.
+
+**`/staff` census**: added Event Organizer and a per-language Mini-Mod breakdown (via
+`langmods.languages()`), counted the same way Trial Mod already was — only for members below mod
+tier, and not mutually exclusive with each other (someone can hold more than one auxiliary role).
+
+Deployed to both bots, clean restart confirmed. Commit `8d6bce3`, pushed.
