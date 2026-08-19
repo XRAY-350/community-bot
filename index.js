@@ -3336,6 +3336,17 @@ function servedSuffix(servedMs) {
   return (features.enabled('timeServed') && servedMs) ? ` · in for **${humanDur(servedMs)}**` : '';
 }
 
+// Staff notification for a jail thread: pinging the mod role INSIDE the thread itself was tried and
+// reverted (2026-08-19) — Discord auto-adds every online member of a pinged role into a private thread,
+// so it silently stuffed the whole mod team into every cornered member's "private" thread and they never
+// left (staff are exempt from the auto-eject guard). Pinging in the corner-log channel instead — a normal
+// text channel, not a thread — gets the real notification without that side effect; the channel link only
+// lets someone in if Discord already would (private-thread view requires Manage Threads, which the mod
+// role has), so it can't leak the thread to non-staff.
+function threadNotifyLine(threadId) {
+  return threadId ? `\n🧵 **Private jail thread:** <#${threadId}>${config.modRoleId ? ` — <@&${config.modRoleId}>` : ''}` : '';
+}
+
 function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false, isAnon = false) {
   const sentByText = isAnon ? '**Sent by:** 🎭 Anonymous Staff' : (actorId ? `**Sent by:** <@${actorId}>` : '');
   return {
@@ -3371,7 +3382,8 @@ async function announceCorner(guild, memberId, durationMs, actorId, reasonText, 
     if (threadCh) await threadCh.send(cornerSentMessage(memberId, whenPhrase, reasonText || null, actorId, true)).catch(() => {});
   }
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
-    desc: `<@${memberId}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+    desc: `<@${memberId}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}${threadNotifyLine(threadId)}`,
+    pingRoleIds: threadId && config.modRoleId ? [config.modRoleId] : undefined });
 }
 
 // Post a FULLY STYLIZED audit entry to the public corner-log channel for every corner event
@@ -3386,11 +3398,13 @@ async function logCorner(guild, entry) {
       // Back-compat: a bare string still posts as a plain line.
       if (typeof entry === 'string') await ch.send({ content: entry, allowedMentions: { parse: [] } });
       else {
-        const { emoji, title, color, desc } = entry;
+        const { emoji, title, color, desc, pingRoleIds } = entry;
         // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone —
         // embed mentions only resolve from the viewer's cache and show "@unknown-user" in this restricted log.
         // Content-only: the ## header + emoji carry the signal; a color-only embed would render as an empty box.
-        await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: { parse: [] } });
+        // pingRoleIds is opt-in per call (e.g. a jail-thread notify) — everything else stays a silent @mention,
+        // same as before, since this channel logs every corner and shouldn't ping staff on each one.
+        await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: pingRoleIds?.length ? { parse: [], roles: pingRoleIds } : { parse: [] } });
       }
     }
     // Mirror to the owner-only log too — covers every corner/uncorner call site in one place. Anonymous
@@ -3594,7 +3608,8 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
   // and who cornered them (actor mention resolves but doesn't ping — only the cornered member is pinged).
   await target.reply({ content: `⛓️ This message got <@${member.id}> sent to the corner ${whenPhrase} by <@${actorId}>${reason ? ` (${reason})` : ''}.`, allowedMentions: { users: [member.id] } }).catch(e => console.error('[corner-msg] reply on original failed:', e.message));
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER (via message)', color: CORNER_RED,
-    desc: `<@${member.id}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'} for a message.\n**By:** <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}\n**Message:** ${target.url}` });
+    desc: `<@${member.id}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'} for a message.\n**By:** <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}\n**Message:** ${target.url}${threadNotifyLine(r.threadId)}`,
+    pingRoleIds: r.threadId && config.modRoleId ? [config.modRoleId] : undefined });
   return { ok: true, stripped: r.stripped };
 }
 
@@ -3660,7 +3675,7 @@ async function addRoleEffective(member, roleId, reason) {
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
 async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false, anon = false } = {}) {
-  const done = [], skipped = [], seen = new Set();
+  const done = [], skipped = [], threadIds = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
   for (const member of members) {
@@ -3680,6 +3695,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread, anon });
     if (r.ok) {
       done.push(member.id);
+      if (r.threadId) threadIds.push(r.threadId);
       const chId = r.targetChannelId || config.cornerChannelId;
       const cornerCh = await guild.channels.fetch(chId).catch(() => null);
       const sentMsg = cornerSentMessage(member.id, whenPhrase, reasonText, anon ? null : actorId, false, anon);
@@ -3692,9 +3708,11 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
   }
   if (done.length) {
     const bulkWhenPhrase = relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**';
+    const threadLines = threadIds.map(threadNotifyLine).join('');
     await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
-      desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** ${anon ? '🎭 Anonymous Staff' : `<@${actorId}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
-      ownerDesc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** <@${actorId}>${anon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+      desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** ${anon ? '🎭 Anonymous Staff' : `<@${actorId}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}${threadLines}`,
+      ownerDesc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** <@${actorId}>${anon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
+      pingRoleIds: threadIds.length && config.modRoleId ? [config.modRoleId] : undefined });
   }
   return { done, skipped, whenPhrase };
 }
@@ -10575,8 +10593,9 @@ client.on('interactionCreate', async (interaction) => {
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
       const cornerWhenPhrase = relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**';
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
-        desc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** ${isAnon ? '🎭 Anonymous Staff' : `<@${interaction.user.id}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
-        ownerDesc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** <@${interaction.user.id}>${isAnon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+        desc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** ${isAnon ? '🎭 Anonymous Staff' : `<@${interaction.user.id}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}${threadNotifyLine(r.threadId)}`,
+        ownerDesc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** <@${interaction.user.id}>${isAnon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
+        pingRoleIds: r.threadId && config.modRoleId ? [config.modRoleId] : undefined });
       const ackText = `🚫 Sent ${user} to the corner ${modWhen}${reasonText ? ` (${reasonText})` : ''}. Stripped **${r.stripped}** role(s).`;
       // The public ack (previously the interaction reply itself when not run in the corner channel) is now
       // a plain channel message — "the one that was already there" stays visible in-channel exactly as
