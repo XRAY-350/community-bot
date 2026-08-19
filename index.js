@@ -5133,10 +5133,9 @@ async function postWelcomeMessage(guild, member) {
     const banner = statePath('welcome_banner.gif');
     const files = fs.existsSync(banner) ? [new AttachmentBuilder(banner, { name: 'welcome_banner.gif' })] : [];
     const embed = new EmbedBuilder().setColor(13090815)
-      .setDescription('Hi there! Welcome to For Us By Us 2026. I created this space for black individuals from all over to '
-        + 'connect, build community, and safely discuss important topics affecting our community. Please '
-        + 'remember this is not a place to come with hate for others but simply to unite ourselves! We’re glad to have you!\n\n'
-        + 'A server made For Us By Us🫶🏾 Read the rules to verify')
+      .setDescription('Welcome to For Us By Us, a space for black individuals from all over to connect, build '
+        + 'community, and safely discuss what matters to us. No hate here, just unity. Read the rules to '
+        + 'verify, and we’re glad to have you! 🫶🏾')
       .setImage(files.length ? 'attachment://welcome_banner.gif' : null);
     await ch.send({ content: `Welcome <@${member.id}>! Thank you for joining!`, embeds: [embed], files, allowedMentions: { users: [member.id] } });
   } catch (e) { console.error('[welcome] post failed:', e.message); }
