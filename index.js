@@ -3687,7 +3687,7 @@ async function addRoleEffective(member, roleId, reason) {
 // ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
-async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false } = {}) {
+async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false, anon = false } = {}) {
   const done = [], skipped = [], jokes = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
@@ -3705,17 +3705,17 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
-    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread });
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread, anon });
     if (r.ok) {
       done.push(member.id);
       if (r.joke) jokes.push(member.id);
       const chId = r.targetChannelId || config.cornerChannelId;
       const cornerCh = await guild.channels.fetch(chId).catch(() => null);
-      const sentMsg = cornerSentMessage(member.id, whenPhrase, reasonText, actorId);
+      const sentMsg = cornerSentMessage(member.id, whenPhrase, reasonText, anon ? null : actorId, false, anon);
       if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
       if (r.threadId) {
         const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
-        if (threadCh) await threadCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId, true)).catch(() => {});
+        if (threadCh) await threadCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, anon ? null : actorId, true, anon)).catch(() => {});
       }
     } else skipped.push(`<@${member.id}> (${r.error})`);
   }
@@ -10528,6 +10528,9 @@ client.on('interactionCreate', async (interaction) => {
         if (memberCornerCountToday(interaction.user.id) >= config.memberCornerDailyCap)
           return interaction.reply({ content: `You’ve used all **${config.memberCornerDailyCap}** of today’s corners — they reset at midnight UTC.`, flags: MessageFlags.Ephemeral });
       }
+      const isAdult = interaction.options.getBoolean('adult') || false;
+      const isThread = interaction.options.getBoolean('thread') || false;
+      const isAnon = interaction.options.getBoolean('anon') || false;
       // Multi-corner: `also` (named IDs) and/or `sweep` (everyone non-staff active in THIS channel in the last
       // N minutes) → corner the whole deduped set at once, same duration/reason. Either option triggers it.
       const alsoStr = interaction.options.getString('also');
@@ -10557,7 +10560,7 @@ client.on('interactionCreate', async (interaction) => {
             if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) { extras.push(mm); seen.add(m.author.id); sweptCount++; }
           }
         }
-        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier: opspanel.tierOf(interaction) });
+        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier, adult: isAdult, thread: isThread, anon: isAnon });
         const lines = [];
         if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` (${reasonText})` : ''}`);
         if (sweptCount) lines.push(`🧹 Swept the last ${Math.min(sweepMins, 120)}m of this channel.`);
@@ -10568,14 +10571,6 @@ client.on('interactionCreate', async (interaction) => {
       }
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
-      // Always defer ephemeral now (was public unless inCorner) — Discord only honors a followup's own
-      // ephemeral flag when the INITIAL response was ephemeral too; otherwise it silently posts the
-      // followup publicly, which is why the joke-check-in prompt below was visible/clickable to everyone
-      // instead of just the actor. The public in-channel ack (when not run in the corner channel) is now
-      // sent as its own plain channel message instead, so it's unaffected by this.
-      const isAdult = interaction.options.getBoolean('adult') || false;
-      const isThread = interaction.options.getBoolean('thread') || false;
-      const isAnon = interaction.options.getBoolean('anon') || false;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon });
       if (!r.ok) {
