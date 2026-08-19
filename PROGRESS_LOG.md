@@ -653,3 +653,33 @@ pins before the dashboard (`1539755176993230889`), correct order in #mod-dashboa
 untouched (still has no dashboard channel configured, pre-existing, unrelated to this).
 
 Deleted `reorder_pins.js` scratch script from bots-vm after use. Committed `f2692d1`, pushed.
+
+## 2026-08-19 22:04 — Reference layout reworked: message-then-embed, grouped by command
+
+Owner: "not exactly what I was expecting... message then embed the message then embed. to group
+things by command on both the reference sheet and the detailed list." Reworked the reference
+structure: the plain MESSAGE now comes first (was the embed), the EMBED comes second (was the
+plain messages) — reversed from the previous layout. Both are now organized by command instead of
+by paragraph-per-category:
+- `commandRefText()` — the quick-index message, one line per command (still clustered under
+  category bold headers for scanability, but each command is its own line, not sharing a
+  paragraph). Trimmed wording several passes to fit Discord's 2000-char message cap (verified
+  1983 chars by extracting the actual function from the deployed source and running it, not by
+  hand-counting a draft).
+- `commandRefDetailEmbeds()` — replaced the two plain-text detail chunks with a single embed, one
+  FIELD per command (title = command name, value = its args as bullets), so every command is its
+  own distinct unit instead of several commands' args crammed into one category-labeled field.
+  Verified 15 fields / 2863 total chars, both under Discord's 25-field / 6000-char embed caps, no
+  field over the 1024 field-value cap.
+
+`ensureCommandRef()` rewritten to post/pin the index message first, then the detail embed second,
+so channel order is: index message → detail embed → dashboard panel (unchanged from the prior fix
+that put the reference above the dashboard). Since edits can't reorder already-posted messages,
+deleted FUBU's 4 existing pinned messages again (same one-off scratch-script approach as the last
+fix, `reorder_pins2.js`, deleted after use) and reseeded `ops_panel.json` with just `channelId`
+before restarting, avoiding the earlier "wiped channelId too" mistake. Confirmed clean: index
+`1539756952647897138` → detail `1539756954769956873` → dashboard `1539756959283286067`, all
+pinned in the right order in #mod-dashboard. Both bots restarted clean, `corner-status` still
+registered on both, melanin-bot's pre-existing unconfigured dashboard channel unaffected.
+
+Committed `4699794`, pushed.
