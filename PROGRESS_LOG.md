@@ -427,3 +427,31 @@ corrected the record with the owner rather than let the earlier overstated claim
 tier, and not mutually exclusive with each other (someone can hold more than one auxiliary role).
 
 Deployed to both bots, clean restart confirmed. Commit `8d6bce3`, pushed.
+
+## 2026-08-19 18:27 — "Mini mod is not just per language" + a rename mistake, corrected
+
+Owner corrected the `/staff` census framing: confirmed `langmods.json` was already scope-generic
+(reading whatever keys are configured, not a hardcoded language list) — its one live entry is
+"LGBTQ" (role `🌈 ʟɢʙᴛǫ ᴍɪɴɪ ᴍᴏᴅ`, small-caps, which is why an earlier `/mini/i` role-name search
+this session missed it — small-caps unicode letters aren't the same codepoints as ASCII). Also
+found 4 more Mini-Mod roles (French/German/Dutch/Hispanic) that exist but have NO `langmods.json`
+entry — not wired to any channel, so holding one currently grants no actual authority.
+
+Owner: "yes, list them too" — `/staff` now does a plain `/mini-?mod/i` name search (not hardcoded
+IDs) for any Mini-Mod role missing from the config, and lists them in a separate "(unconfigured)"
+section, deliberately excluded from the staff total since they don't confer real authority yet.
+
+Separately: "speaking of which all mod positions should use regular text so that it can be typed."
+Renamed `🌈 ʟɢʙᴛǫ ᴍɪɴɪ ᴍᴏᴅ` → `LGBTQ Mini-Mod` (matching the other 4's plain-text convention).
+**Mistake, caught and reverted**: also renamed two individual owner-tier titles I mistook for
+"positions" — `ᴡᴀʀᴅᴇɴ ᴏꜰ ᴛʜᴇ ɴɪɢʜᴛᴛɪᴅᴇ!` and `ᴘᴇʟᴢ!` — owner: "two of those are personal roles and
+should not be renamed." Reverted both back to their original small-caps names immediately.
+
+**Noticed but not yet flagged to the owner during this pass, worth a follow-up**: there are TWO
+`MODS - ✰` roles (ids `...675316` with 3 members, `...364328` with 0) and TWO `ADMINS - ★` roles
+(`...226833` with 2 members, `...510916` with 0) live on the server — the 0-member ones look like
+the same kind of accidental duplicate found earlier this session (application-archive). Worth
+confirming which one `opspanel.MOD_ROLE_ID`/`ADMIN_ROLE_ID` actually points to and whether the
+empty duplicates should be deleted.
+
+Commit `9cb13ef`, pushed. Deploy verified clean on both bots.
