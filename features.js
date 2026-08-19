@@ -24,7 +24,7 @@ const REGISTRY = [
   { key: 'help',        audience: 'core',   built: true,  commands: ['help'] },
   { key: 'dashboard',   audience: 'member', built: true,  commands: ['dashboard'], // public member hub: status, server info, feature guide (setup folded into /panel → Setup)
     help: { name: '🤖 Member hub', value: 'Open `/dashboard` for your status, the rules, and every member feature in one place.' } },
-  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'stats', 'ban'], contexts: ['Send to corner', 'Ban'] },   // 'cornered' folded into /panel → Corner page
+  { key: 'corner',      audience: 'staff',  built: true,  commands: ['corner', 'uncorner', 'corner-status', 'stats', 'ban'], contexts: ['Send to corner', 'Ban'] },   // 'cornered' folded into /panel → Corner page
   { key: 'strikes',     audience: 'staff',  built: true,  commands: ['strike', 'weights'], contexts: ['Strike'] },
   { key: 'wordFilter',  audience: 'staff',  built: true,  commands: ['wordfilter', 'mediafilter'], contexts: ['Block this GIF', 'Block this attachment'] }, // temporary auto-delete of messages containing a set word/phrase, or GIFs/attachments
   { key: 'levelCheck',  audience: 'staff',  built: true,  commands: ['levelcheck'] }, // audit Arcane level roles landing (reads #bot-commands log) + admin resync-fix

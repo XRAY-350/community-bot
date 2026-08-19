@@ -4397,6 +4397,11 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods may release too (handler allows them)
       new SlashCommandBuilder().setName('cornered').setDescription('List everyone in the corner, with one-click release buttons')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // trial mods work the corner, so they need the list too
+      new SlashCommandBuilder().setName('corner-status').setDescription('Change whether an active corner is treated as a joke or real')
+        .addUserOption(o => o.setName('user').setDescription('Member currently in the corner').setRequired(true))
+        .addStringOption(o => o.setName('status').setDescription('joke = release tier lock waived · real = normal tier lock applies').setRequired(true)
+          .addChoices({ name: 'joke — waive the release tier lock', value: 'joke' }, { name: 'real — normal release tier lock applies', value: 'real' }))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // mod+ only (handler excludes Trial Mods — owner, 2026-08-19: "they're the only ones who should have this ability anyway")
       new SlashCommandBuilder().setName('wordfilter').setDescription('Auto-delete messages containing a word/phrase for a period going forward')
         .addSubcommand(s => s.setName('add').setDescription('Start auto-deleting messages that contain a word/phrase')
           .addStringOption(o => o.setName('word').setDescription('The word or phrase to auto-delete').setRequired(true))
@@ -8945,6 +8950,40 @@ client.on('interactionCreate', async (interaction) => {
   if (name === 'cornered') {
     try { return await handleCorneredList(interaction); }
     catch (e) { console.error(`[cornered] ${e.message}`); return; }
+  }
+  if (name === 'corner-status') {
+    // Fixes the bulk-corner flaw (owner, 2026-08-19): joke/real is decided per-target purely by "is this
+    // target staff," with no way to correct a mis-classification after the fact — a serious corner on a
+    // mod bundled into a batch silently loses its tier-lock protection, or a joke corner sweeping in a
+    // regular member leaves them stuck with the full real lock. mod+ only, not Trial Mods (owner: "they're
+    // the only ones who should have this ability anyway") — marking "joke" waives a protection Trial Mods
+    // don't have the authority to waive themselves via a normal release.
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can change a corner’s joke/real status.', flags: MessageFlags.Ephemeral });
+    const targetUser = interaction.options.getUser('user');
+    const wantStatus = interaction.options.getString('status');
+    const wantJoke = wantStatus === 'joke';
+    const rec = state.getCornered(targetUser.id);
+    if (!rec) return interaction.reply({ content: `${targetUser} is not currently in the corner.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    if (!!rec.joke === wantJoke) return interaction.reply({ content: `${targetUser}’s corner is already marked **${wantStatus}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+    // Marking "joke" is equivalent in severity to releasing them solo — it waives the SAME tier-lock
+    // protection for everyone else too — so it needs the SAME authority a solo release would (same check
+    // canActSolo already gates release/lowering with), not just plain mod access. Tightening to "real" only
+    // ever ADDS protection, so any mod+ can do that freely.
+    if (wantJoke) {
+      const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+      const actorTier = effectiveTierOf(interaction, targetMember);
+      if (!corner.canActSolo(rec, interaction.user.id, actorTier)) {
+        return interaction.reply({ content: `🔒 You can't mark ${targetUser}'s corner as a joke — they were cornered/held at a higher tier, same gate as releasing them solo. Your tier can't waive that protection alone.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      }
+    }
+    corner.setJoke(state, targetUser.id, wantJoke);
+    await logCorner(interaction.guild, { emoji: wantJoke ? '😂' : '🔒', title: wantJoke ? 'MARKED AS JOKE' : 'MARKED AS REAL', color: wantJoke ? CORNER_AMBER : CORNER_RED,
+      desc: `${targetUser}’s corner was manually marked **${wantStatus}**.\n**By:** <@${interaction.user.id}>` });
+    return interaction.reply({
+      content: wantJoke
+        ? `😂 Marked ${targetUser}'s corner as a joke — the release tier lock is now waived, anyone can let them out early.`
+        : `🔒 Marked ${targetUser}'s corner as real — the normal release tier lock now applies.`,
+      flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
   if (name === 'appeal-reset') {
     if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins can reset a ban appeal.', flags: MessageFlags.Ephemeral });
