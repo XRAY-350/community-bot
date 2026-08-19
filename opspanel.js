@@ -300,7 +300,7 @@ async function buildCorner() {
   for (const id of ids.slice(0, 20)) {
     const rec = cornered[id] || {};
     const rel = rec.releaseAt ? `<t:${Math.floor(rec.releaseAt / 1000)}:R>` : 'indefinite';
-    lines.push(`• ${memberLabel(id)} ${memberTag(id)} · release ${rel}`);
+    lines.push(`• ${memberLabel(id)} ${memberTag(id)} · release ${rel}${rec.joke ? ' · 😂 joke' : ''}`);
     row.addComponents(new ButtonBuilder().setCustomId(`corner_rel:${id}:0`).setEmoji('🔓').setLabel(`Release …${id.slice(-4)}`).setStyle(ButtonStyle.Success));
     if (row.components.length === 5) { rows.push(row); row = new ActionRowBuilder(); }
   }
@@ -310,7 +310,7 @@ async function buildCorner() {
     .setDescription(ids.length
       ? 'Members currently **timed-out** in the corner. Click a **Release** button to let someone out now and give their roles back.\n\n' + lines.join('\n') + (ids.length > 20 ? `\n…and ${ids.length - 20} more` : '')
       : '✅ Nobody is in the corner right now.')
-    .setFooter({ text: 'Any mod can release someone. To PUT someone in, use ⛓️ Corner on the Moderation page.' });
+    .setFooter({ text: 'Any mod can release someone. To PUT someone in, use ⛓️ Corner on the Moderation page. 😂 = flagged as joke (tier lock waived); flip with /corner-status.' });
   rows.push(navRow(pageIdx('Corner')));
   return { content: `## ⛓️ FUBU Ops · Corner (${ids.length})`, embeds: [embed], components: rows };
 }
@@ -656,6 +656,7 @@ function commandRefEmbed() {
         `\`/corner @member [${copy.corner.unitsDot}]\`: time-out: strips roles + locks them to the corner (blank = until released)\n` +
         '`/uncorner @member [time]`: release now, or schedule a release later\n' +
         '`/cornered`: list who’s in the corner, each with a release button\n' +
+        '`/corner-status @member [also] <joke|real>`: fix a mis-flagged corner (staff-on-staff auto-flags joke; mods+ only, marking joke needs solo-release authority)\n' +
         '`/strike view·add·remove·clear @member`: raise **or lower** strikes (each carries **weight**; a ban is offered once they add up to **10 units**)' },
       { name: '👁️ Watchlist & safety', value:
         '`/watchlist add·remove·list @member`: put/lift the **Watchlist** role (their messages get flagged to mods)\n' +
