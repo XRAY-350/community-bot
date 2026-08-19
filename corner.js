@@ -295,14 +295,52 @@ function rolesToStrip(guild, member) {
 function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Date.now()) {
   const all = state.getMeta('cornerLog') || {};
   const list = all[memberId] || [];
-  // durationMs = the sentence length (null = indefinite); servedMs is filled in on release (uncorner).
-  // `at` is passed from corner() so it MATCHES the active record's start time, letting uncorner attribute
-  // served time to the right entry.
   list.push({ ruleIndex: ruleIndex || null, at, durationMs: durationMs || null, servedMs: null });
   all[memberId] = list;
   state.setMeta('cornerLog', all);
   if (!ruleIndex) return 1;
   return list.filter(e => e.ruleIndex === ruleIndex).length;
+}
+
+// Find existing dedicated jail thread or create a new private thread for cornered member
+async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
+  try {
+    const parentChannel = await guild.channels.fetch(targetChannelId).catch(() => null);
+    if (!parentChannel || !parentChannel.threads) return null;
+
+    const threadName = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
+    
+    // Search active threads
+    const activeThreads = await parentChannel.threads.fetchActive().catch(() => null);
+    let thread = activeThreads?.threads?.find(t => t.name === threadName || t.name.includes(member.id));
+
+    // Search archived threads if not in active
+    if (!thread) {
+      const archived = await parentChannel.threads.fetchArchived({ type: 'private', fetchAll: true }).catch(() => null);
+      thread = archived?.threads?.find(t => t.name === threadName || t.name.includes(member.id));
+    }
+
+    if (thread) {
+      if (thread.archived) await thread.setArchived(false).catch(() => {});
+      if (thread.locked) await thread.setLocked(false).catch(() => {});
+      await thread.members.add(member.id).catch(() => {});
+      return thread.id;
+    }
+
+    // Create new private thread (Type 12 PrivateThread)
+    const newThread = await parentChannel.threads.create({
+      name: threadName,
+      autoArchiveDuration: 1440,
+      type: 12, // ChannelType.PrivateThread
+      reason: `Corner jail thread for ${member.user?.tag || member.id}`
+    });
+
+    await newThread.members.add(member.id).catch(() => {});
+    return newThread.id;
+  } catch (err) {
+    console.error('[corner] getOrCreateCornerJailThread error:', err.message);
+    return null;
+  }
 }
 
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
