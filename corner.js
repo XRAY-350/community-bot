@@ -302,6 +302,23 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
   return list.filter(e => e.ruleIndex === ruleIndex).length;
 }
 
+// Role-strip removes ViewChannel on every normal channel, but Discord grants PRIVATE thread access to
+// an explicitly-added member independent of whether they can see the parent channel — so a cornered
+// mod who was already a member of, say, a mod-applications review thread keeps reading/posting there
+// even after every role (including Mod) is gone. Sweep every active thread and drop their membership,
+// except the jail thread we may just have put them in.
+async function stripThreadMemberships(guild, memberId, exceptThreadId) {
+  try {
+    const active = await guild.channels.fetchActiveThreads().catch(() => null);
+    if (!active) return;
+    for (const thread of active.threads.values()) {
+      if (thread.id === exceptThreadId) continue;
+      const tm = await thread.members.fetch(memberId).catch(() => null);
+      if (tm) await thread.members.remove(memberId, 'Sent to the corner: thread membership stripped').catch(() => {});
+    }
+  } catch (e) { console.error('[corner] stripThreadMemberships:', e.message); }
+}
+
 // Find existing dedicated jail thread or create a new private thread for cornered member
 async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
   try {
@@ -420,6 +437,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
         }
       }
     }
+    await stripThreadMemberships(guild, member.id, threadId);
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount, threadId, targetChannelId };
   }
   const me = await guild.members.fetchMe();
@@ -482,6 +500,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
+  await stripThreadMemberships(guild, member.id, threadId);
   return { ok: true, stripped: strip.length, repeatCount, joke, threadId, targetChannelId };
 }
 
