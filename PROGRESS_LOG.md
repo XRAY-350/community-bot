@@ -750,3 +750,28 @@ Fixed via a second scratch script (`fix_tier_access.js`, `permissionOverwrites.e
 Re-audited after the edits to confirm effective access (all 3 FUBU roles now show
 `allow=[ViewChannel,ReadMessageHistory]` on #mod-dashboard). Both scratch scripts deleted from
 bots-vm. No code changes — this was a live Discord permission fix only.
+
+## 2026-08-19 22:40 — Correction: dashboard access reverted, corner-talk access granted instead
+
+Owner corrected the previous entry: "They should not have access to the dashboard" — the earlier
+#mod-dashboard grants for Trial Mod / LGBTQ Mini-Mod / Event Organizer were wrong, staff-only was
+correct as-is. Then: "And they should be able to talk in the corner" — a different, real gap:
+Trial Mod already had ViewChannel+SendMessages(+SendMessagesInThreads on FUBU) on the actual corner
+channel (#the-corner / #corner), but Mini-Mod and Event Organizer didn't.
+
+Reverted (permissionOverwrites.delete + permguard.blessChannel):
+- FUBU #mod-dashboard: removed the Trial Mod / LGBTQ Mini-Mod / Event Organizer overwrites added
+  last entry.
+- Melanin #mod-dashboard: removed the Trial Mod / Event Organizer overwrites added last entry.
+
+Granted (matching Trial Mod's existing corner-channel overwrite exactly):
+- FUBU #the-corner (1529552895262068846): LGBTQ Mini-Mod + Event Organizer now have
+  ViewChannel+SendMessages+SendMessagesInThreads.
+- Melanin #corner (1534359883774951505): Event Organizer now has ViewChannel+SendMessages (Trial
+  Mod's Melanin overwrite doesn't include SendMessagesInThreads either, so matched that).
+
+Left untouched (not mentioned in the correction, only "the dashboard" was called out): LGBTQ
+Mini-Mod's staff-announcements/staff-discussions/staff-call grants from the previous entry are
+still in place. Flagged to the owner in case those should also be reverted.
+
+Re-verified live, both scratch scripts deleted from bots-vm.
