@@ -686,6 +686,86 @@ function commandRefEmbed() {
         '**🟣 Owner**: everything, **plus** removal policy (⚠️ Danger page), mod-application decisions, and feature toggles.' })
     .setFooter({ text: '🔒 = needs a higher role. This is the reference; use the dashboard to actually do things.' });
 }
+
+// Per-argument detail — plain messages, not embeds: embed field values cap at 1024 chars and this needs
+// room to actually explain every option. Two chunks so each stays under Discord's 2000-char message cap.
+function commandRefDetailTexts() {
+  return [
+    '**📖 Command Arguments — 🛡️ Moderation**\n\n' +
+    '`/corner`\n' +
+    '• `user` (required) — member to corner\n' +
+    '• `duration` (optional) — e.g. `30m`/`2h`/`3d`; blank = until released\n' +
+    '• `rule` (optional) — pick a server rule they broke\n' +
+    '• `reason` (optional) — custom reason instead of a rule\n' +
+    '• `adult` (optional) — send to the 18+ Adult Corner\n' +
+    '• `thread` (optional) — jail to a private thread\n' +
+    '• `anon` (optional) — hide your name, announce as Anonymous Staff\n' +
+    '• `also` (optional) — corner more members too: @mentions or IDs, space-separated (same duration/reason)\n' +
+    '• `sweep` (optional) — also corner everyone non-staff who posted in this channel in the last N minutes\n\n' +
+    '`/uncorner`\n' +
+    '• `user` (required) — member to release\n' +
+    '• `duration` (optional) — schedule the release later instead of now\n' +
+    '• `also` (optional) — release more members too, same shape as `/corner`\'s `also`\n\n' +
+    '`/corner-status`\n' +
+    '• `user` (required) — member currently cornered\n' +
+    '• `status` (required) — `joke` (waives the release tier lock) or `real` (normal tier lock applies)\n' +
+    '• `also` (optional) — change more members too, same shape as `/corner`\'s `also`\n\n' +
+    '`/strike view`\n' +
+    '• `user` (required) — whose units + history to show\n\n' +
+    '`/strike add`\n' +
+    '• `user` (required)\n' +
+    '• `rule` (optional) — pick a rule (rule, reason, or both)\n' +
+    '• `reason` (optional) — free text (rule, reason, or both)\n' +
+    '• `weight` (optional) — 1 minor / 2 moderate / 3 severe; omit to use the rule\'s default\n' +
+    '• `timeout` (optional) — native Discord timeout e.g. `30m`/`2h`, adds bonus units (capped +2)\n' +
+    '• `corner` (optional) — also corner them for this long, e.g. `30m`\n\n' +
+    '`/strike remove`\n' +
+    '• `user` (required)\n' +
+    '• `strike_id` (required) — autocomplete picks from their active strikes\n\n' +
+    '`/strike clear`\n' +
+    '• `user` (required) — wipes ALL their active strikes\n\n' +
+    '`/stats`\n' +
+    '• `user` (required)\n' +
+    '• `period` (optional) — 7d / 30d / 90d / all, default 30d\n' +
+    '• `visibility` (optional) — private (default, only you) or public',
+
+    '**📖 Command Arguments — 👁️ Watchlist & safety**\n\n' +
+    '`/watchlist add` / `/watchlist remove`\n' +
+    '• `user` (required)\n\n' +
+    '`/watchlist list` — no arguments\n\n' +
+    '`/watchlist-terms add`\n' +
+    '• `term` (required) — word or phrase to flag\n' +
+    '• `scope` (optional) — strict (watchlist ban alerts) / loose (day-to-day watch-log) / welfare (support check-ins); default strict\n\n' +
+    '`/watchlist-terms remove`\n' +
+    '• `term` (required)\n' +
+    '• `scope` (optional) — same 3 choices, default strict\n\n' +
+    '`/watchlist-terms list`\n' +
+    '• `scope` (optional) — same 3 choices, default all\n\n' +
+    '`/watchlist-suggest`\n' +
+    '• `hours` (optional) — how far back to scan, default 6, max 24\n\n' +
+    '`/unban`\n' +
+    '• `user_id` (required) — banned user\'s ID; autocomplete searches by name too\n' +
+    '• `watchlist` (optional) — re-flag them on rejoin\n' +
+    '• `reason` (optional) — audit-log reason\n\n' +
+    '**📖 Command Arguments — 🔒 Anonymous tools**\n\n' +
+    'Confess / Report / Modmail / Suggest are `/dashboard` buttons, not slash commands — no arguments to document here, the button opens a modal.\n\n' +
+    '`/whistleblow`\n' +
+    '• `to` (required) — head admin only / server owner only / both / anonymous (no one can unmask)\n' +
+    '• `text` (required) — the problem, up to 1500 chars\n\n' +
+    '**📖 Command Arguments — 🧰 Other**\n\n' +
+    '`/verify`\n' +
+    '• `user` (required) — member to verify\n\n' +
+    '`/pending`, `/panel`, `/dashboard` — no arguments\n\n' +
+    '**📖 Command Arguments — 👥 Staff & mod-team**\n\n' +
+    '`/staff` — no arguments\n\n' +
+    '`/promote-trial` / `/promote-mod`\n' +
+    '• `member` (required) — autocomplete; opens a mod-vote thread\n\n' +
+    '`/demote-trial` / `/demote-mod`\n' +
+    '• `member` (required) — autocomplete\n' +
+    '• `reason` (optional) — internal note, not shown to the member',
+  ];
+}
+
 async function ensureCommandRef(client, channelId) {
   try {
     let ref = {}; try { ref = JSON.parse(fs.readFileSync(GUIDE_REF_FILE, 'utf8')); } catch {}
@@ -693,15 +773,42 @@ async function ensureCommandRef(client, channelId) {
     if (!chId) return console.error('[fops] no dashboard channel for command reference');
     const ch = await client.channels.fetch(chId).catch(() => null);
     if (!ch) return console.error('[fops] command-ref channel not found');
-    const payload = { embeds: [commandRefEmbed()] };
+
+    let msgId = ref.messageId;
     if (ref.channelId === chId && ref.messageId) {
       const msg = await ch.messages.fetch(ref.messageId).catch(() => null);
-      if (msg) { await msg.edit(payload); if (!msg.pinned) await msg.pin().catch(() => {}); return; }
+      if (msg) { await msg.edit({ embeds: [commandRefEmbed()] }); if (!msg.pinned) await msg.pin().catch(() => {}); }
+      else msgId = null;
+    } else msgId = null;
+    if (!msgId) {
+      const msg = await ch.send({ embeds: [commandRefEmbed()] });
+      await msg.pin().catch(() => {});
+      msgId = msg.id;
+      console.log(`[fops] command reference created + pinned ${msg.id} in ${chId}`);
     }
-    const msg = await ch.send(payload);
-    await msg.pin().catch(() => {});
-    fs.writeFileSync(GUIDE_REF_FILE, JSON.stringify({ channelId: chId, messageId: msg.id }));
-    console.log(`[fops] command reference created + pinned ${msg.id} in ${chId}`);
+
+    // Full per-argument breakdown lives in its own plain messages right below the index embed — an
+    // embed field caps at 1024 chars, nowhere near enough room to explain every option on every command.
+    const texts = commandRefDetailTexts();
+    const detailIds = Array.isArray(ref.detailMessageIds) && ref.channelId === chId ? ref.detailMessageIds.slice() : [];
+    for (let i = 0; i < texts.length; i++) {
+      const existingId = detailIds[i];
+      const existing = existingId ? await ch.messages.fetch(existingId).catch(() => null) : null;
+      if (existing) { await existing.edit({ content: texts[i], embeds: [] }); if (!existing.pinned) await existing.pin().catch(() => {}); detailIds[i] = existing.id; }
+      else {
+        const msg = await ch.send({ content: texts[i] });
+        await msg.pin().catch(() => {});
+        detailIds[i] = msg.id;
+      }
+    }
+    // A prior deploy's leftover extra detail message (texts array shrank) — unpin/delete anything beyond.
+    for (let i = texts.length; i < detailIds.length; i++) {
+      const stale = await ch.messages.fetch(detailIds[i]).catch(() => null);
+      if (stale) await stale.delete().catch(() => {});
+    }
+    detailIds.length = texts.length;
+
+    fs.writeFileSync(GUIDE_REF_FILE, JSON.stringify({ channelId: chId, messageId: msgId, detailMessageIds: detailIds }));
   } catch (e) { console.error('[fops] ensureCommandRef:', e.message); }
 }
 
