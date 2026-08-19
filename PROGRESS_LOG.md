@@ -262,3 +262,27 @@ accurate there. Open item — see below.
 
 **Files touched this session:** `index.js`, `corner.js`, `opspanel.js`, `copy.js`, `appeals.js`,
 `strikeAppeals.js`, `eventorgapps.js`. Commits `c5f61b8` through `b6d61ea` on `main`, all pushed.
+
+## 2026-08-19 16:45 — FUBU: per-channel emoji swap in the merged Community category, plus a real incident
+
+Owner asked to replace the generic 🫍 (used on 13 channels, all confirmed confined to this one
+category via a full-guild scan) with a topic-appropriate emoji per channel. Proposed a first pass;
+owner rejected the tool call before approving ("i didn't give permission yet. some of these i don't
+like") and asked for alternatives on 5: important-discussions (🌍 collided with the Global Languages
+Chat category), hair (wanted a dark skin tone modifier), hobbies-interests forum (wanted more
+options), anime (wanted Japan-themed but not crossed flags), fun-confessions (wanted more playful/
+secretive options). Presented real alternatives via AskUserQuestion, got explicit picks: 📰, 💇🏿,
+🎨, ⛩️, 🤭.
+
+**Real incident, not just a near-miss:** the FIRST (rejected) script had already executed against
+the live Discord server before the rejection was processed — confirmed by diffing live state, which
+showed the OLD unwanted emoji (🌍, plain 💇, 🧩, 🇯🇵, 😂) already applied. Ran a corrective pass
+matching each old emoji to its confirmed replacement, verified again via a fresh `guild.channels.fetch()`
+that all 13 now match what was actually approved. Saved
+[[feedback-rejected-tool-call-may-still-execute]] — a rejected Bash call involving ssh/remote
+commands is not a reliable signal that nothing happened live; always diff actual live state
+afterward rather than trusting the rejection alone.
+
+Final: general 💬, general-2 🗨️, important-discussions 📰, debates ⚖️, venting 🫂, hair 💇🏿,
+selfies-n-flicks 📸, lgbtq-talk 🌈, hobbies-interests (forum) 🎨, gaming 🎮, music 🎵, anime ⛩️,
+fun-confessions 🤭.
