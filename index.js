@@ -5657,6 +5657,16 @@ const isOwner = (i) => ['owner', 'botowner'].includes(opspanel.tierOf(i));      
 // Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
 // low-risk, bounded things: VERIFY, view the dashboard read-only, and CORNER (rule+reason, ≤1h).
 const isTrialMod = (i) => !!(config.trialModRoleId && i.member?.roles?.cache?.has(config.trialModRoleId));
+// Any language Mini-Mod role, across every configured language (owner, 2026-08-19: generalized to
+// trial-mod-level cornering, same as Trial Mods and Event Organizer — previously mini-mods could only
+// use the scoped "Send to corner" context menu on their own language channel, no /corner access at all).
+const isAnyMiniMod = (i) => !!i.member && langmods.languages().some(lang => {
+  const rid = langmods.roleForLang(lang);
+  return rid && i.member.roles.cache.has(rid);
+});
+// Cornering authority at "trial mod level" (rule/reason required, ≤1h, one target) — Trial Mods, any
+// language Mini-Mod, and Event Organizer all share this same restricted tier for /corner + /uncorner.
+const hasTrialCornerTier = (i) => isTrialMod(i) || isAnyMiniMod(i) || !!(i.member?.roles?.cache?.has(eventorgapps.ORGANIZER_ROLE_ID));
 // Verified-member cornering (FUBU-only, feature 'memberCorner'): a plain VERIFIED member (not staff, not
 // trial, not unverified) may corner one non-staff member with tight limits — no rule/reason, ≤5m, capped
 // per day. Kept deliberately separate from staff/trial powers.
@@ -10423,7 +10433,7 @@ client.on('interactionCreate', async (interaction) => {
     // Access is tied to the MOD ROLE (not a permission). Admins can always use it as an override. Trial
     // mods may ALSO corner — but only regular members (the tier check below stops them cornering staff)
     // and under restrictions (rule + reason required, ≤1h), enforced in the corner block.
-    const trial = isTrialMod(interaction);
+    const trial = hasTrialCornerTier(interaction);
     const isMod = !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
     // Verified members may use /corner (ONLY — not /uncorner) when the memberCorner feature is on. Their tight
     // limits (≤5m, no rule/reason, daily cap) are enforced inside the `name === 'corner'` block below.
@@ -10456,13 +10466,13 @@ client.on('interactionCreate', async (interaction) => {
     if (name === 'corner') {
       // Same "separate from the memberCorner flag" path as the early gate above, now re-checked against
       // the actually-resolved target member (not just the raw option id).
-      const mCorner = isMemberCorner(interaction) || (!opspanel.tierOf(interaction) && !isTrialMod(interaction)
+      const mCorner = isMemberCorner(interaction) || (!opspanel.tierOf(interaction) && !hasTrialCornerTier(interaction)
         && isMemberCornerEligibleRole(interaction) && corner.canBypassCornerTier(interaction.member || interaction.user.id, member, opspanel.tierOf(interaction)));
       // Belt-and-suspenders re-check of the same gate the caller already applied above (kept in case this
       // block is ever reached another way) — staff/trial-mods always; a verified member only when
       // 'memberCorner' is on. /corner is visible to everyone regardless of the flag, so this can still
       // fire for a non-eligible member.
-      if (!opspanel.tierOf(interaction) && !isTrialMod(interaction) && !mCorner && !hitsquad.isSquadMember(interaction.user.id))
+      if (!opspanel.tierOf(interaction) && !hasTrialCornerTier(interaction) && !mCorner && !hitsquad.isSquadMember(interaction.user.id))
         return interaction.reply({ content: copy.guards.modRoleOnly, flags: MessageFlags.Ephemeral });
       // Self-cornering is blocked for everyone EXCEPT this one member (owner-approved standing exception,
       // 2026-08-03). They pick their own duration like anyone else would; nothing here changes /uncorner,
@@ -10503,14 +10513,15 @@ client.on('interactionCreate', async (interaction) => {
       const ruleN = interaction.options.getString('rule');
       const customReason = interaction.options.getString('reason');
       const reasonText = [ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}` : null, customReason].filter(Boolean).join(', ') || null;
-      // Trial-mod restrictions: must give a rule OR a reason (same "not both required" convention as
-      // /strike elsewhere), and the corner can't exceed 1 hour.
+      // Trial-tier restrictions (Trial Mods, any language Mini-Mod, and Event Organizer all share this same
+      // restricted tier): must give a rule OR a reason (same "not both required" convention as /strike
+      // elsewhere), and the corner can't exceed 1 hour.
       if (trial) {
-        if (!ruleN && !customReason) return interaction.reply({ content: 'As a **trial mod**, you must pick a **rule** or give a **reason** to corner someone.', flags: MessageFlags.Ephemeral });
-        if (!durationMs) return interaction.reply({ content: 'As a **trial mod**, you must set a **duration**, max **1 hour** (e.g. `30m`, `1h`).', flags: MessageFlags.Ephemeral });
-        if (durationMs > 3600000) return interaction.reply({ content: 'As a **trial mod**, a corner can be **at most 1 hour**.', flags: MessageFlags.Ephemeral });
+        if (!ruleN && !customReason) return interaction.reply({ content: 'At your tier, you must pick a **rule** or give a **reason** to corner someone.', flags: MessageFlags.Ephemeral });
+        if (!durationMs) return interaction.reply({ content: 'At your tier, you must set a **duration**, max **1 hour** (e.g. `30m`, `1h`).', flags: MessageFlags.Ephemeral });
+        if (durationMs > 3600000) return interaction.reply({ content: 'At your tier, a corner can be **at most 1 hour**.', flags: MessageFlags.Ephemeral });
         if ((interaction.options.getString('also') || '').trim() || (interaction.options.getString('sweep') || '').trim())
-          return interaction.reply({ content: 'As a **trial mod**, you can only corner **one member at a time** — `also` and `sweep` are mod-only.', flags: MessageFlags.Ephemeral });
+          return interaction.reply({ content: 'At your tier, you can only corner **one member at a time** — `also` and `sweep` are mod-only.', flags: MessageFlags.Ephemeral });
       }
       // Verified-member restrictions: NO rule/reason (so it never feeds corner→strike conversion), single
       // target, ≤ the member max (blank → max), and a hard daily cap.

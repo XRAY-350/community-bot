@@ -625,9 +625,20 @@ async function relayApplicantReply(msg, config) {
 // forumId/appsChannelId). @everyone AND MODS/ADMINS explicitly denied (they'd otherwise inherit view from
 // the mod-activities category) — only the OWNER roles can see it. This is where a mod+'s own application
 // is moved (see archiveOwnApplication) once they can browse the whole forum and would otherwise find it.
+const ARCHIVE_CHANNEL_NAME = '🔐┆application-archive';
 async function ensureArchiveChannel(guild) {
   let c = loadConfig();
   if (c.archiveChannelId) { const ex = await guild.channels.fetch(c.archiveChannelId).catch(() => null); if (ex) return ex; }
+  // The cached ID didn't resolve (channel deleted/moved/config drift) — before creating a fresh one, check
+  // for an existing channel by name first. Silently recreating here is exactly how a second, orphaned
+  // application-archive channel got made (found + fixed 2026-08-19): the real one still existed, just under
+  // an ID this config no longer had, so a duplicate got spun up instead of erroring.
+  const existing = (await guild.channels.fetch()).find(ch => ch && ch.name === ARCHIVE_CHANNEL_NAME);
+  if (existing) {
+    console.error(`[modapps] ensureArchiveChannel: cached archiveChannelId (${c.archiveChannelId}) didn't resolve, but found an existing "${ARCHIVE_CHANNEL_NAME}" (${existing.id}) — re-adopting it instead of creating a duplicate.`);
+    c.archiveChannelId = existing.id; saveConfig(c);
+    return existing;
+  }
   const forum = c.forumId ? await guild.channels.fetch(c.forumId).catch(() => null) : null;
   const overwrites = [
     { id: guild.id, deny: [P.ViewChannel] },
@@ -636,7 +647,7 @@ async function ensureArchiveChannel(guild) {
     ...opspanel.OWNER_ROLE_IDS.map(id => ({ id, allow: [P.ViewChannel, P.ReadMessageHistory] })),
   ];
   const channel = await guild.channels.create({
-    name: '🔐┆application-archive', type: ChannelType.GuildText, parent: forum?.parentId || undefined,
+    name: ARCHIVE_CHANNEL_NAME, type: ChannelType.GuildText, parent: forum?.parentId || undefined,
     topic: 'Owner-only. Applications moved here once the applicant is staff and could otherwise browse to their own in the review forum.',
     permissionOverwrites: overwrites, reason: 'Owner-only application archive (owner request)',
   });
