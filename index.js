@@ -3376,11 +3376,17 @@ function cornerSentMessage(userId, whenPhrase, reason, actorId) {
 // release buttons) AND the audit entry in the corner log. Centralises what every corner path needs — /corner,
 // the context-menu, and the DASHBOARD (which previously announced/logged nothing) all call this so the
 // resultant message consistently shows the duration and who sent them.
-async function announceCorner(guild, memberId, durationMs, actorId, reasonText) {
+async function announceCorner(guild, memberId, durationMs, actorId, reasonText, threadId = null, targetChannelId = null) {
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
-  const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
-  if (cornerCh) await cornerCh.send(cornerSentMessage(memberId, whenPhrase, reasonText || null, actorId)).catch(() => {});
+  const chId = targetChannelId || config.cornerChannelId;
+  const cornerCh = await guild.channels.fetch(chId).catch(() => null);
+  const sentMsg = cornerSentMessage(memberId, whenPhrase, reasonText || null, actorId);
+  if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
+  if (threadId) {
+    const threadCh = await guild.channels.fetch(threadId).catch(() => null);
+    if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+  }
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
     desc: `<@${memberId}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
 }
@@ -3581,8 +3587,13 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
   try {
     const cornerChId = r.targetChannelId || config.cornerChannelId;
     const cornerCh = await guild.channels.fetch(cornerChId).catch(() => null);
+    const sentMsg = cornerSentMessage(member.id, whenPhrase, reason || null, actorId);
     if (cornerCh) {
-      await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reason || null, actorId));
+      await cornerCh.send(sentMsg).catch(() => {});
+      if (r.threadId) {
+        const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
+        if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+      }
       const emb = new EmbedBuilder().setColor(CORNER_RED)
         .setAuthor({ name: authorTag, iconURL: authorAvatar })
         .setDescription(shownContent.slice(0, 4000) || '_[no text, see attachment/link]_')
@@ -10562,7 +10573,12 @@ client.on('interactionCreate', async (interaction) => {
       // Announce in the corner channel so the cornered member sees it there.
       try {
         const cornerCh = await guild.channels.fetch(r.targetChannelId || config.cornerChannelId).catch(() => null);
-        if (cornerCh) await cornerCh.send(cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id));
+        const sentMsg = cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id);
+        if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
+        if (r.threadId) {
+          const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
+          if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+        }
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
