@@ -353,7 +353,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   if (byId && guild) {
     actorMember = await guild.members.fetch(byId).catch(() => null);
   }
-  const grantedPower = overridesManager.getGrantedPower(actorMember || byId);
+  const grantedPower = overridesManager.getGrantedPower(actorMember || byId, member);
   if (grantedPower) actorTier = grantedPower;
 
   if (member.id === guild.ownerId && !(byId && canBypassCornerTier(actorMember || byId, member, actorTier))) {

@@ -1166,7 +1166,7 @@ async function handlePanel(interaction) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return denyReply('owner');
       const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder().setCustomId('fops_ov_picktype').setPlaceholder('Select Rule Type…').addOptions([
-          { label: '⚡ Grant Corner Power', value: 'GRANT_POWER', description: 'Grant Owner/Admin cornering authority to a Member or Role' },
+          { label: '⚡ Grant Corner Power', value: 'GRANT_POWER', description: 'Grant Owner, Admin, or Mod cornering authority' },
           { label: '🔒 Exclusive Protection', value: 'EXCLUSIVE_CORNERER', description: 'Make a Member or Role cornerable ONLY by you (Server Owner)' },
           { label: '🙋 Allow Self-Corner', value: 'ALLOW_SELF_CORNER', description: 'Allow a Member or Role to corner themselves' },
           { label: '🔓 Bypass Tier Gate', value: 'BYPASS_TIER', description: 'Allow a Member or Role to bypass tier hierarchy gates' },
@@ -1177,6 +1177,16 @@ async function handlePanel(interaction) {
     if (id === 'fops_ov_picktype') {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
       const ruleType = interaction.values[0];
+      if (ruleType === 'GRANT_POWER') {
+        const pRow = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder().setCustomId('fops_ov_grantlevel').setPlaceholder('Select Power Level to Grant…').addOptions([
+            { label: '👑 Owner-Level Power', value: 'owner', description: 'Can corner anyone, including Admins & Owners' },
+            { label: '★ Admin-Level Power', value: 'admin', description: 'Can corner up to Admins' },
+            { label: '✰ Mod-Level Power', value: 'mod', description: 'Can corner up to Mods' },
+          ])
+        );
+        return interaction.editReply({ content: '### ⚡ Grant Corner Power: Step 1 of 3\nSelect the **Power Level** you want to grant:', components: [pRow] });
+      }
       const userRow = new ActionRowBuilder().addComponents(
         new UserSelectMenuBuilder().setCustomId(`fops_ov_userpick:${ruleType}`).setPlaceholder('👤 Select a Member for this rule…')
       );
@@ -1184,6 +1194,79 @@ async function handlePanel(interaction) {
         new RoleSelectMenuBuilder().setCustomId(`fops_ov_rolepick:${ruleType}`).setPlaceholder('🎭 OR Select a Role for this rule…')
       );
       return interaction.editReply({ content: `### ➕ Add Override Rule: \`${ruleType}\`\nPick either a **Member** OR a **Role** below:`, components: [userRow, roleRow] });
+    }
+    if (id === 'fops_ov_grantlevel') {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const powerLevel = interaction.values[0];
+      const userRow = new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder().setCustomId(`fops_ov_grantactor:user:${powerLevel}`).setPlaceholder('👤 Select Member receiving this power…')
+      );
+      const roleRow = new ActionRowBuilder().addComponents(
+        new RoleSelectMenuBuilder().setCustomId(`fops_ov_grantactor:role:${powerLevel}`).setPlaceholder('🎭 OR Select Role receiving this power…')
+      );
+      return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 2 of 3\nWho receives this power? Pick a **Member** OR a **Role** below:`, components: [userRow, roleRow] });
+    }
+    if (id.startsWith('fops_ov_grantactor:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, actorType, powerLevel] = id.split(':');
+      const actorId = interaction.values[0];
+      const scopeRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId(`fops_ov_grantscope:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('Select Target Scope…').addOptions([
+          { label: '🌐 Everyone (All Members & Staff)', value: 'all', description: 'Power applies over everyone in the server' },
+          { label: '👤 Specific Member', value: 'user', description: 'Pick a specific member this power applies over' },
+          { label: '🎭 Specific Role', value: 'role', description: 'Pick a specific role this power applies over' },
+        ])
+      );
+      return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 3 of 3\nPower over whom? Select the **Target Scope** below:`, components: [scopeRow] });
+    }
+    if (id.startsWith('fops_ov_grantscope:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, actorType, actorId, powerLevel] = id.split(':');
+      const scope = interaction.values[0];
+      if (scope === 'all') {
+        const entry = overridesManager.addOverride({
+          actorType,
+          actorId,
+          targetType: '*',
+          targetId: '*',
+          type: 'GRANT_POWER',
+          powerTier: powerLevel,
+          note: `Granted ${powerLevel}-level power over everyone`
+        });
+        const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
+        await interaction.editReply({ content: `✅ Granted **${powerLevel.toUpperCase()}**-level cornering power to ${actorFmt} over **Everyone**.`, components: [] });
+        return refreshPanel(interaction.client);
+      }
+      if (scope === 'user') {
+        const userRow = new ActionRowBuilder().addComponents(
+          new UserSelectMenuBuilder().setCustomId(`fops_ov_granttarget:user:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('👤 Select Target Member…')
+        );
+        return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power\nSelect the **Target Member** this power applies over:`, components: [userRow] });
+      }
+      if (scope === 'role') {
+        const roleRow = new ActionRowBuilder().addComponents(
+          new RoleSelectMenuBuilder().setCustomId(`fops_ov_granttarget:role:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('🎭 Select Target Role…')
+        );
+        return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power\nSelect the **Target Role** this power applies over:`, components: [roleRow] });
+      }
+    }
+    if (id.startsWith('fops_ov_granttarget:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, targetType, actorType, actorId, powerLevel] = id.split(':');
+      const targetId = interaction.values[0];
+      const entry = overridesManager.addOverride({
+        actorType,
+        actorId,
+        targetType,
+        targetId,
+        type: 'GRANT_POWER',
+        powerTier: powerLevel,
+        note: `Granted ${powerLevel}-level power`
+      });
+      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
+      const targetFmt = targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`;
+      await interaction.editReply({ content: `✅ Granted **${powerLevel.toUpperCase()}**-level cornering power to ${actorFmt} over ${targetFmt}.`, components: [] });
+      return refreshPanel(interaction.client);
     }
     if (id.startsWith('fops_ov_userpick:') || id.startsWith('fops_ov_rolepick:')) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
@@ -1200,16 +1283,6 @@ async function handlePanel(interaction) {
           targetId: pickedId,
           type: 'EXCLUSIVE_CORNERER',
           note: 'Owner-only protection'
-        });
-      } else if (ruleType === 'GRANT_POWER') {
-        entry = overridesManager.addOverride({
-          actorType: isUser ? 'user' : 'role',
-          actorId: pickedId,
-          targetType: '*',
-          targetId: '*',
-          type: 'GRANT_POWER',
-          powerTier: 'owner',
-          note: 'Owner-level cornering power'
         });
       } else if (ruleType === 'ALLOW_SELF_CORNER') {
         entry = overridesManager.addOverride({

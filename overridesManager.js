@@ -128,12 +128,12 @@ function checkExclusiveProtection(targetMember, actorId) {
   return { allowed: true };
 }
 
-function getGrantedPower(actorMember) {
+function getGrantedPower(actorMember, targetMember = null) {
   const list = loadOverrides();
   if (!actorMember) return null;
   for (const o of list) {
     if (o.type !== 'GRANT_POWER') continue;
-    if (matchEntity(o.actorType, o.actorId, actorMember)) {
+    if (matchEntity(o.actorType, o.actorId, actorMember) && (!targetMember || matchEntity(o.targetType, o.targetId, targetMember))) {
       return o.powerTier || 'owner';
     }
   }
