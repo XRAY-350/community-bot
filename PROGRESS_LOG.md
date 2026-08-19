@@ -464,3 +464,20 @@ like application-archive. Verified which pair was live before deleting: `opspane
 (`1528316361665675316`, 3 members) matched the non-empty roles. Deleted the two 0-member duplicates
 (`1539396298363510916` "ADMINS - ★", `1539396384036364328` "MODS - ✰"), double-checked member
 count was 0 immediately before each delete.
+
+## 2026-08-19 18:45 — Missed permguard bless, Trial Mods silently un-removed from mod-discussion
+
+Owner caught it: "did you bless the perm changes? Trial mods can still see/speak in mod
+discussions." I hadn't — a known, previously-documented gotcha ([[project_permguard_bless_after_edit]])
+I still walked into. Confirmed via journalctl: every restart this session (4 of them) ran a boot
+sweep that "corrected 9 drifted overwrite(s)" — the earlier `permissionOverwrites.delete(TRIAL_ROLE, ...)`
+on mod-discussion was live for a while, then silently reverted back to the old golden manifest,
+which still had Trial Mods allowed. New channels created this session were unaffected (correctly
+logged as "unmanaged," permguard only reverts channels already IN the manifest), but the one
+existing channel I actually edited took the hit.
+
+Re-removed Trial Mods from mod-discussion, then blessed all 14 channels touched or created this
+session (the 4 Punishments channels, the Staff category itself, the 4 channels moved into it,
+the 3 new staff-announcements/staff-discussions/staff-call channels, and mod-discussion) via
+`permguard.blessChannel()` so future 20-min sweeps treat their current state as correct instead of
+drift. Verified live: Trial Mods confirmed absent from mod-discussion after the fix.
