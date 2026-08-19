@@ -42,8 +42,11 @@ function systemRoleIds(config) {
   // role stays OUT of this set on purpose: it's the sanctioned /request-role petition path for a veteran
   // wanting into a tribe (see the roleselect_tribe handler).
   const tribeRoles = tribes.all().flatMap(t => [t.leaderRoleId, t.staffRankRoleId, ...((t.ranks || []).map(r => r.roleId))]);
+  // Adult Verified / MDNI Verified (owner, 2026-08-19) are 100% auto-computed (Verified + adult age
+  // bracket, and on top of that MDNI) — never grantable by request, since the bot's own sweep would just
+  // strip a manually-approved grant right back off the next time it re-checks the real prerequisites.
   return new Set([...STAFF, ...tribeRoles, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
-    config.cornerRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
+    config.cornerRoleId, config.adultVerifiedRoleId, config.mdniVerifiedRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
 }
 // Why a role can't be requested (null = it's fine).
 function whyNotRequestable(role, guild, me, config) {
