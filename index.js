@@ -3568,21 +3568,19 @@ async function handleCorneredList(interaction) {
 // and (when the cornerReason feature is on) the reason-modal path. Optional reason is surfaced in the
 // corner channel + the audit log. durationMs null = indefinite (blank in the modal, matching /corner).
 // Returns { ok, stripped, error }.
-async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = null, ruleN = null, actorTier = null) {
-  const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier);
+async function cornerFromMessage(guild, actorId, member, target, reason, durationMs = null, ruleN = null, actorTier = null, opts = {}) {
+  const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, opts);
   if (!r.ok) return { ok: false, error: r.error };
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
-  // A deleted-message log entry is BOT-authored (the real source message is gone, so wl_corner points here
-  // instead) — attribute to the cornered MEMBER, not the bot, and strip the log's own "🗑️ Message deleted…"
-  // header line so only the original content shows.
   const fromLog = target.author?.id === client.user.id;
   const authorTag = fromLog ? member.user.tag : target.author.tag;
   const authorAvatar = fromLog ? member.displayAvatarURL() : target.author.displayAvatarURL();
   const shownContent = fromLog ? (target.content || '').replace(/^🗑️[^\n]*\n\n/, '') : (target.content || '');
   const channelLabel = fromLog ? 'a deleted-message log entry' : `#${target.channel?.name || '?'}`;
   try {
-    const cornerCh = await guild.channels.fetch(config.cornerChannelId).catch(() => null);
+    const cornerChId = r.targetChannelId || config.cornerChannelId;
+    const cornerCh = await guild.channels.fetch(cornerChId).catch(() => null);
     if (cornerCh) {
       await cornerCh.send(cornerSentMessage(member.id, whenPhrase, reason || null, actorId));
       const emb = new EmbedBuilder().setColor(CORNER_RED)
@@ -3591,7 +3589,8 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
         .addFields({ name: 'Why they’re here', value: `Cornered for this message by <@${actorId}>${reason ? `\n**Reason:** ${reason}` : ''}` })
         .setFooter({ text: `originally in ${channelLabel}` }).setTimestamp(target.createdTimestamp);
       const files = [...(target.attachments?.values() || [])].slice(0, 5).map(a => a.url);
-      await cornerCh.send({ embeds: [emb], content: files.length ? files.join('\n') : undefined, allowedMentions: { parse: [] } });
+      const targetCh = r.threadId ? (await guild.channels.fetch(r.threadId).catch(() => cornerCh)) : cornerCh;
+      await targetCh.send({ embeds: [emb], content: files.length ? files.join('\n') : undefined, allowedMentions: { parse: [] } });
     }
   } catch (e) { console.error(`[corner-msg] forward failed: ${e.message}`); }
   // In-channel notice on the flagged message (no DM) — same pattern the Strike flows use. Shows the duration
@@ -6126,9 +6125,8 @@ function cornerReasonModal(memberId, channelId, messageId, ruleN, isTrial = fals
   const rows = [
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (blank = indefinite; 30s/10m/2h/1d)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(10)),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('options').setLabel('Options: type "thread", "adult", or "both"').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(20).setPlaceholder('blank = standard corner')),
   ];
-  // Trial mods can only corner ONE target at a time — no bulk (also/sweep). Omit those fields for them (the
-  // /corner slash + the submit handler enforce the same rule as a backstop).
   if (!isTrial) rows.push(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('also').setLabel('Also corner (paste @IDs, space-separated)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder('blank = no · same duration/reason')),
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sweep').setLabel('Sweep others active here? (minutes)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder('blank = no · e.g. 5 = last 5 min')));
@@ -7042,9 +7040,10 @@ client.on('interactionCreate', async (interaction) => {
       if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
         return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`);
       const ch = await guild.channels.fetch(channelId).catch(() => null);
-      const target = ch && await ch.messages.fetch(messageId).catch(() => null);
-      if (!target) return interaction.editReply('That message is gone. Can’t corner from it.');
-      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs, ruleN, opspanel.tierOf(interaction));
+      let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch { /* older modal */ }
+      const isAdult = optsStr.includes('adult');
+      const isThread = optsStr.includes('thread');
+      const res = await cornerFromMessage(guild, interaction.user.id, member, target, reason, durationMs, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread });
       if (!res.ok) return interaction.editReply(`Failed to corner: ${res.error}`);
       // Extra members to corner alongside the target: `also` (named IDs) + `sweep` (everyone non-staff active in
       // this channel in the last N minutes). Merged into ONE deduped set so nobody is cornered twice.
