@@ -507,13 +507,15 @@ function fmtEntity(type, id) {
 // Accurate wildcard-actor label: "any staff" only when a minActorTier is actually set (the owner-optin
 // rule requires admin+) — an unrestricted wildcard genuinely means ANY member, staff or not, so say so.
 function overrideActorFmt(o) {
-  if (o.type === 'EXCLUSIVE_CORNERER') {
-    const actors = overridesManager.normalizeExclusiveActors(o).map(a => fmtEntity(a.type, a.id));
-    if (o.hitSquadExempt) actors.push('🚔 Hit Squad (while active)');
-    return actors.length ? actors.join(', ') : '_nobody yet — add an actor_';
+  if (o.type === 'ALLOW_SELF_CORNER') {
+    return o.actorId !== '*' ? fmtEntity(o.actorType, o.actorId) : 'Everyone';
   }
-  if (o.actorId !== '*') return fmtEntity(o.actorType, o.actorId);
-  return o.minActorTier ? `Everyone (${o.minActorTier}+ staff)` : 'Everyone (⚠️ no tier floor)';
+  // Every other type can list multiple actors now — see overridesManager.normalizeActors.
+  const names = overridesManager.normalizeActors(o).map(a => a.id === '*'
+    ? (o.minActorTier ? `Everyone (${o.minActorTier}+ staff)` : 'Everyone (⚠️ no tier floor)')
+    : fmtEntity(a.type, a.id));
+  if (o.type === 'EXCLUSIVE_CORNERER' && o.hitSquadExempt) names.push('🚔 Hit Squad (while active)');
+  return names.length ? names.join(', ') : '_nobody yet — add an actor_';
 }
 function overrideTargetFmt(o) {
   return fmtEntity(o.targetType, o.targetId);
@@ -530,11 +532,9 @@ function overrideSummaryLine(o) {
 }
 function overrideShortLabel(o) {
   const shortId = id => id === '*' ? '*' : id.slice(-4);
-  if (o.type === 'EXCLUSIVE_CORNERER') {
-    const actors = overridesManager.normalizeExclusiveActors(o);
-    return `${o.type} (${actors.length ? actors.map(a => shortId(a.id)).join(',') : 'none'} → ${shortId(o.targetId)})`;
-  }
-  return `${o.type} (${shortId(o.actorId)} → ${shortId(o.targetId)})`;
+  if (o.type === 'ALLOW_SELF_CORNER') return `${o.type} (${shortId(o.actorId)} → ${shortId(o.targetId)})`;
+  const actors = overridesManager.normalizeActors(o);
+  return `${o.type} (${actors.length ? actors.map(a => shortId(a.id)).join(',') : 'none'} → ${shortId(o.targetId)})`;
 }
 
 function buildOverrides() {
@@ -574,6 +574,7 @@ function buildOverrideDetail(ruleId) {
   const o = overridesManager.getOverride(ruleId);
   if (!o) return { content: 'That rule no longer exists — it may have already been deleted.', embeds: [], components: [navRow(pageIdx('Overrides'))] };
   const isExclusive = o.type === 'EXCLUSIVE_CORNERER';
+  const multiActor = o.type !== 'ALLOW_SELF_CORNER';   // every type except self-corner supports several actors
   const fields = [
     { name: 'Type', value: overrideTypeLabel(o), inline: true },
     { name: isExclusive ? 'Allowed to corner them' : 'Actor', value: overrideActorFmt(o), inline: true },
@@ -586,14 +587,15 @@ function buildOverrideDetail(ruleId) {
   if (o.updatedAt) fields.push({ name: 'Last edited', value: `<t:${Math.floor(o.updatedAt / 1000)}:R>`, inline: false });
 
   const embed = new EmbedBuilder().setColor(0x5865F2).setTitle(`🛡️ Override \`${o.id}\``).addFields(fields);
-  const isWildcardBypass = o.type === 'BYPASS_TIER' && o.actorId === '*';
+  // Tier-floor editing is only meaningful when a wildcard ('*') actor is actually in the list.
+  const hasWildcardActor = o.type === 'BYPASS_TIER' && overridesManager.normalizeActors(o).some(a => a.id === '*');
   const btns = [
     new ButtonBuilder().setCustomId(`fops_ov_editnote:${o.id}`).setEmoji('✏️').setLabel('Edit Note').setStyle(ButtonStyle.Secondary),
   ];
-  if (isWildcardBypass) btns.push(new ButtonBuilder().setCustomId(`fops_ov_edittier:${o.id}`).setEmoji('🎚️').setLabel('Set Tier Floor').setStyle(ButtonStyle.Secondary));
-  if (isExclusive) {
+  if (hasWildcardActor) btns.push(new ButtonBuilder().setCustomId(`fops_ov_edittier:${o.id}`).setEmoji('🎚️').setLabel('Set Tier Floor').setStyle(ButtonStyle.Secondary));
+  if (multiActor) {
     btns.push(new ButtonBuilder().setCustomId(`fops_ov_addactor:${o.id}`).setEmoji('➕').setLabel('Add Actor').setStyle(ButtonStyle.Secondary));
-    if (overridesManager.normalizeExclusiveActors(o).length) {
+    if (overridesManager.normalizeActors(o).length) {
       btns.push(new ButtonBuilder().setCustomId(`fops_ov_rmactor:${o.id}`).setEmoji('➖').setLabel('Remove Actor').setStyle(ButtonStyle.Secondary));
     }
   }
@@ -742,6 +744,28 @@ function followupModal(customId, title, fields) {
   return m;
 }
 const LABEL = { mod: '✰ Mod', admin: '⭐ Admin', owner: '👑 Owner' };
+// Shared override-wizard steps — every rule type but self-corner now follows the same shape: pick the
+// target scope (or skip straight to a specific target for Protect Someone), then multi-select the
+// actor(s) last, so the final step can add several people in one interaction instead of one rule apiece.
+function targetScopeRow(customId, title, question) {
+  const row = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder('Select Target Scope…').addOptions([
+      { label: '🌐 Everyone', value: 'all', description: 'Applies to everyone in the server' },
+      { label: '👤 Specific Member', value: 'user', description: 'Pick one specific member' },
+      { label: '🎭 Specific Role', value: 'role', description: 'Pick one specific role' },
+    ])
+  );
+  return { content: `### ${title}\n${question}`, components: [row] };
+}
+function actorPickRow(userCustomId, roleCustomId, subject, verb = 'the actor(s) for this rule') {
+  const userRow = new ActionRowBuilder().addComponents(
+    new UserSelectMenuBuilder().setCustomId(userCustomId).setPlaceholder(`👤 Select ${verb} (pick several)…`).setMinValues(1).setMaxValues(10)
+  );
+  const roleRow = new ActionRowBuilder().addComponents(
+    new RoleSelectMenuBuilder().setCustomId(roleCustomId).setPlaceholder('🎭 OR select a role (anyone with it qualifies)…')
+  );
+  return { content: `### ${subject}\nWho's ${verb}? Pick one or more **members**, OR a **role** — you can add more later without recreating this rule.`, components: [userRow, roleRow] };
+}
 
 async function handlePanel(interaction) {
   const id = interaction.customId;
@@ -1272,6 +1296,11 @@ async function handlePanel(interaction) {
         );
         return interaction.editReply({ content: '### ⚡ Grant Corner Power: Step 1 of 3\nSelect the **Power Level** you want to grant:', components: [pRow] });
       }
+      if (ruleType === 'BYPASS_TIER') {
+        // Target first, actor(s) last — same order as Protect Someone, so who this rule affects is
+        // decided before who it applies to, and the final step can multi-select actors in one go.
+        return interaction.editReply(targetScopeRow('fops_ov_bypasstscope', '🔓 Allow Rank Bypass: Step 1 of 2', 'Who does this apply against?'));
+      }
       const userRow = new ActionRowBuilder().addComponents(
         new UserSelectMenuBuilder().setCustomId(`fops_ov_userpick:${ruleType}`).setPlaceholder('👤 Select a Member for this rule…')
       );
@@ -1283,76 +1312,45 @@ async function handlePanel(interaction) {
     if (id === 'fops_ov_grantlevel') {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
       const powerLevel = interaction.values[0];
-      const userRow = new ActionRowBuilder().addComponents(
-        new UserSelectMenuBuilder().setCustomId(`fops_ov_grantactor:user:${powerLevel}`).setPlaceholder('👤 Select Member receiving this power…')
-      );
-      const roleRow = new ActionRowBuilder().addComponents(
-        new RoleSelectMenuBuilder().setCustomId(`fops_ov_grantactor:role:${powerLevel}`).setPlaceholder('🎭 OR Select Role receiving this power…')
-      );
-      return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 2 of 3\nWho receives this power? Pick a **Member** OR a **Role** below:`, components: [userRow, roleRow] });
+      return interaction.editReply(targetScopeRow(`fops_ov_granttscope:${powerLevel}`, `⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 2 of 3`, 'Who does this power apply over?'));
     }
-    if (id.startsWith('fops_ov_grantactor:')) {
+    if (id.startsWith('fops_ov_granttscope:') || id.startsWith('fops_ov_bypasstscope')) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const [, actorType, powerLevel] = id.split(':');
-      const actorId = interaction.values[0];
-      const scopeRow = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder().setCustomId(`fops_ov_grantscope:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('Select Target Scope…').addOptions([
-          { label: '🌐 Everyone (All Members & Staff)', value: 'all', description: 'Power applies over everyone in the server' },
-          { label: '👤 Specific Member', value: 'user', description: 'Pick a specific member this power applies over' },
-          { label: '🎭 Specific Role', value: 'role', description: 'Pick a specific role this power applies over' },
-        ])
-      );
-      return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power: Step 3 of 3\nPower over whom? Select the **Target Scope** below:`, components: [scopeRow] });
-    }
-    if (id.startsWith('fops_ov_grantscope:')) {
-      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const [, actorType, actorId, powerLevel] = id.split(':');
+      const isGrant = id.startsWith('fops_ov_granttscope:');
+      const powerLevel = isGrant ? id.split(':')[1] : null;
       const scope = interaction.values[0];
-      if (scope === 'all') {
-        const entry = overridesManager.addOverride({
-          actorType,
-          actorId,
-          targetType: '*',
-          targetId: '*',
-          type: 'GRANT_POWER',
-          powerTier: powerLevel,
-          note: `Granted ${powerLevel}-level power over everyone`,
-          createdBy: interaction.user.id
-        });
-        const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
-        await interaction.editReply({ content: `✅ Granted **${powerLevel.toUpperCase()}**-level cornering power to ${actorFmt} over **Everyone**.`, components: [] });
-        return refreshPanel(interaction.client);
-      }
-      if (scope === 'user') {
-        const userRow = new ActionRowBuilder().addComponents(
-          new UserSelectMenuBuilder().setCustomId(`fops_ov_granttarget:user:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('👤 Select Target Member…')
-        );
-        return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power\nSelect the **Target Member** this power applies over:`, components: [userRow] });
-      }
-      if (scope === 'role') {
-        const roleRow = new ActionRowBuilder().addComponents(
-          new RoleSelectMenuBuilder().setCustomId(`fops_ov_granttarget:role:${actorType}:${actorId}:${powerLevel}`).setPlaceholder('🎭 Select Target Role…')
-        );
-        return interaction.editReply({ content: `### ⚡ Grant ${powerLevel.toUpperCase()}-Level Power\nSelect the **Target Role** this power applies over:`, components: [roleRow] });
-      }
+      const targetPickPrefix = isGrant ? `fops_ov_granttargetpick:${powerLevel}` : 'fops_ov_bypasstargetpick';
+      const actorPickPrefix = isGrant ? `fops_ov_grantactors:${powerLevel}` : 'fops_ov_bypassactors';
+      const actorRolePrefix = isGrant ? `fops_ov_grantactorrole:${powerLevel}` : 'fops_ov_bypassactorrole';
+      if (scope === 'all') return interaction.editReply(actorPickRow(`${actorPickPrefix}:*:*`, `${actorRolePrefix}:*:*`, isGrant ? `Grant ${powerLevel.toUpperCase()}-Level Power` : 'Allow Rank Bypass'));
+      const userRow = new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId(`${targetPickPrefix}:user`).setPlaceholder('👤 Select Target Member…'));
+      const roleRow = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`${targetPickPrefix}:role`).setPlaceholder('🎭 OR Select Target Role…'));
+      return interaction.editReply({ content: `### Select the target ${scope === 'user' ? 'member' : 'role'}:`, components: scope === 'user' ? [userRow] : [roleRow] });
     }
-    if (id.startsWith('fops_ov_granttarget:')) {
+    if (id.startsWith('fops_ov_granttargetpick:') || id.startsWith('fops_ov_bypasstargetpick:')) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const [, targetType, actorType, actorId, powerLevel] = id.split(':');
+      const isGrant = id.startsWith('fops_ov_granttargetpick:');
+      const parts = id.split(':');
+      const powerLevel = isGrant ? parts[1] : null;
+      const targetType = parts[parts.length - 1];
       const targetId = interaction.values[0];
-      const entry = overridesManager.addOverride({
-        actorType,
-        actorId,
-        targetType,
-        targetId,
-        type: 'GRANT_POWER',
-        powerTier: powerLevel,
-        note: `Granted ${powerLevel}-level power`,
-        createdBy: interaction.user.id
-      });
-      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
-      const targetFmt = targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`;
-      await interaction.editReply({ content: `✅ Granted **${powerLevel.toUpperCase()}**-level cornering power to ${actorFmt} over ${targetFmt}.`, components: [] });
+      const actorPickPrefix = isGrant ? `fops_ov_grantactors:${powerLevel}:${targetType}:${targetId}` : `fops_ov_bypassactors:${targetType}:${targetId}`;
+      const actorRolePrefix = isGrant ? `fops_ov_grantactorrole:${powerLevel}:${targetType}:${targetId}` : `fops_ov_bypassactorrole:${targetType}:${targetId}`;
+      return interaction.editReply(actorPickRow(actorPickPrefix, actorRolePrefix, isGrant ? `Grant ${powerLevel.toUpperCase()}-Level Power` : 'Allow Rank Bypass'));
+    }
+    if (id.startsWith('fops_ov_grantactors:') || id.startsWith('fops_ov_grantactorrole:') || id.startsWith('fops_ov_bypassactors:') || id.startsWith('fops_ov_bypassactorrole:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const isGrant = id.startsWith('fops_ov_grantactor');
+      const isRole = id.startsWith('fops_ov_grantactorrole:') || id.startsWith('fops_ov_bypassactorrole:');
+      const parts = id.split(':');
+      const powerLevel = isGrant ? parts[1] : null;
+      const targetType = isGrant ? parts[2] : parts[1];
+      const targetId = isGrant ? parts[3] : parts[2];
+      const actors = isRole ? [{ type: 'role', id: interaction.values[0] }] : interaction.values.map(uid => ({ type: 'user', id: uid }));
+      const type = isGrant ? 'GRANT_POWER' : 'BYPASS_TIER';
+      const entry = overridesManager.addOverride({ actors, targetType, targetId, type, powerTier: isGrant ? powerLevel : null, note: '', createdBy: interaction.user.id });
+      const verb = isGrant ? `granted **${powerLevel.toUpperCase()}**-level cornering power` : 'given a rank bypass';
+      await interaction.editReply({ content: `✅ ${overrideActorFmt(entry)} ${verb}, over ${overrideTargetFmt(entry)}.`, components: [] });
       return refreshPanel(interaction.client);
     }
     if (id.startsWith('fops_ov_userpick:') || id.startsWith('fops_ov_rolepick:')) {
@@ -1361,57 +1359,31 @@ async function handlePanel(interaction) {
       const ruleType = id.split(':')[1];
       const pickedId = interaction.values[0];
 
-      let entry = null;
       if (ruleType === 'EXCLUSIVE_CORNERER') {
         // Who's protected is picked; who's ALLOWED to corner them is a separate step now (used to be
         // hardcoded to the server owner — owner, 2026-08-19: "right now i'm locked as the only actor").
         const targetType = isUser ? 'user' : 'role';
-        const userRow2 = new ActionRowBuilder().addComponents(
-          new UserSelectMenuBuilder().setCustomId(`fops_ov_exclusiveactors:${targetType}:${pickedId}`).setPlaceholder('👤 Select who is allowed to corner them (pick several)…').setMinValues(1).setMaxValues(10)
-        );
-        const roleRow2 = new ActionRowBuilder().addComponents(
-          new RoleSelectMenuBuilder().setCustomId(`fops_ov_exclusiverole:${targetType}:${pickedId}`).setPlaceholder('🎭 OR select a role (anyone with it is allowed)…')
-        );
-        return interaction.editReply({ content: `### 🔒 Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}: Step 2 of 2\nWho's allowed to corner them? Pick one or more **members**, OR a **role** — you can add more people later without recreating this rule.`, components: [userRow2, roleRow2] });
-      } else if (ruleType === 'ALLOW_SELF_CORNER') {
-        entry = overridesManager.addOverride({
-          actorType: isUser ? 'user' : 'role',
-          actorId: pickedId,
-          targetType: isUser ? 'user' : 'role',
-          targetId: pickedId,
-          type: 'ALLOW_SELF_CORNER',
-          note: 'Self-corner allowed',
-          createdBy: interaction.user.id
-        });
-      } else if (ruleType === 'BYPASS_TIER') {
-        // Bypass needs a target scope, not an immediate create — "everyone" (the only option before this
-        // revamp) is rarely what's meant; usually it's this actor bypassing the gate for ONE person/role.
-        const actorType = isUser ? 'user' : 'role';
-        const scopeRow = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder().setCustomId(`fops_ov_bypassscope:${actorType}:${pickedId}`).setPlaceholder('Select Target Scope…').addOptions([
-            { label: '🌐 Everyone (bypass over all targets)', value: 'all', description: 'This actor bypasses the tier gate against anyone' },
-            { label: '👤 Specific Member', value: 'user', description: 'Bypass applies only against one member' },
-            { label: '🎭 Specific Role', value: 'role', description: 'Bypass applies only against one role' },
-          ])
-        );
-        return interaction.editReply({ content: `### 🔓 Bypass Tier Gate: Step 2 of 2\nWho does ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} bypass the tier gate against?`, components: [scopeRow] });
+        return interaction.editReply(actorPickRow(`fops_ov_exclusiveactors:${targetType}:${pickedId}`, `fops_ov_exclusiverole:${targetType}:${pickedId}`,
+          `Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}`, 'who is allowed to corner them'));
       }
-
+      // ALLOW_SELF_CORNER: target IS the actor, one rule per pick — no multi-actor step needed.
+      const entry = overridesManager.addOverride({
+        actorType: isUser ? 'user' : 'role',
+        actorId: pickedId,
+        targetType: isUser ? 'user' : 'role',
+        targetId: pickedId,
+        type: 'ALLOW_SELF_CORNER',
+        note: 'Self-corner allowed',
+        createdBy: interaction.user.id
+      });
       await interaction.editReply({ content: `✅ Added personal override rule \`${entry.id}\` for ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} (${ruleType}).`, components: [] });
       return refreshPanel(interaction.client);
     }
-    if (id.startsWith('fops_ov_exclusiveactors:')) {
+    if (id.startsWith('fops_ov_exclusiveactors:') || id.startsWith('fops_ov_exclusiverole:')) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const isRole = id.startsWith('fops_ov_exclusiverole:');
       const [, targetType, targetId] = id.split(':');
-      const actors = interaction.values.map(uid => ({ type: 'user', id: uid }));
-      const entry = overridesManager.addOverride({ actors, targetType, targetId, type: 'EXCLUSIVE_CORNERER', note: '', createdBy: interaction.user.id });
-      await interaction.editReply({ content: `✅ Protected ${targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`} — only ${overrideActorFmt(entry)} can corner them now.`, components: [] });
-      return refreshPanel(interaction.client);
-    }
-    if (id.startsWith('fops_ov_exclusiverole:')) {
-      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const [, targetType, targetId] = id.split(':');
-      const actors = [{ type: 'role', id: interaction.values[0] }];
+      const actors = isRole ? [{ type: 'role', id: interaction.values[0] }] : interaction.values.map(uid => ({ type: 'user', id: uid }));
       const entry = overridesManager.addOverride({ actors, targetType, targetId, type: 'EXCLUSIVE_CORNERER', note: '', createdBy: interaction.user.id });
       await interaction.editReply({ content: `✅ Protected ${targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`} — only ${overrideActorFmt(entry)} can corner them now.`, components: [] });
       return refreshPanel(interaction.client);
@@ -1431,7 +1403,7 @@ async function handlePanel(interaction) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
       const isUser2 = id.startsWith('fops_ov_addactoruser:');
       const ruleId = id.split(':')[1];
-      for (const val of interaction.values) overridesManager.addExclusiveActor(ruleId, isUser2 ? 'user' : 'role', val);
+      for (const val of interaction.values) overridesManager.addRuleActor(ruleId, isUser2 ? 'user' : 'role', val);
       await interaction.editReply(buildOverrideDetail(ruleId));
       return refreshPanel(interaction.client);
     }
@@ -1440,7 +1412,7 @@ async function handlePanel(interaction) {
       const ruleId = id.split(':')[1];
       const o = overridesManager.getOverride(ruleId);
       if (!o) return interaction.editReply('That rule no longer exists.');
-      const actors = overridesManager.normalizeExclusiveActors(o);
+      const actors = overridesManager.normalizeActors(o);
       const opts = actors.slice(0, 25).map(a => ({
         label: (a.type === 'role' ? `Role: ${a.id}` : `Member: ${a.id}`).slice(0, 100),
         value: `${a.type}:${a.id}`
@@ -1454,7 +1426,7 @@ async function handlePanel(interaction) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
       const ruleId = id.split(':')[1];
       const [aType, aId] = interaction.values[0].split(':');
-      overridesManager.removeExclusiveActor(ruleId, aType, aId);
+      overridesManager.removeRuleActor(ruleId, aType, aId);
       await interaction.editReply(buildOverrideDetail(ruleId));
       return refreshPanel(interaction.client);
     }
@@ -1465,31 +1437,6 @@ async function handlePanel(interaction) {
       if (!o) return interaction.editReply('That rule no longer exists.');
       overridesManager.setExclusiveHitSquadExempt(ruleId, !o.hitSquadExempt);
       await interaction.editReply(buildOverrideDetail(ruleId));
-      return refreshPanel(interaction.client);
-    }
-    if (id.startsWith('fops_ov_bypassscope:')) {
-      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const [, actorType, actorId] = id.split(':');
-      const scope = interaction.values[0];
-      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
-      if (scope === 'all') {
-        const entry = overridesManager.addOverride({ actorType, actorId, targetType: '*', targetId: '*', type: 'BYPASS_TIER', note: 'Tier gate bypass (everyone)', createdBy: interaction.user.id });
-        await interaction.editReply({ content: `✅ Added override \`${entry.id}\`: ${actorFmt} bypasses the tier gate against **Everyone**.`, components: [] });
-        return refreshPanel(interaction.client);
-      }
-      const picker = scope === 'user'
-        ? new UserSelectMenuBuilder().setCustomId(`fops_ov_bypasstarget:user:${actorType}:${actorId}`).setPlaceholder('👤 Select Target Member…')
-        : new RoleSelectMenuBuilder().setCustomId(`fops_ov_bypasstarget:role:${actorType}:${actorId}`).setPlaceholder('🎭 Select Target Role…');
-      return interaction.editReply({ content: `### 🔓 Bypass Tier Gate\nWho does ${actorFmt} bypass the gate against?`, components: [new ActionRowBuilder().addComponents(picker)] });
-    }
-    if (id.startsWith('fops_ov_bypasstarget:')) {
-      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const [, targetType, actorType, actorId] = id.split(':');
-      const targetId = interaction.values[0];
-      const entry = overridesManager.addOverride({ actorType, actorId, targetType, targetId, type: 'BYPASS_TIER', note: 'Tier gate bypass', createdBy: interaction.user.id });
-      const actorFmt = actorType === 'role' ? `<@&${actorId}>` : `<@${actorId}>`;
-      const targetFmt = targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`;
-      await interaction.editReply({ content: `✅ Added override \`${entry.id}\`: ${actorFmt} bypasses the tier gate against ${targetFmt}.`, components: [] });
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_ov_back') {
