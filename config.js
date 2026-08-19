@@ -63,6 +63,11 @@ const config = {
   adultCornerChannelId: opt('ADULT_CORNER_CHANNEL_ID', ''),  // 18+/MDNI adult corner channel
   cornerLogChannelId: opt('CORNER_LOG_CHANNEL_ID', '1531004789025013982'),  // public read-only audit log
   cornerVcId: opt('CORNER_VC_ID', '1531113277776724189'),  // corner voice channel: public see, cornered+mods join+talk
+  // --- Welcome / Goodbye (native replacement for Carl-bot + Mimu, 2026-08-19: their embed-title mention
+  // stopped resolving to a real name for brand-new members — Discord only resolves an <@id> mention inside
+  // an embed from the viewer's own client cache, which a just-joined member is never in yet) ---
+  welcomeChannelId: opt('WELCOME_CHANNEL_ID', '1516225366191116409'),
+  goodbyeChannelId: opt('GOODBYE_CHANNEL_ID', '1516225452187062395'),
   // Repeat-cornering-for-the-same-rule alert threshold (NOT auto-strike — just tells staff to consider
   // converting to a Strike, with a one-click button). Deliberately tunable: the enforcement-model spec
   // doesn't finalize an exact number, so this is a clearly-labeled default, not a guess baked into logic.
