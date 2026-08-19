@@ -53,6 +53,26 @@ it held 0 channels before deleting, so no content was lost.
 No permguard interaction: it keys off channelId for its golden-manifest sweep, not parent category,
 and no channel's own overwrites were touched — only their `parentId` changed.
 
+## 2026-08-19 16:35 — FUBU: deleted redirect-stub channels, reordered the merged category
+
+Follow-up to the consolidation above. Owner: the (now-deleted) archived category's channels had
+previously been moved back into their origin categories as locked read-only redirect stubs
+pointing to the new `hobbies-interests` forum, "to help redirect people to the new forum" — safe
+to delete now. Identified them by topic text rather than guessing from names: 9 channels literally
+had `📌 This channel's conversation moved to #hobbies-interests → **X**. This channel is kept as
+read-only history and locked from new posts/threads.` in their topic — food, books-tv-movies,
+writing, religion, spirituality, astro, art, hobbies-interests✿ (resolves the duplicate flagged in
+the merge above — it was one of these stubs), business-selfpromo. Confirmed `gaming`/`music`/
+`anime`/`lgbtq-talk` were NOT stubs (real topics, recent activity) before leaving them alone.
+
+Deleted all 9, then reordered the remaining 20 channels into general chat → identity (hair/selfies/
+lgbtq) → hobbies (forum + gaming/music/anime) → anonymous & community-input (confessions/
+suggestions/anon-reports) → utility (bot-commands) → staff-only (confession-log, mod-inbox last).
+Used `guild.channels.setPositions()` — first attempt included a redundant `parent` field on every
+entry and hit Discord's "only one channel can have a parent_id modified at a time" 40009 error since
+none of them actually needed a parent change; fixed by dropping `parent` and passing `position`
+only. Verified via a fresh `guild.channels.fetch()` that all 20 remain, in the intended order.
+
 Owner clarified the repo/package naming history (FUBU was the original codebase, deliberately
 renamed to `community-bot` when Melanin was consolidated onto it "instead of making code changes
 twice" — not an accident) — [[project-fubu-renamed-to-community-bot]] memory saved. Then asked to
