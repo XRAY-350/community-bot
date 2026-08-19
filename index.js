@@ -3350,25 +3350,32 @@ async function jokeCheckIn(interaction, targetUserId, joke) {
   }).catch(e => console.error('[corner] joke prompt followUp:', e.message));
 }
 
-function cornerSentMessage(userId, whenPhrase, reason, actorId) {
+function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false) {
+  const staffPings = [];
+  if (isThread) {
+    if (config.modRoleId) staffPings.push(`<@&${config.modRoleId}>`);
+    if (config.adminRoleId && config.adminRoleId !== config.modRoleId) staffPings.push(`<@&${config.adminRoleId}>`);
+  }
+  const pingStr = staffPings.length ? ` ${staffPings.join(' ')}` : '';
+  const allowed = { users: [userId] };
+  if (isThread) {
+    const rIds = [config.modRoleId, config.adminRoleId].filter(Boolean);
+    if (rIds.length) allowed.roles = rIds;
+  }
   return {
-    // Hybrid: big rendered header in message CONTENT (headers don't render inside embeds), with the
-    // colored embed below so the meaningful red/green signal is kept. The mention is in CONTENT (not
-    // just the embed) because embeds can never ping — this is a real notification, it should reach them.
-    content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>`,
+    content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>${pingStr}`,
     embeds: [new EmbedBuilder().setColor(CORNER_RED)
       .setDescription(`<@${userId}> has been stripped of their roles and confined here **${whenPhrase}**.`
         + (actorId ? `\n**Sent by:** <@${actorId}>` : '')
         + (reason ? `\n**Reason:** ${reason}` : '')
-        + `\n\nThis is the only text channel you may speak in (you can also join the corner voice channel). Reflect on what brought you here.`)],
-    // Mod controls: release now, add time (+1h / +1d), or set indefinite (no auto-release) — one click.
+        + (isThread ? `\n\nThis is your private jail thread. Staff have been notified.` : `\n\nThis is the only text channel you may speak in (you can also join the corner voice channel). Reflect on what brought you here.`))],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:0`).setEmoji('🔓').setLabel('Release now').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:3600000`).setEmoji('⏰').setLabel('+1h').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:86400000`).setEmoji('⏰').setLabel('+1d').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:indef`).setEmoji('♾️').setLabel('Indefinite').setStyle(ButtonStyle.Secondary),
     )],
-    allowedMentions: { users: [userId] },
+    allowedMentions: allowed,
   };
 }
 
@@ -3385,7 +3392,7 @@ async function announceCorner(guild, memberId, durationMs, actorId, reasonText, 
   if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
   if (threadId) {
     const threadCh = await guild.channels.fetch(threadId).catch(() => null);
-    if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+    if (threadCh) await threadCh.send(cornerSentMessage(memberId, whenPhrase, reasonText || null, actorId, true)).catch(() => {});
   }
   await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
     desc: `<@${memberId}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
@@ -3592,7 +3599,7 @@ async function cornerFromMessage(guild, actorId, member, target, reason, duratio
       await cornerCh.send(sentMsg).catch(() => {});
       if (r.threadId) {
         const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
-        if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+        if (threadCh) await threadCh.send(cornerSentMessage(member.id, whenPhrase, reason || null, actorId, true)).catch(() => {});
       }
       const emb = new EmbedBuilder().setColor(CORNER_RED)
         .setAuthor({ name: authorTag, iconURL: authorAvatar })
@@ -3701,7 +3708,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
       if (r.threadId) {
         const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
-        if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+        if (threadCh) await threadCh.send(cornerSentMessage(member.id, whenPhrase, reasonText, actorId, true)).catch(() => {});
       }
     } else skipped.push(`<@${member.id}> (${r.error})`);
   }
@@ -10583,7 +10590,7 @@ client.on('interactionCreate', async (interaction) => {
         if (cornerCh) await cornerCh.send(sentMsg).catch(() => {});
         if (r.threadId) {
           const threadCh = await guild.channels.fetch(r.threadId).catch(() => null);
-          if (threadCh) await threadCh.send(sentMsg).catch(() => {});
+          if (threadCh) await threadCh.send(cornerSentMessage(user.id, whenPhrase, reasonText, interaction.user.id, true)).catch(() => {});
         }
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
