@@ -286,3 +286,51 @@ afterward rather than trusting the rejection alone.
 Final: general 💬, general-2 🗨️, important-discussions 📰, debates ⚖️, venting 🫂, hair 💇🏿,
 selfies-n-flicks 📸, lgbtq-talk 🌈, hobbies-interests (forum) 🎨, gaming 🎮, music 🎵, anime ⛩️,
 fun-confessions 🤭.
+
+## 2026-08-19 17:25 — FUBU: Punishments + Staff categories, application-archive merge, trial-tier cornering for Mini-Mods/Event Organizer
+
+Live Discord restructure, plus two real code fixes found along the way. Inspected Melanin's live
+guild structure (separate community, same codebase) for the naming/grouping pattern before
+replicating: it has a dedicated `ミ💢 | ᴘᴜɴɪsʜᴍᴇɴᴛs` category and a `ミ👤 ┊𝗦𝗧𝗔𝗙𝗙 𝗖𝗛𝗔𝗧𝗦` category
+(already grouping confession-log + mod-inbox together, same as what owner wanted here).
+
+**Deletions/cleanup:**
+- `Nolife Lounge` VC (zero messages ever) and `watch-lab` (owner: "can go") deleted.
+- Two identically-named `🔐┆application-archive` channels existed — NOT a simple duplicate to
+  delete, root-caused to a real bug in `modapps.js`'s `ensureArchiveChannel()`: it silently
+  created a fresh channel whenever its cached `archiveChannelId` failed to resolve, instead of
+  checking for an existing one by name first. Confirmed via the live `.fubu_modapps.json` config
+  which channel was actually tracked (`...820`, not the orphaned `...042`). Fetched all 15
+  messages from the orphan (oldest-first) and reposted them into the tracked channel, then deleted
+  the now-empty orphan — a real merge, not a content-losing delete. Fixed the root cause in
+  `modapps.js`: `ensureArchiveChannel()` now searches for an existing `🔐┆application-archive` by
+  name before ever creating a new one, logging loudly if that path is hit.
+- Found `🎪┆ᴇᴠᴇɴᴛ-ᴏʀɢ-ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴs` (forum) and `🎭┆ʀᴏʟᴇ-ʀᴇqᴜᴇsᴛs` both sitting completely
+  uncategorized (parentId null) — owner confirmed role-requests already existed, just orphaned.
+
+**New `💢 Punishments` category** (mirrors Melanin): moved `the-corner`, `corner-log`,
+`adult-corner`, `corner-vc` in from Verify-and-Rules/Voice-Channels — all previously thematically
+misplaced. Every channel's own permission overwrites (already correct — public can view+read
+the-corner/corner-log for accountability, only staff+the cornered member can send; adult-corner
+fully gated) carried over untouched via `lockPermissions: false`.
+
+**Renamed `Mod Activities` → `👤 Staff`** (same category/ID, mirrors Melanin's "Staff Chats"),
+moved in `confession-log`, `mod-inbox`, `event-org-applications`, `role-requests`. Added two new
+channels: `staff-announcements` (Mod+ can post; Trial Mods/Mini-Mods/Event Organizer/Mods/Admins
+view+read only) and `staff-discussions` (all of the above can view+read+send). Removed Trial Mods'
+access to the existing `mod-discussion` channel — consolidated into `staff-discussions` instead.
+
+**Code: generalized trial-tier cornering.** Mini-Mods previously had ONLY the scoped "Send to
+corner" context-menu action on their own language channel; Event Organizer had no cornering
+access at all. New `hasTrialCornerTier()` in index.js (Trial Mod OR any language Mini-Mod role OR
+Event Organizer) now gates `/corner` + `/uncorner` uniformly for all three — same restrictions as
+Trial Mods today (rule/reason required, ≤1h, single target). Left the separate context-menu path
+(`miniModCanActOn`, channel-scoped) untouched — flagged as a follow-up for the next security pass.
+
+**Separately flagged, not yet fixed:** a real bug where a cornered mod's tier-check still passes
+(by design, for demotion-while-cornered to work — see [[project_corner_tier_persistence]]), meaning
+nothing currently stops a cornered mod from using `/uncorner` on themselves or others, or `/corner`
+on someone else, while jailed. Owner wants this fixed across EVERY staff-gated command and button,
+not just corner/uncorner — scoped as its own follow-up pass, not bundled into this session's work.
+
+Files touched: `index.js`, `modapps.js`. Commits `a4d6775` (code) + this log entry, on `main`, pushed.
