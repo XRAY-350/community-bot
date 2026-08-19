@@ -566,3 +566,24 @@ can delete both." Deleted both the welcome and goodbye test messages. The native
 showing" bug) is now confirmed working end-to-end and considered done for this session. Owner is
 still handling turning off Carl-bot's/Mimu's own welcome/leave config on their end, per the earlier
 "I'll turn it off myself" choice — not something this repo's code controls.
+
+## 2026-08-19 21:46 — Mod dashboard was missing /corner-status (found via "is it up to date")
+
+Owner asked whether the mod dashboard panel (opspanel.js) was up to date, then clarified it was
+more about missing new features than stale content. Checked `commandRefEmbed()` (the pinned
+command reference) and `buildCorner()` (the live Corner page) against everything added this
+session. Found one real gap: `/corner-status` (built earlier today) was invisible on the panel —
+not in the command reference, and the Corner page's cornered-member list showed no indicator of
+which corners were auto-flagged joke vs real, the exact ambiguity `/corner-status` exists to fix.
+A mod scanning the panel had no way to know a flip was even possible, let alone needed.
+
+Fixed both: `buildCorner()` now appends `· 😂 joke` to a line when `rec.joke` is set, and the
+page's footer points at `/corner-status` to flip it. `commandRefEmbed()`'s Moderation section
+gained a line for the command (usage, gating, and the joke-marking-needs-solo-authority note).
+Everything else checked (Overrides page, Anon Tools counts, Promotions, Settings/Setup/Danger)
+already reflects current state — no other gaps found. Welcome/goodbye isn't a staff action so
+intentionally has no panel page.
+
+Deployed to both bots (`node --check` local + remote clean, `sudo systemctl restart fubu-bot
+melanin-bot`, journalctl confirms `corner-status` in both bots' registered command lists, no
+errors). Committed `c84b3ae`, pushed to origin/main.
