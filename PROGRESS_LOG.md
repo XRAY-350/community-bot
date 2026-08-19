@@ -481,3 +481,27 @@ session (the 4 Punishments channels, the Staff category itself, the 4 channels m
 the 3 new staff-announcements/staff-discussions/staff-call channels, and mod-discussion) via
 `permguard.blessChannel()` so future 20-min sweeps treat their current state as correct instead of
 drift. Verified live: Trial Mods confirmed absent from mod-discussion after the fix.
+
+## 2026-08-19 20:48 — CORRECTION: the joke mechanism was never meant to be fully removed
+
+Earlier this session (commit `db361a1`, "corner: remove the joke mechanic entirely") I removed the
+WHOLE joke system — auto-detection, ephemeral flip-prompt, forceReal on strike corners — based on
+"i didn't ask for it, so get rid of it." Owner corrected: "I asked for the joke mechanism to be
+gone as in the argument on the command not the mechanism as a whole." The "get rid of it" was about
+the literal `joke` BOOLEAN OPTION the overnight agent had re-added to the `/corner` slash command
+(against an earlier explicit ruling this session, "don't add it to the command") — not the
+ephemeral-flip-prompt mechanism itself, which had already been separately approved earlier in the
+session and was the CORRECT replacement design.
+
+Restored verbatim from git (`git show db361a1^:corner.js` / `:index.js`, the state right before the
+over-broad removal) rather than reconstructing by memory, per owner's explicit instruction — pulled
+the exact original diff and reapplied each piece, then diffed line-for-line against the pre-removal
+file to confirm byte-identical restoration (only difference: the `threadIds` array added afterward
+by the unrelated staff-notification-ping fix). Restored: `canActSolo`'s joke tier-bypass, the joke
+computation/storage in `corner()`, `setJoke()`, `jokeCheckIn()`'s ephemeral prompt, the
+`corner_markjoke` button handler, jokes-array bulk-corner tracking across `cornerMany`/the message-
+context-menu path/the main `/corner` handler, and `forceReal: true` on both strike-attached corner
+call sites. The one thing that correctly stays gone: the literal boolean argument on `/corner`
+itself.
+
+Deployed to both bots, clean restart confirmed. Commit `81a46dc`, pushed.
