@@ -380,6 +380,12 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
             threadId = th.id;
             existing.threadId = threadId;
             state.setCornered(member.id, existing);
+            await ch.permissionOverwrites.edit(member.id, {
+              SendMessages: false,
+              SendMessagesInThreads: true,
+              ViewChannel: true,
+              ReadMessageHistory: true
+            }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
           }
         }
       } catch (err) { console.error('[corner] existing thread create:', err.message); }
@@ -418,6 +424,12 @@ async function corner(guild, member, durationMs, state, byId, ruleIndex, actorTi
         if (th) {
           await th.members.add(member.id).catch(() => {});
           threadId = th.id;
+          await ch.permissionOverwrites.edit(member.id, {
+            SendMessages: false,
+            SendMessagesInThreads: true,
+            ViewChannel: true,
+            ReadMessageHistory: true
+          }, { reason: 'Corner thread imprisonment: root channel lockout' }).catch(e => console.error('[corner] root lockout overwrite error:', e.message));
         }
       }
     } catch (err) { console.error('[corner] thread create:', err.message); }
@@ -456,6 +468,11 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
   }
   if (rec && rec.threadId) {
     try {
+      const targetChId = rec.channelId || (rec.isAdult && config.adultCornerChannelId ? config.adultCornerChannelId : config.cornerChannelId);
+      const ch = await guild.channels.fetch(targetChId).catch(() => null);
+      if (ch) {
+        await ch.permissionOverwrites.delete(userId, 'Released from corner thread imprisonment').catch(() => {});
+      }
       const th = await guild.channels.fetch(rec.threadId).catch(() => null);
       if (th && th.isThread()) {
         await th.setArchived(true, reason).catch(() => {});
