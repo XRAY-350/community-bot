@@ -775,3 +775,36 @@ Mini-Mod's staff-announcements/staff-discussions/staff-call grants from the prev
 still in place. Flagged to the owner in case those should also be reverted.
 
 Re-verified live, both scratch scripts deleted from bots-vm.
+
+## 2026-08-19 23:44 — Two corner bugs: adult+thread routing, and thread membership leaking
+
+Owner, mid-turn while the permission correction above was in flight: "Also the adult + thread
+combo makes a thread in the normal corner" and "Also cornered mods keep getting into other
+threads."
+
+**Adult routing:** `config.adultCornerChannelId` (config.js) defaults to `''` and neither
+`.community_env` nor `.melanin_env` ever set `ADULT_CORNER_CHANNEL_ID` — despite FUBU already
+having a live `#🔞┆ᴀᴅᴜʟᴛ-ᴄᴏʀɴᴇʀ` channel (1539460167962198186, confirmed via direct channel fetch;
+a name-regex search missed it because the channel name uses small-caps unicode letters, not ASCII
+`a-d-u-l-t`). corner.js's `targetChannelId = adult && config.adultCornerChannelId ? ... :
+config.cornerChannelId` silently fell through to the normal corner for EVERY `adult:true` corner,
+not just the adult+thread combo — the thread flag just made it visible since the resulting thread
+landed somewhere the owner could immediately see was wrong. Fixed by appending
+`ADULT_CORNER_CHANNEL_ID=1539460167962198186` to `.community_env` and restarting fubu-bot (no code
+change for this half, purely a missing env var). Melanin has no adult-corner channel built yet
+(confirmed via the same channel search) — left alone, out of scope.
+
+**Thread membership leak:** `corner()` (corner.js) strips every non-identifying role via
+`member.roles.set()`, which removes ViewChannel almost everywhere — but never touched existing
+Discord thread memberships. Private threads grant access to explicitly-added members independent
+of whether they can still see the parent channel, so a cornered mod who'd been added to, say, a
+mod-applications review thread or another active corner's jail thread kept reading/posting there
+even with every role stripped. Added `stripThreadMemberships(guild, memberId, exceptThreadId)` —
+one `guild.channels.fetchActiveThreads()` call, then per-thread `thread.members.fetch(memberId)` +
+`.remove()` for every active thread except the member's own new jail thread — called at the end of
+both the fresh-corner path and the re-corner/update path (corner.js line ~503/~442).
+
+Verified `discord.js` 14.27.0 on bots-vm has `fetchActiveThreads()` (grepped node_modules
+directly) before deploying. `node --check` clean local+remote, both bots restarted clean,
+`corner-status` still registered on both. Scratch script `find_adult_corner.js` deleted from
+bots-vm. Committed `eac7de0`, pushed.
