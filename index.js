@@ -3357,20 +3357,9 @@ async function jokeCheckIn(interaction, targetUserId, joke) {
 }
 
 function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false, isAnon = false) {
-  const staffPings = [];
-  if (isThread) {
-    if (config.modRoleId) staffPings.push(`<@&${config.modRoleId}>`);
-    if (config.adminRoleId && config.adminRoleId !== config.modRoleId) staffPings.push(`<@&${config.adminRoleId}>`);
-  }
-  const pingStr = staffPings.length ? ` ${staffPings.join(' ')}` : '';
-  const allowed = { users: [userId] };
-  if (isThread) {
-    const rIds = [config.modRoleId, config.adminRoleId].filter(Boolean);
-    if (rIds.length) allowed.roles = rIds;
-  }
   const sentByText = isAnon ? '**Sent by:** 🎭 Anonymous Staff' : (actorId ? `**Sent by:** <@${actorId}>` : '');
   return {
-    content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>${pingStr}`,
+    content: `## ⛓️ SENT TO THE CORNER\n<@${userId}>`,
     embeds: [new EmbedBuilder().setColor(CORNER_RED)
       .setDescription(`<@${userId}> has been stripped of their roles and confined here **${whenPhrase}**.`
         + (sentByText ? `\n${sentByText}` : '')
@@ -3382,7 +3371,7 @@ function cornerSentMessage(userId, whenPhrase, reason, actorId, isThread = false
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:86400000`).setEmoji('⏰').setLabel('+1d').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`corner_rel:${userId}:indef`).setEmoji('♾️').setLabel('Indefinite').setStyle(ButtonStyle.Secondary),
     )],
-    allowedMentions: allowed,
+    allowedMentions: { parse: [], users: [userId] },
   };
 }
 
