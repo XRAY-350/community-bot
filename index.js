@@ -3414,8 +3414,11 @@ async function logCorner(guild, entry) {
         await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: { parse: [] } });
       }
     }
-    // Mirror to the owner-only log too — covers every corner/uncorner call site in one place.
-    if (typeof entry !== 'string') await ownerlog.log(guild, { emoji: entry.emoji, title: entry.title, detail: entry.desc, color: entry.color });
+    // Mirror to the owner-only log too — covers every corner/uncorner call site in one place. Anonymous
+    // cornering (owner, 2026-08-19: identity should show ONLY in the owner log, never the public corner
+    // log — it showed in both before this) — ownerDesc, when a caller supplies it, carries the REAL actor
+    // for this mirror only; entry.desc (posted to the public corner log above) stays masked.
+    if (typeof entry !== 'string') await ownerlog.log(guild, { emoji: entry.emoji, title: entry.title, detail: entry.ownerDesc || entry.desc, color: entry.color });
   } catch (e) { console.error(`[corner-log] ${e.message}`); }
 }
 
@@ -3677,7 +3680,7 @@ async function addRoleEffective(member, roleId, reason) {
 // ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
-async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false, anon = false, joke = undefined } = {}) {
+async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false, anon = false } = {}) {
   const done = [], skipped = [], jokes = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
@@ -3695,7 +3698,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
-    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread, anon, joke });
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread, anon });
     if (r.ok) {
       done.push(member.id);
       if (r.joke) jokes.push(member.id);
@@ -3709,8 +3712,12 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       }
     } else skipped.push(`<@${member.id}> (${r.error})`);
   }
-  if (done.length) await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
-    desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${actorId}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+  if (done.length) {
+    const bulkWhenPhrase = relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**';
+    await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
+      desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** ${anon ? '🎭 Anonymous Staff' : `<@${actorId}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
+      ownerDesc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** <@${actorId}>${anon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+  }
   // No per-target ephemeral prompt for bulk — could be dozens of targets — but a joke default (staff-on-
   // staff, allowNamedStaff only) is still surfaced as a plain text note so it isn't silently invisible.
   return { done, skipped, whenPhrase, jokes };
@@ -4356,7 +4363,6 @@ client.once('ready', async () => {
         .addBooleanOption(o => o.setName('adult').setDescription('Send to the 18+ Adult Corner for adult chat offenses?').setRequired(false))
         .addBooleanOption(o => o.setName('thread').setDescription('Imprison to a private jail thread?').setRequired(false))
         .addBooleanOption(o => o.setName('anon').setDescription('Hide your name and announce as Anonymous Staff (bot)').setRequired(false))
-        .addBooleanOption(o => o.setName('joke').setDescription('Mark as a joke corner (waives release tier lock)?').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
         .setDefaultMemberPermissions(cornerVis),   // always visible; the handler enforces staff/trial/member restrictions (and tells a member plainly if 'memberCorner' is off)
@@ -4874,6 +4880,11 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.mdniNsfwChannelId)).catch(() => {}), 3600000);
   if (dguild) await sweepMdniStaffLock(dguild, config.mdniVerifiedVcId).catch(e => console.error(`[mdni-lock] boot sweep (vc): ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.mdniVerifiedVcId)).catch(() => {}), 3600000);
+  // Same minor-staff leak on Adult Corner (owner, 2026-08-19: "the point of the adult corner is so people
+  // with nsfw offenses can talk about the issue with mods without children seeing/hearing" — a minor mod
+  // would otherwise see it via their MOD role's blanket ViewChannel allow, same as MDNI before this fix).
+  if (dguild && config.adultCornerChannelId) await sweepMdniStaffLock(dguild, config.adultCornerChannelId).catch(e => console.error(`[mdni-lock] boot sweep (adult corner): ${e.message}`));
+  setInterval(() => { if (config.adultCornerChannelId) client.guilds.fetch(config.guildId).then(g => sweepMdniStaffLock(g, config.adultCornerChannelId)).catch(() => {}); }, 3600000);
   if (dguild) await sweepHitSquadRole(dguild).catch(e => console.error(`[hitsquad] boot sweep: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepHitSquadRole(g)).catch(() => {}), 3600000);
 
@@ -5458,6 +5469,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await enforceMdniStaffLock(newMember).catch(e => console.error('[mdni-lock]', e.message));
     await enforceMdniStaffLock(newMember, { channelId: config.mdniNsfwChannelId }).catch(e => console.error('[mdni-lock-nsfw]', e.message));
     await enforceMdniStaffLock(newMember, { channelId: config.mdniVerifiedVcId }).catch(e => console.error('[mdni-lock-vc]', e.message));
+    if (config.adultCornerChannelId) await enforceMdniStaffLock(newMember, { channelId: config.adultCornerChannelId }).catch(e => console.error('[mdni-lock-adultcorner]', e.message));
     // BUG FOUND 2026-08-17 (owner: "the corner on me doesn't strip my admin or mod and doesn't give me the
     // corner role"): corner()'s single role.set() call fires THIS exact event, and enforceTierNesting reads
     // opspanel.memberTier(newMember) — which is UNCONDITIONALLY 'owner' for the real Discord server owner
@@ -7080,7 +7092,7 @@ client.on('interactionCreate', async (interaction) => {
       // Tier hierarchy check (moved here from the context menu so the rule picker can show instantly): you
       // can't corner someone of a higher staff tier than you.
       const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
-      if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
+      if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.member || interaction.user.id, member, opspanel.tierOf(interaction)))
         return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`);
       const ch = await guild.channels.fetch(channelId).catch(() => null);
       let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch { /* older modal */ }
@@ -9197,7 +9209,7 @@ client.on('interactionCreate', async (interaction) => {
         // BEFORE the strike is recorded, so a blocked corner doesn't leave a half-applied strike.
         const RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
         const targetTier = opspanel.memberTier(member);
-        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)))
+        if ((RANK[targetTier] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.member || interaction.user.id, member, opspanel.tierOf(interaction)))
           return R(`You can’t corner someone of a higher staff tier than you (they’re **${targetTier}**).`);
       }
       const reasonText = ruleN ? `Rule ${ruleN}: ${SERVER_RULES[Number(ruleN) - 1]}${reason ? `, ${reason}` : ''}` : reason;
@@ -10447,7 +10459,7 @@ client.on('interactionCreate', async (interaction) => {
     // features." Still under the SAME tight limits as memberCorner (checked again below via mCorner).
     const earlyTargetId = name === 'corner' ? interaction.options.getUser('user')?.id : null;
     const ownerCornerOK = name === 'corner' && !isMod && !trial && isMemberCornerEligibleRole(interaction)
-      && !!earlyTargetId && corner.canBypassCornerTier(interaction.user.id, earlyTargetId, opspanel.tierOf(interaction));
+      && !!earlyTargetId && corner.canBypassCornerTier(interaction.member || interaction.user.id, earlyTargetId, opspanel.tierOf(interaction));
     const memberMayCorner = name === 'corner' && (isMemberCorner(interaction) || ownerCornerOK);
     // Hit squad (owner, 2026-08-17): a named, time-boxed squad may /corner almost anyone — even staff —
     // for the activation window, regardless of the memberCorner feature flag. Corner-only: /uncorner is
@@ -10471,7 +10483,7 @@ client.on('interactionCreate', async (interaction) => {
       // Same "separate from the memberCorner flag" path as the early gate above, now re-checked against
       // the actually-resolved target member (not just the raw option id).
       const mCorner = isMemberCorner(interaction) || (!opspanel.tierOf(interaction) && !isTrialMod(interaction)
-        && isMemberCornerEligibleRole(interaction) && corner.canBypassCornerTier(interaction.user.id, member.id, opspanel.tierOf(interaction)));
+        && isMemberCornerEligibleRole(interaction) && corner.canBypassCornerTier(interaction.member || interaction.user.id, member, opspanel.tierOf(interaction)));
       // Belt-and-suspenders re-check of the same gate the caller already applied above (kept in case this
       // block is ever reached another way) — staff/trial-mods always; a verified member only when
       // 'memberCorner' is on. /corner is visible to everyone regardless of the flag, so this can still
@@ -10541,8 +10553,9 @@ client.on('interactionCreate', async (interaction) => {
       const isAdult = interaction.options.getBoolean('adult') || false;
       const isThread = interaction.options.getBoolean('thread') || false;
       const isAnon = interaction.options.getBoolean('anon') || false;
-      const isJokeOpt = interaction.options.getBoolean('joke');
-      const jokeVal = isJokeOpt !== null ? isJokeOpt : undefined;
+      // joke is NOT a command option (owner ruling, this session: "don't add it to the command") — it's a
+      // per-corner default (staff-on-staff → joke, staff-on-member → real) the actor can flip afterward via
+      // the ephemeral jokeCheckIn() prompt. Leave undefined here so corner() computes its own default.
       // Multi-corner: `also` (named IDs) and/or `sweep` (everyone non-staff active in THIS channel in the last
       // N minutes) → corner the whole deduped set at once, same duration/reason. Either option triggers it.
       const alsoStr = interaction.options.getString('also');
@@ -10572,7 +10585,7 @@ client.on('interactionCreate', async (interaction) => {
             if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) { extras.push(mm); seen.add(m.author.id); sweptCount++; }
           }
         }
-        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier, adult: isAdult, thread: isThread, anon: isAnon, joke: jokeVal });
+        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier, adult: isAdult, thread: isThread, anon: isAnon });
         const lines = [];
         if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` (${reasonText})` : ''}`);
         if (sweptCount) lines.push(`🧹 Swept the last ${Math.min(sweepMins, 120)}m of this channel.`);
@@ -10584,7 +10597,7 @@ client.on('interactionCreate', async (interaction) => {
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon, joke: jokeVal });
+      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon });
       if (!r.ok) {
         if (r.error === 'gated') {
           const actorTier = opspanel.tierOf(interaction);
@@ -10609,8 +10622,10 @@ client.on('interactionCreate', async (interaction) => {
         }
       } catch (e) { console.error(`[corner] channel announce failed: ${e.message}`); }
       const modWhen = relSec ? `until <t:${relSec}:f>` : 'indefinitely (until manually released)';
+      const cornerWhenPhrase = relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**';
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
-        desc: `<@${user.id}> was cornered ${relSec ? `until ${relPhrase(relSec * 1000)}` : '**indefinitely**'}.\n**By:** <@${interaction.user.id}>${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
+        desc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** ${isAnon ? '🎭 Anonymous Staff' : `<@${interaction.user.id}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
+        ownerDesc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** <@${interaction.user.id}>${isAnon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}` });
       // Joke check-in (staff corners only — not the member-corner or hit-squad paths, where a joke flag on
       // the uncorner tier lock is meaningless): staff-on-staff defaulted to joke (waiving the release tier
       // lock) and asks if it's actually serious; staff-on-a-regular-member defaulted to real and asks the

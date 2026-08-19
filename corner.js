@@ -360,6 +360,10 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     return { ok: false, error: "you can't corner the server owner." };
   }
   if (byId && byId === member.id) {
+    // Self-cornering is blocked by default — without this guard, staff could dodge accountability by
+    // "cornering themselves" for a token duration instead of taking a real action, or a joke-corner could
+    // be self-inflicted to game the joke/real detection below. Only an explicit ALLOW_SELF_CORNER override
+    // (or the standing personal exception in overridesManager) lifts it.
     const selfCornerAllowed = overridesManager.canSelfCorner(member);
     if (!selfCornerAllowed) return { ok: false, error: "you can't corner yourself." };
   }
@@ -448,6 +452,11 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
 
   state.setCornered(member.id, { roles: strip, releaseAt: durationMs ? now + durationMs : null, by: byId, at: now, appliedByRank: RANK[actorTier] || 0, joke, threadId, isAdult: !!adult, channelId: targetChannelId });
   try {
+    // Use .set() with the full computed role list, not sequential .remove()/.add() calls — each role
+    // edit is its own API round-trip and a crash/rate-limit between them would leave the member in a
+    // half-stripped state (some roles gone, corner role never added, or vice versa). One PUT is atomic:
+    // either the whole swap lands or nothing does, and there's no window where they're neither fully
+    // stripped nor fully cornered.
     const stripSet = new Set(strip);
     const keptIds = member.roles.cache.filter(r => r.id !== guild.id && !stripSet.has(r.id)).map(r => r.id);
     const targetRoles = [...new Set([...keptIds, config.cornerRoleId])];
@@ -458,6 +467,10 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     return { ok: false, error: err.message };
   }
   await restoreTimeout(); // put the Discord timeout back - cornering doesn't cancel it
+  // Disconnect from voice after the role swap: they just lost access to every normal channel (voice
+  // included, since the corner role strip removes View/Connect on regular VCs), so leaving them connected
+  // would either strand them in a channel they can no longer see/manage in, or (worse) let them keep
+  // talking in a space they're no longer supposed to have any presence in at all.
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);

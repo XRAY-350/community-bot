@@ -49,9 +49,14 @@ const DEFAULT_OVERRIDES = [
     targetType: 'user',
     targetId: '865843812907089940',
     type: 'BYPASS_TIER',
-    note: 'Server owner opted-in as cornerable target'
+    minActorTier: 'admin',   // owner, 2026-08-17: "change the everyone corner to only staff (mod+)", then
+                              // 2026-08-18: "should be admin/owner" — a plain mod no longer qualifies
+    note: 'Server owner opted-in as cornerable target (admin+ only)'
   }
 ];
+// Tier rank, for minActorTier comparisons on a wildcard-actor BYPASS_TIER rule (an exact-actorId rule
+// always bypasses regardless of tier — minActorTier only matters for the '*' actor case).
+const TIER_RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
 
 function loadOverrides() {
   try {
@@ -84,7 +89,7 @@ function getOverrides() {
   return loadOverrides();
 }
 
-function addOverride({ actorType = 'user', actorId, targetType = 'user', targetId, type, powerTier = null, note = '' }) {
+function addOverride({ actorType = 'user', actorId, targetType = 'user', targetId, type, powerTier = null, minActorTier = null, note = '' }) {
   const list = loadOverrides();
   const id = `ov_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const entry = {
@@ -95,6 +100,9 @@ function addOverride({ actorType = 'user', actorId, targetType = 'user', targetI
     targetId: (targetId || '*').trim(),
     type: type.toUpperCase(),
     powerTier,
+    // Only meaningful on a BYPASS_TIER rule with a wildcard ('*') actor — an exact actorId always bypasses
+    // regardless of tier, same as before.
+    minActorTier: (minActorTier || '').trim().toLowerCase() || null,
     note: note.trim()
   };
   list.push(entry);
@@ -157,7 +165,12 @@ function canBypassTier(actorMember, targetMember, actorTier = null) {
     const tType = o.targetType || 'user';
     const aType = o.actorType || 'user';
     if (!matchEntity(tType, o.targetId, targetMember || targetId)) return false;
-    if (o.actorId === '*') return true;
+    if (o.actorId === '*') {
+      // A wildcard actor may still require a minimum staff tier (e.g. the owner opt-in is admin+ only,
+      // not "any staff/any member") — named/exact-actorId rules below are unaffected by minActorTier.
+      if (!o.minActorTier) return true;
+      return (TIER_RANK[actorTier] || 0) >= (TIER_RANK[o.minActorTier] || 0);
+    }
     return matchEntity(aType, o.actorId, actorMember || actorId);
   });
 }

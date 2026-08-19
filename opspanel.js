@@ -498,7 +498,11 @@ function buildOverrides() {
   const list = overridesManager.getOverrides();
   const lines = list.map((o, idx) => {
     const typeLabel = o.type === 'EXCLUSIVE_CORNERER' ? '🔒 Exclusive' : o.type === 'GRANT_POWER' ? `⚡ Grant (${o.powerTier || 'owner'})` : o.type === 'ALLOW_SELF_CORNER' ? '🙋 Self-Corner' : o.type === 'BYPASS_TIER' ? '🔓 Bypass' : '🛡️ Immunity';
-    const actorFmt = o.actorId === '*' ? '* (all staff)' : (o.actorType === 'role' ? `<@&${o.actorId}>` : `<@${o.actorId}>`);
+    // Accurate wildcard-actor label: "any staff" only when a minActorTier is actually set (the owner-optin
+    // rule requires admin+) — an unrestricted wildcard genuinely means ANY member, staff or not, so say so.
+    const actorFmt = o.actorId === '*'
+      ? (o.minActorTier ? `* (${o.minActorTier}+ staff)` : '* (⚠️ ANY member, no tier floor)')
+      : (o.actorType === 'role' ? `<@&${o.actorId}>` : `<@${o.actorId}>`);
     const targetFmt = o.targetId === '*' ? '*' : (o.targetType === 'role' ? `<@&${o.targetId}>` : `<@${o.targetId}>`);
     return `\`${idx + 1}.\` **${typeLabel}** · Actor: ${actorFmt} → Target: ${targetFmt}${o.note ? ` _(${o.note})_` : ''}`;
   });
