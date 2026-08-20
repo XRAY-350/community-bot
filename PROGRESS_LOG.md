@@ -30,6 +30,44 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 22:10 — Mafia: added the Jester (neutral role that wins by getting itself lynched)
+
+Owner: "The people in the server play with a jester role. I'm not sure what that is." Explained it
+(neutral third party, wins alone by being voted out during the Day, loses if the Mafia night-kills them
+instead), then confirmed the two variant choices that actually change the code via AskUserQuestion:
+**game ends immediately** when the Jester is lynched, and the Jester reads as **not Mafia-aligned** to
+the Detective.
+
+Slotted straight into the count + % chance system built earlier, so the Jester is configurable exactly
+like Doctor/Detective (Off / 1× / 2× / chance / Auto) from the ⚙️ Roles panel — now 4 select rows,
+still inside Discord's 5-row cap. Auto threshold is 7+ players (a Jester eats a slot and swings the Day
+vote hard, so it wants a few more bodies to hide among); Doctor stays 5+, Detective 6+.
+
+Generalised rather than special-cased while adding it: introduced `SPECIAL_ROLES` and
+`AUTO_MIN_PLAYERS`, and rewrote `roleCounts`/`assignRoles` to loop over them instead of naming doctor
+and detective by hand — so the roll, the clamp into available non-Mafia slots, and the assignment all
+picked up the Jester with no per-role branching, and a 5th role later is a one-line addition.
+
+Mechanics:
+- **Win is lynch-only.** Handled in `resolveDay` (where the vote resolves), deliberately NOT in
+  `checkWin` — `resolveNight` has no jester branch on purpose, so a Mafia night-kill just kills them.
+- `endGame` gained an optional `jesterId` and the reveal embed a purple 🃏 branch naming who pulled it
+  off.
+- **Detective needed no change** — the check is a strict `role === 'mafia'`, so a Jester already read
+  as "not Mafia-aligned". Verified rather than assumed.
+- Jester has no Night action; added `NIGHT_ACTION_ROLES` so clicking a Night button as a Jester gets a
+  clear "your whole game is getting voted out during the Day" instead of the generic "that's not your
+  role".
+- Jester counts as an ordinary non-Mafia body for parity, so it neither blocks a Town win nor
+  artificially delays a Mafia one.
+
+Verified with a 19-check harness: auto thresholds at 5/6/7/8/12/15 (jester appearing exactly at 7+,
+every count summing to the player total), Off/2×/1×50% behaving like the other special roles, both
+safety clamps still holding with four special roles in play, assignRoles emitting the jester with every
+player assigned exactly once, and three win-condition cases confirming the jester is a body and not a
+town winner (all-mafia-dead still gives Town the win with a jester alive — they didn't get lynched).
+ALL PASS. Both bots restarted clean; scratch script removed from bots-vm, confirmed gone.
+
 ## 2026-08-20 22:02 — Mafia panel now edits in place on button clicks, and is deleted when the game ends
 
 Owner: "the bot resends the message instead of editing it when a button is clicked" and, mid-turn,

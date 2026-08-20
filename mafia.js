@@ -31,13 +31,19 @@ const MIN_PLAYERS = 5, MAX_PLAYERS = 15;
 const LOBBY_MS = 60 * 1000, NIGHT_MS = 90 * 1000, DAY_MS = 120 * 1000;
 const SWEEP_MS = 15 * 1000;
 
-const ROLE_LABEL = { mafia: '🔪 Mafia', villager: '🧑‍🌾 Villager', doctor: '💉 Doctor', detective: '🔎 Detective' };
+const ROLE_LABEL = { mafia: '🔪 Mafia', villager: '🧑‍🌾 Villager', doctor: '💉 Doctor', detective: '🔎 Detective', jester: '🃏 Jester' };
 const ROLE_DESC = {
   mafia: 'Each Night, vote with the rest of the Mafia on who to kill. Try not to get caught.',
   villager: 'No powers. Survive, and vote out the Mafia during the Day.',
   doctor: 'Each Night, pick one living player to protect. If Mafia targets them, they survive.',
   detective: 'Each Night, investigate one living player — you\'ll learn if they\'re Mafia-aligned.',
+  jester: 'You win by getting yourself **voted out** during the Day. Act guilty. If the Mafia kills you at Night instead, you lose.',
 };
+// Roles with a Night action. The Jester has none — it plays entirely through the Day vote.
+const NIGHT_ACTION_ROLES = new Set(['mafia', 'doctor', 'detective']);
+// Roles that spawn in a limited quantity and can be turned off / chance-rolled (i.e. everything but the
+// Mafia themselves and the Villager filler).
+const SPECIAL_ROLES = ['doctor', 'detective', 'jester'];
 
 // State file holds BOTH the live games and the persistent role settings:
 //   { games: { [vcId]: {...game} }, settings: {...} }
@@ -63,7 +69,7 @@ function allActive() { return Object.values(games); }
 // 'auto' keeps the original player-count scaling (mafia = n/4, Doctor at 5+, Detective at 6+) and is the
 // default, so an unconfigured server behaves exactly as it did before this existed. Settings persist
 // across games, like a host's lobby settings. -----------------------------------------------------------
-const DEFAULT_SETTINGS = { mafia: { count: 'auto' }, doctor: { count: 'auto', chance: 100 }, detective: { count: 'auto', chance: 100 } };
+const DEFAULT_SETTINGS = { mafia: { count: 'auto' }, doctor: { count: 'auto', chance: 100 }, detective: { count: 'auto', chance: 100 }, jester: { count: 'auto', chance: 100 } };
 function getSettings() {
   if (!settings) load();
   return { ...DEFAULT_SETTINGS, ...(settings || {}) };
@@ -81,7 +87,7 @@ function describeRole(role, s) {
   return `${c.count}×${role === 'mafia' ? '' : ` ${c.chance}%`}`;
 }
 function describeSettings(s = getSettings()) {
-  return `🔪 Mafia **${describeRole('mafia', s)}** · 💉 Doctor **${describeRole('doctor', s)}** · 🔎 Detective **${describeRole('detective', s)}**`;
+  return `🔪 Mafia **${describeRole('mafia', s)}** · 💉 Doctor **${describeRole('doctor', s)}** · 🔎 Detective **${describeRole('detective', s)}** · 🃏 Jester **${describeRole('jester', s)}**`;
 }
 
 // ---- role assignment ---------------------------------------------------------------------------------
@@ -89,21 +95,24 @@ function describeSettings(s = getSettings()) {
 // clamps: Mafia must be at least 1 and must stay a MINORITY at the start (mafia >= town is an instant
 // win, so a mis-set count can't hand the game away before it begins), and special roles can never
 // outnumber the remaining town slots.
+// 'auto' thresholds per special role: Doctor from the 5-player floor, Detective at 6+, Jester at 7+
+// (a Jester eats a slot and swings the Day vote hard, so it wants a few more bodies to hide among).
+const AUTO_MIN_PLAYERS = { doctor: 5, detective: 6, jester: 7 };
 function roleCounts(n, s = getSettings()) {
   let mafiaN = s.mafia.count === 'auto' ? Math.max(1, Math.floor(n / 4)) : Number(s.mafia.count) || 1;
   mafiaN = Math.max(1, Math.min(mafiaN, Math.floor((n - 1) / 2)));
   const special = {};
-  for (const role of ['doctor', 'detective']) {
-    const cfg = s[role];
-    if (cfg.count === 'auto') { special[role] = (role === 'doctor' ? n >= 5 : n >= 6) ? 1 : 0; continue; }
+  for (const role of SPECIAL_ROLES) {
+    const cfg = s[role] || DEFAULT_SETTINGS[role];
+    if (cfg.count === 'auto') { special[role] = n >= AUTO_MIN_PLAYERS[role] ? 1 : 0; continue; }
     let got = 0;
     for (let i = 0; i < (Number(cfg.count) || 0); i++) if (Math.random() * 100 < (Number(cfg.chance) ?? 100)) got++;
     special[role] = got;
   }
-  // clamp special roles into the town slots that actually exist
-  let townSlots = n - mafiaN;
-  for (const role of ['doctor', 'detective']) { special[role] = Math.min(special[role], Math.max(0, townSlots)); townSlots -= special[role]; }
-  return { mafia: mafiaN, doctor: special.doctor, detective: special.detective, villager: n - mafiaN - special.doctor - special.detective };
+  // clamp special roles into the non-Mafia slots that actually exist
+  let slots = n - mafiaN;
+  for (const role of SPECIAL_ROLES) { special[role] = Math.min(special[role], Math.max(0, slots)); slots -= special[role]; }
+  return { mafia: mafiaN, ...special, villager: n - mafiaN - SPECIAL_ROLES.reduce((t, r) => t + special[r], 0) };
 }
 function assignRoles(joinOrder, s = getSettings()) {
   const ids = [...joinOrder];
@@ -112,8 +121,7 @@ function assignRoles(joinOrder, s = getSettings()) {
   const players = {};
   let idx = 0;
   for (let i = 0; i < counts.mafia; i++) players[ids[idx++]] = { role: 'mafia', alive: true };
-  for (let i = 0; i < counts.doctor; i++) players[ids[idx++]] = { role: 'doctor', alive: true };
-  for (let i = 0; i < counts.detective; i++) players[ids[idx++]] = { role: 'detective', alive: true };
+  for (const role of SPECIAL_ROLES) for (let i = 0; i < counts[role]; i++) players[ids[idx++]] = { role, alive: true };
   while (idx < ids.length) players[ids[idx++]] = { role: 'villager', alive: true };
   return players;
 }
@@ -224,6 +232,7 @@ function settingsPanel(vcId) {
     sel('mafia', MAFIA_COUNT_OPTS, '🔪 Mafia count'),
     sel('doctor', SPECIAL_OPTS, '💉 Doctor'),
     sel('detective', SPECIAL_OPTS, '🔎 Detective'),
+    sel('jester', SPECIAL_OPTS, '🃏 Jester'),
   ] };
 }
 
@@ -261,10 +270,13 @@ function dayPanel(game, resultLine) {
 function revealLines(game) {
   return Object.entries(game.players).map(([id, p]) => `${p.alive ? '🟢' : '💀'} ${ROLE_LABEL[p.role]} — <@${id}>`).join('\n');
 }
-function endPanel(game, winner) {
-  const e = new EmbedBuilder().setColor(winner === 'mafia' ? 0xED4245 : 0x57F287)
-    .setTitle(winner === 'mafia' ? '🔪 Mafia wins' : '🧑‍🌾 Town wins')
-    .setDescription(`Game over. Here's who was who:\n\n${revealLines(game)}`);
+function endPanel(game, winner, jesterId) {
+  const color = winner === 'mafia' ? 0xED4245 : winner === 'jester' ? 0x9B59B6 : 0x57F287;
+  const title = winner === 'mafia' ? '🔪 Mafia wins' : winner === 'jester' ? '🃏 The Jester wins' : '🧑‍🌾 Town wins';
+  const lead = winner === 'jester'
+    ? `<@${jesterId}> got themselves voted out — which was the whole plan. Everyone else loses.\n\nHere's who was who:`
+    : `Game over. Here's who was who:`;
+  const e = new EmbedBuilder().setColor(color).setTitle(title).setDescription(`${lead}\n\n${revealLines(game)}`);
   return { embeds: [e], components: [] };
 }
 
@@ -381,19 +393,23 @@ async function resolveNight(client, guild, game) {
 async function resolveDay(client, guild, game) {
   const alive = new Set(livingIds(game));
   const { target, tie } = pluralityTarget(game.day.votes, alive);
-  let resultLine;
+  let resultLine, jesterWin = null;
   if (target && !tie) {
     game.players[target].alive = false;
     game.deathLog.push({ day: game.dayNum, phase: 'day', userId: target, cause: 'eliminated' });
     resultLine = `⚖️ <@${target}> (**${ROLE_LABEL[game.players[target].role]}**) was voted out.`;
+    // The Jester wins by being LYNCHED specifically — a Night kill just kills them (see resolveNight,
+    // which has no jester branch on purpose). Owner's call: this ends the game immediately.
+    if (game.players[target].role === 'jester') { jesterWin = target; resultLine += `\n\n🃏 …which is exactly what they wanted.`; }
   } else {
     resultLine = tie ? `⚖️ The vote was tied — nobody was eliminated today.` : `⚖️ Not enough votes — nobody was eliminated today.`;
   }
   save();
   if (game.mafiaThreadId && target && !game.players[target].alive) { const t = await guild.channels.fetch(game.mafiaThreadId).catch(() => null); if (t) await t.members.remove(target).catch(() => {}); }
 
-  const winner = checkWin(game);
   await announce(client, game, resultLine);
+  if (jesterWin) return endGame(client, guild, game, 'jester', jesterWin);
+  const winner = checkWin(game);
   if (winner) return endGame(client, guild, game, winner);
 
   update(game.vcId, { phase: 'night', dayNum: game.dayNum + 1, phaseDeadline: Date.now() + NIGHT_MS, night: { mafiaVotes: {}, doctorPick: null, detectivePick: null, resolved: false } });
@@ -402,13 +418,13 @@ async function resolveDay(client, guild, game) {
   await postPanel(client, fresh, nightPanel(fresh));
 }
 
-async function endGame(client, guild, game, winner) {
+async function endGame(client, guild, game, winner, jesterId = null) {
   // Panel goes away entirely; the reveal is posted as its own plain message (no buttons, nothing left
   // to click) rather than becoming the new "panel".
   await deletePanel(client, game).catch(() => {});
   if (winner) {
     const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
-    if (ch) await ch.send({ ...endPanel(game, winner), allowedMentions: { parse: [] } }).catch(() => {});
+    if (ch) await ch.send({ ...endPanel(game, winner, jesterId), allowedMentions: { parse: [] } }).catch(() => {});
   }
   if (guild) await releaseAllVoices(guild, game).catch(() => {});
   if (game.mafiaThreadId) { const t = guild && await guild.channels.fetch(game.mafiaThreadId).catch(() => null); if (t) { await t.setLocked(true).catch(() => {}); await t.setArchived(true).catch(() => {}); } }
@@ -515,6 +531,7 @@ async function handleInteraction(interaction) {
     const needRole = kind === 'kill' ? 'mafia' : kind === 'save' ? 'doctor' : 'detective';
     const p = game.players[interaction.user.id];
     if (game.phase !== 'night') return interaction.reply({ content: 'It\'s not Night.', flags: EPH });
+    if (p?.alive && !NIGHT_ACTION_ROLES.has(p.role)) return interaction.reply({ content: p.role === 'jester' ? '🃏 You have no Night action — your whole game is getting voted out during the Day.' : 'You have no Night action. Sit tight.', flags: EPH });
     if (!p || !p.alive || p.role !== needRole) return interaction.reply({ content: `That's not your role.`, flags: EPH });
     const targets = livingIds(game).filter(id => id !== interaction.user.id && !(kind === 'kill' && game.players[id].role === 'mafia'));
     if (!targets.length) return interaction.reply({ content: 'No valid targets right now.', flags: EPH });
