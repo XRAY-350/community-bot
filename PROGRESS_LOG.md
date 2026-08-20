@@ -1129,3 +1129,37 @@ embed description chars) before deploying.
 `node --check` clean local+remote for all 3 files, both bots restarted clean, `/corner` registered
 fine on both (confirms the new option's description stayed under the 100-char limit). Committed
 `82487c9`, pushed.
+
+## 2026-08-20 03:38 — Set up FUBU's weekly awards (was enabled but empty)
+
+Investigated "what features are on in Melanin that aren't in FUBU" — feature FLAGS turned out
+identical (FUBU is a strict superset), but `awards` (weekly peer-voted superlatives, e.g. "Funniest
+Member" — rotating role each week, Wed reminder / Fri tally) was flagged `true` on both yet had ZERO
+categories configured on FUBU vs Melanin's 11. Owner: "let's set it up."
+
+Mirrored Melanin's 11 categories onto FUBU (funniest/unfunniest/week/pet/cool/nice/mean/
+nonchalant/chalant/angry/happy) — role IDs can't be shared cross-guild, so created 11 fresh roles
+initially. Owner then flagged 3 of those were unnecessary duplicates: FUBU already had matching
+roles from before (`FUNNIEST member🤣`, `UNFUNNIEST member😡`, `ANGRIEST MEMBER`) — deleted the 3
+duplicate roles I'd just created and re-pointed those 3 categories at the pre-existing role IDs
+instead.
+
+Those pre-existing roles turned out to be multi-holder CLUB badges (19/4/5 people respectively),
+not single-rotating-winner roles the awards system expects — `swapAwardHolder()` removes the
+previous single holder and adds one new winner, so reusing them as-is would have stripped the role
+from everyone but that week's winner on the first Friday tally, a real disruptive change to
+people's existing badges. Owner: "to reconcile we just remove them" — stripped the role from all
+current holders on all 3, so they start clean as of this week.
+
+Owner then flagged FUBU has its own additional superlative-style roles beyond Melanin's list.
+Surveyed the full role list, proposed 8 candidates (excluding tribe/color/chatter-tier roles and
+what looked like personal nickname roles tied to one specific member — RIRI, Bun Bun, naynay,
+Yohan, Senku, Cobain, princess cleo, etc.), owner picked 6: Top GOOFY, Kawaiiest, Cute & Cuddly,
+Freakiest Member, cutest ever!, GOATED. Same treatment — checked holder counts (1/7/15/6/8/6),
+stripped all current holders, added as new award categories pointing at the existing roles.
+
+FUBU now has 17 award categories total (11 mirrored + 6 FUBU-specific), all starting with zero
+current holders, ready for this week's votes and Friday's first tally. All work done live via
+one-off scratch scripts (awards.js state file + Discord role edits) — no code changes, nothing to
+commit. Bot restarted so the in-memory awards cache (per the statepath caching gotcha) picks up the
+final state; confirmed clean restart, all commands still registered.
