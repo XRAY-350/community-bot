@@ -1041,7 +1041,10 @@ async function sweepBirthdays(guild) {
       birthday.setActive(userId, role.id, today);
       if (config.birthdayChannelId) {
         const ch = await guild.channels.fetch(config.birthdayChannelId).catch(() => null);
-        if (ch) await ch.send({ content: `🎉🎂 Happy Birthday, <@${userId}>! Hope it's a great one.`, allowedMentions: { users: [userId] } }).catch(e => console.error('[birthday] announce:', e.message));
+        if (ch) {
+          const ping = config.birthdayPingRoleId ? ` <@&${config.birthdayPingRoleId}>` : '';
+          await ch.send({ content: `🎉🎂 Happy Birthday, <@${userId}>! Hope it's a great one.${ping}`, allowedMentions: { users: [userId], roles: config.birthdayPingRoleId ? [config.birthdayPingRoleId] : [] } }).catch(e => console.error('[birthday] announce:', e.message));
+        }
       }
     }
   }
