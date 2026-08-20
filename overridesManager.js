@@ -91,7 +91,7 @@ function getOverrides() {
   return loadOverrides();
 }
 
-function addOverride({ actorType = 'user', actorId, actors = null, hitSquadExempt = false, targetType = 'user', targetId, type, powerTier = null, note = '', createdBy = null }) {
+function addOverride({ actorType = 'user', actorId, actors = null, denied = null, hitSquadExempt = false, targetType = 'user', targetId, type, powerTier = null, note = '', createdBy = null }) {
   const list = loadOverrides();
   const id = `ov_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const t = type.toUpperCase();
@@ -110,6 +110,13 @@ function addOverride({ actorType = 'user', actorId, actors = null, hitSquadExemp
     // this is the one type that doesn't need the multi-actor list.
     entry.actorType = actorType;
     entry.actorId = (actorId || '*').trim();
+  } else if (t === 'PROTECT_FROM') {
+    // Deny-list, not allow-list (owner, 2026-08-20: "there are different reasons someone could be
+    // cornered — hit squad, by staff, or by a member" — an allow-list means enumerating every OTHER
+    // legitimate actor just to block one source). Entries: {type:'user'|'role', id}, {type:'tier', id:
+    // 'staff'|'mod'|'admin'|'owner'} (that tier and above), {type:'hitsquad'}, {type:'membercorner'}.
+    // Anyone/anything NOT matching an entry here can still corner them normally.
+    entry.denied = Array.isArray(denied) ? denied : [];
   } else {
     // Every other type can name MULTIPLE allowed actors (users and/or roles), not just one — see
     // normalizeActors() for the legacy-entry fallback (single actorId/actorType), and addRuleActor /
@@ -155,6 +162,51 @@ function removeRuleActor(ruleId, actorType, actorId) {
   rule.updatedAt = Date.now();
   saveOverrides(list);
   return rule;
+}
+
+// Same shape as normalizeActors, for PROTECT_FROM's denied[] list.
+function normalizeDenied(rule) { return Array.isArray(rule.denied) ? rule.denied : []; }
+
+function addDeniedEntry(ruleId, type, id) {
+  const list = loadOverrides();
+  const rule = list.find(o => o.id === ruleId && o.type === 'PROTECT_FROM');
+  if (!rule) return null;
+  const denied = normalizeDenied(rule);
+  if (!denied.some(d => d.type === type && d.id === id)) denied.push(id ? { type, id } : { type });
+  rule.denied = denied;
+  rule.updatedAt = Date.now();
+  saveOverrides(list);
+  return rule;
+}
+
+function removeDeniedEntry(ruleId, type, id) {
+  const list = loadOverrides();
+  const rule = list.find(o => o.id === ruleId && o.type === 'PROTECT_FROM');
+  if (!rule) return null;
+  rule.denied = normalizeDenied(rule).filter(d => !(d.type === type && d.id === id));
+  rule.updatedAt = Date.now();
+  saveOverrides(list);
+  return rule;
+}
+
+// The deny-list model (owner, 2026-08-20): checked ALONGSIDE checkExclusiveProtection (legacy
+// allow-list rules keep working unchanged), never replacing it — a target can have either or both kinds
+// of rule. `source` tells this which non-tier corner PATHS the actor is currently using: { hitSquad,
+// memberCorner } — both false for a normal staff/trial corner attempt.
+function matchDenied(entry, actorMember, actorId, actorTier, source) {
+  if (entry.type === 'hitsquad') return !!source?.hitSquad;
+  if (entry.type === 'membercorner') return !!source?.memberCorner;
+  if (entry.type === 'tier') return (TIER_RANK[actorTier] || 0) >= (TIER_RANK[entry.id] || 0);
+  return matchEntity(entry.type, entry.id, actorMember || actorId);
+}
+function checkProtectFrom(targetMember, actorId, actorMember = null, actorTier = null, source = null) {
+  const list = loadOverrides();
+  const rules = list.filter(o => o.type === 'PROTECT_FROM' && matchEntity(o.targetType, o.targetId, targetMember));
+  for (const rule of rules) {
+    const hit = normalizeDenied(rule).find(d => matchDenied(d, actorMember, actorId, actorTier, source));
+    if (hit) return { allowed: false, deniedEntry: hit, note: rule.note };
+  }
+  return { allowed: true };
 }
 
 function setExclusiveHitSquadExempt(ruleId, exempt) {
@@ -228,16 +280,6 @@ function checkExclusiveProtection(targetMember, actorId, actorMember = null, act
   return { allowed: false, requiredActors: normalizeActors(rules[0]), hitSquadExempt: rules.some(r => r.hitSquadExempt) };
 }
 
-// Deny-only rule scoped to hit squad specifically (owner, 2026-08-20: "how do I deny the hit squad from
-// cornering someone" — EXCLUSIVE_CORNERER is an allow-list, so blocking just hit squad would otherwise
-// mean enumerating every other legitimate actor/tier). No actors[] list — the "actor" is implicitly hit
-// squad, checked by the caller (corner.js) only when the actor IS currently a hit squad member; staff and
-// member-corner are never touched by this rule type at all.
-function isHitSquadDenied(targetMember) {
-  const list = loadOverrides();
-  return list.some(o => o.type === 'DENY_HITSQUAD' && matchEntity(o.targetType, o.targetId, targetMember));
-}
-
 // actorTier is the actor's OWN current tier (not a granted one) — needed to evaluate a tier-type actor
 // entry on a GRANT_POWER rule itself. Callers pass the raw tier (e.g. opspanel.tierOf), never the result
 // of this same function, to avoid a rule granting itself eligibility.
@@ -281,10 +323,13 @@ module.exports = {
   updateOverride,
   removeOverride,
   checkExclusiveProtection,
-  isHitSquadDenied,
+  checkProtectFrom,
   normalizeActors,
+  normalizeDenied,
   addRuleActor,
   removeRuleActor,
+  addDeniedEntry,
+  removeDeniedEntry,
   setExclusiveHitSquadExempt,
   getGrantedPower,
   canSelfCorner,

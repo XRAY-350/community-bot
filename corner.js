@@ -363,7 +363,7 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
-  const { forceReal = false, adult = false, thread = false, anon = false } = opts || {};
+  const { forceReal = false, adult = false, thread = false, anon = false, viaMemberCorner = false } = opts || {};
   const now = Date.now();
   // Fetch actor member if byId provided to evaluate role-based granted powers
   let actorMember = null;
@@ -400,11 +400,17 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     if (exclusive.hitSquadExempt) who.push('🚔 hit squad (while active)');
     return { ok: false, error: `only ${who.join(', ') || 'nobody currently allowed'} can corner ${member.displayName || member.user?.username || 'this member'}.` };
   }
-  // Hit-squad-specific deny (owner, 2026-08-20): a DENY_HITSQUAD override blocks hit squad from cornering
-  // this person WITHOUT restricting staff/member-corner the way an EXCLUSIVE_CORNERER allow-list would —
-  // only checked when the actor is actually cornering via their hit-squad grant.
-  if (byId && hitsquad.isSquadMember(byId) && overridesManager.isHitSquadDenied(member)) {
-    return { ok: false, error: `hit squad is blocked from cornering ${member.displayName || member.user?.username || 'this member'}.` };
+  // Protect-from deny-list (owner, 2026-08-20): blocks specific corner SOURCES — hit squad, a staff tier,
+  // member-corner, or a named person/role — without restricting everything else the way an
+  // EXCLUSIVE_CORNERER allow-list would (that'd mean enumerating every other legitimate actor just to
+  // block one source). Independent of checkExclusiveProtection above; a target can have either or both.
+  const protectFrom = overridesManager.checkProtectFrom(member, byId, actorMember, actorTier,
+    { hitSquad: !!(byId && hitsquad.isSquadMember(byId)), memberCorner: !!viaMemberCorner });
+  if (!protectFrom.allowed) {
+    const d = protectFrom.deniedEntry;
+    const who = d.type === 'hitsquad' ? 'hit squad' : d.type === 'membercorner' ? 'regular members'
+      : d.type === 'tier' ? `${d.id}+ staff` : d.type === 'role' ? `<@&${d.id}>` : `<@${d.id}>`;
+    return { ok: false, error: `${who} ${d.type === 'user' || d.type === 'role' ? 'is' : 'are'} blocked from cornering ${member.displayName || member.user?.username || 'this member'}.` };
   }
   // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
   const MINOR_ROLE_ID = '1516185172213628989';

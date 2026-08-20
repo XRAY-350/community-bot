@@ -537,12 +537,14 @@ async function buildPromotions() {
 
 // Plain-language type labels — matches how cornering rules actually get talked about, not the internal
 // enum names (owner, 2026-08-19: "the terminology doesn't really match how we already describe things").
-const OV_TYPE_LABEL = { EXCLUSIVE_CORNERER: '🔒 Protected', DENY_HITSQUAD: '🚔 Hit squad blocked', ALLOW_SELF_CORNER: '🙋 Self-corner allowed', BYPASS_TIER: '🔓 Rank bypass' };
+const OV_TYPE_LABEL = { EXCLUSIVE_CORNERER: '🔒 Protected (legacy allow-list)', PROTECT_FROM: '🔒 Protected', ALLOW_SELF_CORNER: '🙋 Self-corner allowed', BYPASS_TIER: '🔓 Rank bypass' };
 function overrideTypeLabel(o) {
   return o.type === 'GRANT_POWER' ? `⚡ Cornering authority (${o.powerTier || 'owner'}-level)` : (OV_TYPE_LABEL[o.type] || o.type);
 }
 const TIER_ACTOR_LABEL = { staff: '🔰 Staff+ (Trial Mod/Mini-Mod/Event Organizer)', mod: '✰ Mod+ staff', admin: '⭐ Admin+ staff', owner: '👑 Owner+', botowner: '🤖 Bot Owner' };
 function fmtEntity(type, id) {
+  if (type === 'hitsquad') return '🚔 Hit Squad';
+  if (type === 'membercorner') return '👤 Regular Members';
   if (id === '*') return 'Everyone';
   if (type === 'tier') return TIER_ACTOR_LABEL[id] || `${id}+ staff`;
   return type === 'role' ? `<@&${id}>` : `<@${id}>`;
@@ -550,6 +552,10 @@ function fmtEntity(type, id) {
 function overrideActorFmt(o) {
   if (o.type === 'ALLOW_SELF_CORNER') {
     return o.actorId !== '*' ? fmtEntity(o.actorType, o.actorId) : 'Everyone';
+  }
+  if (o.type === 'PROTECT_FROM') {
+    const names = overridesManager.normalizeDenied(o).map(d => fmtEntity(d.type, d.id));
+    return names.length ? names.join(', ') : '_nobody yet — add something to block_';
   }
   // Every other type can list multiple actors now — see overridesManager.normalizeActors. An actor entry
   // can be a person, a role, a staff-tier floor ("admin+"), or the literal wildcard (ANY member, no floor
@@ -566,7 +572,7 @@ function overrideTargetFmt(o) {
 function overrideSummaryLine(o) {
   const noteSuffix = o.note ? ` _(${o.note})_` : '';
   if (o.type === 'EXCLUSIVE_CORNERER') return `**${overrideTypeLabel(o)}** — only ${overrideActorFmt(o)} can corner ${overrideTargetFmt(o)}${noteSuffix}`;
-  if (o.type === 'DENY_HITSQUAD') return `**${overrideTypeLabel(o)}** — hit squad can't corner ${overrideTargetFmt(o)} (staff/member-corner unaffected)${noteSuffix}`;
+  if (o.type === 'PROTECT_FROM') return `**${overrideTypeLabel(o)}** — ${overrideActorFmt(o)} can't corner ${overrideTargetFmt(o)} (everyone/everything else unaffected)${noteSuffix}`;
   if (o.type === 'GRANT_POWER') return `**${overrideTypeLabel(o)}** — ${overrideActorFmt(o)} can corner up to **${o.powerTier || 'owner'}**-tier, over ${overrideTargetFmt(o)}${noteSuffix}`;
   if (o.type === 'ALLOW_SELF_CORNER') return `**${overrideTypeLabel(o)}** — ${overrideTargetFmt(o)} may corner themselves${noteSuffix}`;
   if (o.type === 'BYPASS_TIER') return `**${overrideTypeLabel(o)}** — ${overrideActorFmt(o)} may corner above their rank, against ${overrideTargetFmt(o)}${noteSuffix}`;
@@ -575,6 +581,10 @@ function overrideSummaryLine(o) {
 function overrideShortLabel(o) {
   const shortId = id => id === '*' ? '*' : id.slice(-4);
   if (o.type === 'ALLOW_SELF_CORNER') return `${o.type} (${shortId(o.actorId)} → ${shortId(o.targetId)})`;
+  if (o.type === 'PROTECT_FROM') {
+    const denied = overridesManager.normalizeDenied(o);
+    return `${o.type} (${denied.length ? denied.map(d => d.id ? shortId(d.id) : d.type).join(',') : 'none'} → ${shortId(o.targetId)})`;
+  }
   const actors = overridesManager.normalizeActors(o);
   return `${o.type} (${actors.length ? actors.map(a => shortId(a.id)).join(',') : 'none'} → ${shortId(o.targetId)})`;
 }
@@ -616,13 +626,13 @@ function buildOverrideDetail(ruleId) {
   const o = overridesManager.getOverride(ruleId);
   if (!o) return { content: 'That rule no longer exists — it may have already been deleted.', embeds: [], components: [navRow(pageIdx('Overrides'))] };
   const isExclusive = o.type === 'EXCLUSIVE_CORNERER';
-  const isDenyHitsquad = o.type === 'DENY_HITSQUAD';
-  const multiActor = o.type !== 'ALLOW_SELF_CORNER' && !isDenyHitsquad;   // no actor concept at all for DENY_HITSQUAD — it's implicitly hit squad
+  const isProtectFrom = o.type === 'PROTECT_FROM';
+  const multiActor = o.type !== 'ALLOW_SELF_CORNER' && !isProtectFrom;   // PROTECT_FROM gets its own Add/Remove-Block buttons below instead
   const fields = [
     { name: 'Type', value: overrideTypeLabel(o), inline: true },
+    { name: isExclusive ? 'Allowed to corner them' : isProtectFrom ? 'Blocked from cornering them' : 'Actor', value: overrideActorFmt(o), inline: true },
+    { name: 'Target', value: overrideTargetFmt(o), inline: true },
   ];
-  if (!isDenyHitsquad) fields.push({ name: isExclusive ? 'Allowed to corner them' : 'Actor', value: overrideActorFmt(o), inline: true });
-  fields.push({ name: 'Target', value: overrideTargetFmt(o), inline: true });
   if (o.powerTier) fields.push({ name: 'Power Tier', value: o.powerTier, inline: true });
   fields.push({ name: 'Note', value: o.note || '_none_', inline: false });
   const created = o.createdBy ? `<@${o.createdBy}>${o.createdAt ? ` · <t:${Math.floor(o.createdAt / 1000)}:R>` : ''}` : '_unknown (predates audit trail)_';
@@ -637,6 +647,12 @@ function buildOverrideDetail(ruleId) {
     btns.push(new ButtonBuilder().setCustomId(`fops_ov_addactor:${o.id}`).setEmoji('➕').setLabel('Add Actor').setStyle(ButtonStyle.Secondary));
     if (overridesManager.normalizeActors(o).length) {
       btns.push(new ButtonBuilder().setCustomId(`fops_ov_rmactor:${o.id}`).setEmoji('➖').setLabel('Remove Actor').setStyle(ButtonStyle.Secondary));
+    }
+  }
+  if (isProtectFrom) {
+    btns.push(new ButtonBuilder().setCustomId(`fops_ov_addblock:${o.id}`).setEmoji('➕').setLabel('Add Block').setStyle(ButtonStyle.Secondary));
+    if (overridesManager.normalizeDenied(o).length) {
+      btns.push(new ButtonBuilder().setCustomId(`fops_ov_rmblock:${o.id}`).setEmoji('➖').setLabel('Remove Block').setStyle(ButtonStyle.Secondary));
     }
   }
   btns.push(new ButtonBuilder().setCustomId(`fops_ov_delconfirm:${o.id}`).setEmoji('🗑️').setLabel('Delete').setStyle(ButtonStyle.Danger));
@@ -899,6 +915,30 @@ function actorPickRow(userCustomId, roleCustomId, subject, verb = 'the actor(s) 
     ));
   }
   return { content: `### ${subject}\nWho's ${verb}? Pick one or more **members**, a **role**, or a **staff tier** — you can add more later without recreating this rule.`, components: rows };
+}
+
+// "Protect Someone" picker (owner, 2026-08-20) — a deny-list, the inverse of actorPickRow's allow-list:
+// pick sources to BLOCK, not sources to allow. Same member/role/tier select shape, plus 🚔 Hit Squad and
+// 👤 Regular Members (member-corner) folded into the tier dropdown as their own selectable entries (they
+// aren't a rank, so they don't belong in the tier ladder itself, just this one picker's options list).
+function denyFromPickRow(baseCustomId, subject) {
+  const userRow = new ActionRowBuilder().addComponents(
+    new UserSelectMenuBuilder().setCustomId(`${baseCustomId}:user`).setPlaceholder('👤 Block specific member(s)…').setMinValues(1).setMaxValues(10)
+  );
+  const roleRow = new ActionRowBuilder().addComponents(
+    new RoleSelectMenuBuilder().setCustomId(`${baseCustomId}:role`).setPlaceholder('🎭 OR block a role (anyone with it)…')
+  );
+  const sourceRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(`${baseCustomId}:source`).setPlaceholder('🚫 OR block a source…').addOptions([
+      { label: '🚔 Hit Squad', value: 'hitsquad', description: 'Blocks hit squad specifically, while active' },
+      { label: '👤 Regular Members', value: 'membercorner', description: 'Blocks the member-corner feature' },
+      { label: '🔰 Staff+ (Trial Mod/Mini-Mod/Event Org)', value: 'tier:staff' },
+      { label: '✰ Mod+ staff', value: 'tier:mod' },
+      { label: '⭐ Admin+ staff', value: 'tier:admin' },
+      { label: '👑 Owner+', value: 'tier:owner' },
+    ])
+  );
+  return { content: `### ${subject}\nWho/what should be **blocked** from cornering them? Pick one or more **members**, a **role**, or a **source** — everyone/everything else can still corner them normally. Add more later without recreating this rule.`, components: [userRow, roleRow, sourceRow] };
 }
 
 async function handlePanel(interaction) {
@@ -1415,8 +1455,7 @@ async function handlePanel(interaction) {
       const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder().setCustomId('fops_ov_picktype').setPlaceholder('Select Rule Type…').addOptions([
           { label: '⚡ Give Cornering Authority', value: 'GRANT_POWER', description: 'Give someone the power to corner like an Owner, Admin, or Mod' },
-          { label: '🔒 Protect Someone', value: 'EXCLUSIVE_CORNERER', description: 'Only specific people (chosen by you) can corner this member or role' },
-          { label: '🚔 Block Hit Squad', value: 'DENY_HITSQUAD', description: "Hit squad can't corner this member or role — staff/members untouched" },
+          { label: '🔒 Protect Someone', value: 'PROTECT_FROM', description: 'Block hit squad / a staff tier / member-corner / specific people or roles from cornering them' },
           { label: '🙋 Allow Self-Corner', value: 'ALLOW_SELF_CORNER', description: 'Let a member or role corner themselves' },
           { label: '🔓 Allow Rank Bypass', value: 'BYPASS_TIER', description: 'Let someone corner above their normal staff rank' },
         ])
@@ -1515,23 +1554,12 @@ async function handlePanel(interaction) {
       const ruleType = id.split(':')[1];
       const pickedId = interaction.values[0];
 
-      if (ruleType === 'EXCLUSIVE_CORNERER') {
-        // Who's protected is picked; who's ALLOWED to corner them is a separate step now (used to be
-        // hardcoded to the server owner — owner, 2026-08-19: "right now i'm locked as the only actor").
+      if (ruleType === 'PROTECT_FROM') {
+        // Who's protected is picked; who/what they're protected FROM is a separate step (deny-list, not
+        // an allow-list — see denyFromPickRow).
         const targetType = isUser ? 'user' : 'role';
-        return interaction.editReply(actorPickRow(`fops_ov_exclusiveactors:${targetType}:${pickedId}`, `fops_ov_exclusiverole:${targetType}:${pickedId}`,
-          `Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}`, 'who is allowed to corner them', `fops_ov_exclusiveactortier:${targetType}:${pickedId}`));
-      }
-      if (ruleType === 'DENY_HITSQUAD') {
-        const entry = overridesManager.addOverride({
-          targetType: isUser ? 'user' : 'role',
-          targetId: pickedId,
-          type: 'DENY_HITSQUAD',
-          note: '',
-          createdBy: interaction.user.id
-        });
-        await interaction.editReply({ content: `✅ Hit squad is now **blocked** from cornering ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} (rule \`${entry.id}\`) — staff and member-corner are unaffected.`, components: [] });
-        return refreshPanel(interaction.client);
+        return interaction.editReply(denyFromPickRow(`fops_ov_denyfrom:${targetType}:${pickedId}`,
+          `Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}`));
       }
       // ALLOW_SELF_CORNER: target IS the actor, one rule per pick — no multi-actor step needed.
       const entry = overridesManager.addOverride({
@@ -1546,16 +1574,15 @@ async function handlePanel(interaction) {
       await interaction.editReply({ content: `✅ Added personal override rule \`${entry.id}\` for ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} (${ruleType}).`, components: [] });
       return refreshPanel(interaction.client);
     }
-    if (id.startsWith('fops_ov_exclusiveactors:') || id.startsWith('fops_ov_exclusiverole:') || id.startsWith('fops_ov_exclusiveactortier:')) {
+    if (id.startsWith('fops_ov_denyfrom:')) {
       if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
-      const isRole = id.startsWith('fops_ov_exclusiverole:');
-      const isTier = id.startsWith('fops_ov_exclusiveactortier:');
-      const [, targetType, targetId] = id.split(':');
-      const actors = isTier ? [{ type: 'tier', id: interaction.values[0] }]
-        : isRole ? [{ type: 'role', id: interaction.values[0] }]
+      const [, targetType, targetId, pickKind] = id.split(':');
+      const denied = pickKind === 'source'
+        ? interaction.values.map(v => v.startsWith('tier:') ? { type: 'tier', id: v.slice(5) } : { type: v })
+        : pickKind === 'role' ? [{ type: 'role', id: interaction.values[0] }]
         : interaction.values.map(uid => ({ type: 'user', id: uid }));
-      const entry = overridesManager.addOverride({ actors, targetType, targetId, type: 'EXCLUSIVE_CORNERER', note: '', createdBy: interaction.user.id });
-      await interaction.editReply({ content: `✅ Protected ${targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`} — only ${overrideActorFmt(entry)} can corner them now.`, components: [] });
+      const entry = overridesManager.addOverride({ denied, targetType, targetId, type: 'PROTECT_FROM', note: '', createdBy: interaction.user.id });
+      await interaction.editReply({ content: `✅ Protected ${targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`} — blocked from ${overrideActorFmt(entry)}.`, components: [] });
       return refreshPanel(interaction.client);
     }
     if (id.startsWith('fops_ov_addactor:')) {
@@ -1594,6 +1621,43 @@ async function handlePanel(interaction) {
       const ruleId = id.split(':')[1];
       const [aType, aId] = interaction.values[0].split(':');
       overridesManager.removeRuleActor(ruleId, aType, aId);
+      await interaction.editReply(buildOverrideDetail(ruleId));
+      return refreshPanel(interaction.client);
+    }
+    if (id.startsWith('fops_ov_addblock:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const ruleId = id.split(':')[1];
+      return interaction.editReply(denyFromPickRow(`fops_ov_addblockpick:${ruleId}`, '➕ Add Block'));
+    }
+    if (id.startsWith('fops_ov_addblockpick:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const [, ruleId, pickKind] = id.split(':');
+      if (pickKind === 'source') for (const v of interaction.values) overridesManager.addDeniedEntry(ruleId, v.startsWith('tier:') ? 'tier' : v, v.startsWith('tier:') ? v.slice(5) : undefined);
+      else if (pickKind === 'role') overridesManager.addDeniedEntry(ruleId, 'role', interaction.values[0]);
+      else for (const uid of interaction.values) overridesManager.addDeniedEntry(ruleId, 'user', uid);
+      await interaction.editReply(buildOverrideDetail(ruleId));
+      return refreshPanel(interaction.client);
+    }
+    if (id.startsWith('fops_ov_rmblock:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const ruleId = id.split(':')[1];
+      const o = overridesManager.getOverride(ruleId);
+      if (!o) return interaction.editReply('That rule no longer exists.');
+      const denied = overridesManager.normalizeDenied(o);
+      const opts = denied.slice(0, 25).map(d => ({
+        label: fmtEntity(d.type, d.id).replace(/[<>@&]/g, '').slice(0, 100),
+        value: `${d.type}:${d.id || ''}`
+      }));
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId(`fops_ov_rmblockpick:${ruleId}`).setPlaceholder('Select a block to remove…').addOptions(opts)
+      );
+      return interaction.editReply({ content: '### ➖ Remove Block\nWhich block should no longer apply?', components: [row] });
+    }
+    if (id.startsWith('fops_ov_rmblockpick:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const ruleId = id.split(':')[1];
+      const [dType, dId] = interaction.values[0].split(':');
+      overridesManager.removeDeniedEntry(ruleId, dType, dId || undefined);
       await interaction.editReply(buildOverrideDetail(ruleId));
       return refreshPanel(interaction.client);
     }

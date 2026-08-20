@@ -5811,7 +5811,7 @@ async function doMemberCorner(interaction, targetMember, durationMs) {
       : interaction.reply({ content: `You’ve used all ${cap} of today’s corners — they reset at midnight UTC.`, flags: MessageFlags.Ephemeral });
   const dur = Math.min(durationMs || config.memberCornerMaxMs, config.memberCornerMaxMs);
   if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const r = await corner.corner(interaction.guild, targetMember, dur, state, interaction.user.id, null);
+  const r = await corner.corner(interaction.guild, targetMember, dur, state, interaction.user.id, null, null, { viaMemberCorner: true });
   if (!r.ok) return interaction.editReply(`Couldn’t corner: ${r.error}`);
   bumpMemberCornerCount(interaction.user.id);
   const relSec = Math.floor((Date.now() + dur) / 1000);
@@ -10791,7 +10791,7 @@ client.on('interactionCreate', async (interaction) => {
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon });
+      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon, viaMemberCorner: mCorner });
       if (!r.ok) {
         if (r.error === 'gated') {
           const actorTier = opspanel.tierOf(interaction);
