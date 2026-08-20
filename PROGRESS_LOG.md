@@ -836,3 +836,22 @@ Sans-Bold block, offset verified against the existing roles' actual codepoints r
 `#roles` picker label was already "Any Pronouns" from the prior entry — unaffected by a role
 rename, roleselect.js stores its own label text separately from the Discord role name. One-off
 scratch script (`rename_pronoun_role.js`), deleted after use.
+
+## 2026-08-20 00:16 — Cornering slowdown: made thread-membership sweep fire-and-forget
+
+Owner: "Cornering has gotten really slow. People are able to speak in the corner before their
+corner announcement is sent." Root cause: the `stripThreadMemberships()` sweep added a few entries
+back (guild-wide `fetchActiveThreads()` + a fetch/remove per active thread) was `await`-ed at both
+call sites in `corner()`, directly in the hot path before the function returns — every corner now
+waited on a full guild thread sweep before the caller could send its announcement. Nothing in the
+return value depends on the sweep finishing, so switched both to fire-and-forget
+(`.catch(() => {})`, same shape as the function's own internal error handling).
+
+Caught a self-inflicted follow-up: the first pass only fixed the re-corner/update branch (line 440)
+— `replace_all` reported "All occurrences were successfully replaced" but the fresh-corner path's
+matching line (503, the common case, not the update one) had different leading whitespace (2 spaces
+vs 4) so it silently didn't match the same old_string and was still blocking. Caught by re-grepping
+after the first deploy instead of trusting the tool's success message, fixed in a second commit.
+
+Both bots restarted clean after each deploy, `node --check` clean throughout. Committed `147b68a`
+(partial) then `d7e6b01` (the actual fix, both call sites verified via grep before deploying).
