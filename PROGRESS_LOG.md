@@ -30,6 +30,47 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 22:02 — Mafia panel now edits in place on button clicks, and is deleted when the game ends
+
+Owner: "the bot resends the message instead of editing it when a button is clicked" and, mid-turn,
+"Also delete it when the game ends."
+
+Same class as the awards vote-panel bug earlier tonight: `postPanel()` unconditionally
+deleted-and-reposted, and every handler called it — so a join, a role-setting change, or a day vote all
+spammed the channel and made the panel jump to the bottom on each click.
+
+Split the two behaviours instead of making one function guess:
+- **`postPanel()`** (unchanged semantics) is now used ONLY for phase transitions — lobby open, Night,
+  Day. A fresh message there is correct: it IS the "Night just fell" notification, and deleting the
+  previous panel kills its now-stale buttons.
+- **`refreshPanel()`** (new) edits the existing panel message in place, falling back to posting only if
+  it's genuinely gone (deleted by hand).
+- Where the clicked component actually lives ON the panel — the lobby Join button and the Day vote
+  select — the handler now calls `interaction.update(...)` directly, which redraws that same message
+  atomically with no delete, no repost, and no second fetch. The day vote follows it with an ephemeral
+  `followUp` so the voter still gets a private confirmation (same shape strikeAppeals uses).
+- The ⚙️ role-settings selects update their own ephemeral message, then `refreshPanel()` the public
+  lobby panel so its "Roles:" line stays in sync without reposting.
+
+**Game end**: new `deletePanel()` removes the panel outright, and the final role reveal is sent as its
+own plain message rather than becoming the new "panel" — so nothing is left behind carrying dead
+buttons.
+
+Verified against real Discord messages (exported the panel helpers so the test drives the actual
+functions, not a reimplementation): 10 checks — id unchanged across 3 refreshes, the original message
+still present and its content actually updated, a phase change producing a new id with the old message
+removed, panel gone at game end, reveal posted separately with zero components, state cleared.
+
+**Worth recording: the first run reported 3 failures that were my test lying, not real bugs.**
+`channel.messages.fetch(id)` resolves from discord.js's message cache, so a deleted message still
+"exists" and an edited one returns its stale pre-edit content. Re-ran with
+`fetch({ message: id, force: true })` and all 10 passed. This is the same force-cache gotcha already
+recorded for `channels.fetch` — it applies to `messages.fetch` too, and it fails in the direction that
+makes an edit-in-place fix look broken while a delete-and-repost bug looks fine.
+
+`node --check` clean local+remote, both bots restarted clean, test messages and scratch scripts removed
+from bots-vm, confirmed gone.
+
 ## 2026-08-20 21:52 — Filter-deleted messages no longer show up in #deletion-log as self-deletes
 
 Owner: "Make sure messages the bot deletes because of media filter or word filter don't end up in the

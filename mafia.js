@@ -268,6 +268,9 @@ function endPanel(game, winner) {
   return { embeds: [e], components: [] };
 }
 
+// A PHASE CHANGE posts a fresh panel (deleting the previous one so its stale buttons can't be clicked)
+// — the new message is the notification that Night/Day just flipped, so it belongs at the bottom of the
+// channel. Anything that merely REFRESHES the current panel must use refreshPanel() instead.
 async function postPanel(client, game, payload) {
   const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
   if (!ch) return null;
@@ -275,6 +278,27 @@ async function postPanel(client, game, payload) {
   const sent = await ch.send(payload).catch(() => null);
   if (sent) update(game.vcId, { panelMessageId: sent.id });
   return sent;
+}
+// Redraw the SAME panel message in place (owner, 2026-08-20: "the bot resends the message instead of
+// editing it when a button is clicked"). Used for every within-phase refresh — a join, a role-setting
+// change, a day vote — so the panel doesn't spam the channel and jump to the bottom on every click.
+// Falls back to posting only if the panel message is genuinely gone (deleted by hand).
+async function refreshPanel(client, game, payload) {
+  const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
+  if (!ch) return null;
+  if (game.panelMessageId) {
+    const existing = await ch.messages.fetch(game.panelMessageId).catch(() => null);
+    if (existing) { await existing.edit(payload).catch(() => {}); return existing; }
+  }
+  return postPanel(client, game, payload);
+}
+// Remove the panel outright — on game end there's nothing left to drive, and leaving it behind just
+// means a message full of dead buttons (owner, 2026-08-20: "also delete it when the game ends").
+async function deletePanel(client, game) {
+  if (!game.panelMessageId) return;
+  const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
+  const msg = ch && await ch.messages.fetch(game.panelMessageId).catch(() => null);
+  if (msg) await msg.delete().catch(() => {});
 }
 async function announce(client, game, content) {
   const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
@@ -379,7 +403,13 @@ async function resolveDay(client, guild, game) {
 }
 
 async function endGame(client, guild, game, winner) {
-  if (winner) await postPanel(client, game, endPanel(game, winner));
+  // Panel goes away entirely; the reveal is posted as its own plain message (no buttons, nothing left
+  // to click) rather than becoming the new "panel".
+  await deletePanel(client, game).catch(() => {});
+  if (winner) {
+    const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
+    if (ch) await ch.send({ ...endPanel(game, winner), allowedMentions: { parse: [] } }).catch(() => {});
+  }
   if (guild) await releaseAllVoices(guild, game).catch(() => {});
   if (game.mafiaThreadId) { const t = guild && await guild.channels.fetch(game.mafiaThreadId).catch(() => null); if (t) { await t.setLocked(true).catch(() => {}); await t.setArchived(true).catch(() => {}); } }
   clear(game.vcId);
@@ -441,8 +471,9 @@ async function handleInteraction(interaction) {
       if (game.joinOrder.length >= MAX_PLAYERS) return interaction.reply({ content: `Lobby's full (max ${MAX_PLAYERS}).`, flags: EPH });
       update(vcId, { joinOrder: [...game.joinOrder, uid] });
     }
-    await interaction.deferUpdate().catch(() => {});
-    return postPanel(interaction.client, get(vcId), lobbyPanel(get(vcId)));
+    // The button lives ON the lobby panel, so update() redraws that same message directly — no delete,
+    // no repost, no second fetch.
+    return interaction.update(lobbyPanel(get(vcId))).catch(() => {});
   }
   if (action === 'mafia_startnow') {
     if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can start early.', flags: EPH });
@@ -461,9 +492,9 @@ async function handleInteraction(interaction) {
     else if (v === 'off') setRoleSetting(role, { count: 0 });
     else if (role === 'mafia') setRoleSetting(role, { count: Number(v) });
     else { const [c, ch] = v.split(':'); setRoleSetting(role, { count: Number(c), chance: Number(ch) }); }
-    await interaction.update(settingsPanel(vcId)).catch(() => {});
-    // keep the public lobby panel's "Roles:" line in sync with what staff just picked
-    if (get(vcId)?.phase === 'lobby') await postPanel(interaction.client, get(vcId), lobbyPanel(get(vcId))).catch(() => {});
+    await interaction.update(settingsPanel(vcId)).catch(() => {});   // the ephemeral settings message
+    // keep the PUBLIC lobby panel's "Roles:" line in sync — edited in place, not reposted
+    if (get(vcId)?.phase === 'lobby') await refreshPanel(interaction.client, get(vcId), lobbyPanel(get(vcId))).catch(() => {});
     return;
   }
   if (action === 'mafia_end') {
@@ -516,8 +547,10 @@ async function handleInteraction(interaction) {
     if (!p || !p.alive) return interaction.reply({ content: 'You\'re not in this game (or already out).', flags: EPH });
     const votes = { ...game.day.votes, [interaction.user.id]: targetId };
     update(vcId, { day: { ...game.day, votes } });
-    await interaction.reply({ content: `🗳️ Voted <@${targetId}>.`, flags: EPH, allowedMentions: { parse: [] } });
-    return postPanel(interaction.client, get(vcId), dayPanel(get(vcId), get(vcId).lastResultLine || ''));
+    // The select lives on the day panel: redraw it in place with the new tally, then confirm privately.
+    const fresh = get(vcId);
+    await interaction.update(dayPanel(fresh, fresh.lastResultLine || '')).catch(() => {});
+    return interaction.followUp({ content: `🗳️ Voted <@${targetId}>.`, flags: EPH, allowedMentions: { parse: [] } }).catch(() => {});
   }
 }
 
@@ -586,4 +619,6 @@ function register(client) {
 module.exports = { commandBuilder, handleCommand, isInteraction, handleInteraction, register, isActive, get,
   // pure helpers, exported for verification (no Discord dependency)
   roleCounts, assignRoles, checkWin, pluralityTarget, livingIds, livingMafiaIds,
-  getSettings, setRoleSetting, describeSettings, load, save, update, clear, allActive };
+  getSettings, setRoleSetting, describeSettings, load, save, update, clear, allActive,
+  // panel plumbing, exported so the post-vs-edit-vs-delete behaviour can be verified against real messages
+  postPanel, refreshPanel, deletePanel, lobbyPanel, endGame };
