@@ -1082,3 +1082,22 @@ entire body only ever touched review-forum threads, so there was nothing left to
 function (not deleted) since its one index.js caller still expects a count back.
 
 `node --check` clean local+remote, both bots restarted clean. Committed `d77f123`, pushed.
+
+## 2026-08-20 02:47 — "Send to corner" was throwing "target is not defined"
+
+Owner: "i tried to use send to corner and i got a Could not corner error." journalctl showed the
+real thrown error: `[corner-reason] target is not defined`.
+
+Root cause: the `corner_reason:` modal handler (the final step of Send-to-corner — right-click a
+message → pick a rule → this modal) fetched the CHANNEL the flagged message lived in but never
+fetched the message itself, then passed the never-defined `target` variable straight into
+`cornerFromMessage()`, which needs a real Message object (`target.author`, `.content`,
+`.attachments`, `.channel`, `.reply()`, `.url`). Confirmed via journalctl this has been broken since
+at least 00:50 tonight — predates every corner.js/index.js change made this session, not something
+introduced by anything done today.
+
+Fixed by actually fetching the message (`target = await ch.messages.fetch(messageId)`), with a
+clear ephemeral error if it's gone ("deleted?") instead of the generic "Could not corner."
+Confirmed `cornerFromMessage()` has exactly one call site, so no other handler needed the same fix.
+
+`node --check` clean local+remote, both bots restarted clean. Committed `8ff55f6`, pushed.
