@@ -923,3 +923,40 @@ actor picker), plus list/detail view formatting.
 Deployed all 5 touched files (corner.js, index.js, modapps.js, opspanel.js, overridesManager.js)
 together to both bots — `node --check` clean local+remote for every file, clean restart, all
 commands registered on both, `corner-status` still present. Committed `24dc3b7`, pushed.
+
+## 2026-08-20 01:22 — permguard boot sweep + raidguard alarm now exempt trusted owner
+
+Owner: "the permguard sweep that allows permissions changed by me needs to be generalized to the
+server owner or bot owner since i'm not the owner in melanin. same for the dangerous permission
+granted popup." Then clarified: "This was more so for melanin. I wanted to make sure changes that
+owner makes is excluded from the permguard sweep."
+
+Investigated before touching anything, since the first read didn't match a "hardcoded to me" bug:
+`permguard.js`'s `isTrustedOwner` already checked `BOT_OWNER_ID` (config'd identically on both
+`.community_env` and `.melanin_env`) OR `guild.ownerId` (dynamic, not hardcoded) OR
+`memberTier==='owner'` — confirmed via live logs it was actually working (3 successful auto-adopts
+on Melanin in the minutes right before this fix). Confirmed with the owner that `865843812907089940`
+is genuinely their ID, ruling out a config mismatch.
+
+Found the real gap: the PERIODIC sweep (`permguard.register()`'s `run()`, every 20min) already calls
+`pollOwnerOverwrites()` first — comment: "Bless any owner-made changes FIRST so this sweep never
+reverts something you just changed." But index.js's BOOT-TIME call to `sweepPermissions` (right
+after login, on every restart) skipped that step entirely, going straight to reverting drift with
+zero awareness of who made it. This repo gets restarted constantly during active dev sessions —
+every restart was a real revert-on-boot window for a not-yet-blessed owner edit, not the rare
+cold-boot case the comment implies. Exported `pollOwnerOverwrites` from permguard.js; index.js's
+boot sequence now calls it immediately before `sweepPermissions`, matching the periodic sweep
+exactly.
+
+Also fixed the second half: `raidguard.js`'s "⚠️ Dangerous permission granted" alarm
+(`onChannelUpdate`) had NO owner-exemption at all — fired on literally any dangerous-permission
+grant, including the real owner's own deliberate change. Added a best-effort audit-log lookup (most
+recent `ChannelOverwriteCreate`/`Update` entry for the changed channel) that skips the alert when
+`permguard.isTrustedOwner()` confirms the executor; falls through to alert on any lookup failure
+(false positive is cheaper than a swallowed real one). Exported `isTrustedOwner` from permguard.js
+for raidguard.js to share (no circular require risk, confirmed).
+
+Deployed all 3 files (permguard.js, raidguard.js, index.js) together, clean restart on both bots.
+Melanin's boot sweep still corrected 1 unrelated drifted overwrite (silent, `notify:false`) —
+plausible pre-existing drift unconnected to this fix, not chased further. Committed `e2255fb`,
+pushed.
