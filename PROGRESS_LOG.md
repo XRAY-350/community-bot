@@ -1185,3 +1185,23 @@ set in `.community_env`.
 `node --check` clean local+remote, fubu-bot restarted clean, both scratch scripts deleted from
 bots-vm. Committed `3a9e036`, pushed. **Not yet revealed to everyone** — need to confirm with owner
 before flipping visibility.
+
+## 2026-08-20 03:59 — Added opt-in Birthday ping role
+
+Owner: "let's make a birthday ping role." Created `🎂 Birthday ping` (self-assign, matching the
+existing `Event ping` role's exact styling — hoist:false, mentionable:false, pinged via
+`allowedMentions.roles` since the bot has Administrator regardless of the mentionable flag), added
+it to roleselect's `notifications` section (same section Event ping/Gaming/Music/Calling/etc.
+already live in) via `addRoleToSection` + `rebuildFromIndex` — #roles now shows it as a 9th block in
+that section.
+
+Hit a real timing issue: `rebuildFromIndex` needs to delete+repost every block from the
+notifications section onward (9 blocks), each requiring a full member-list scan via `ensureMembers`
+— took long enough to blow through a 30s and then a 90s foreground timeout before finally completing
+in the background (~3+ min total, `reposted: 9`). Not a bug, just genuinely slow on a server this
+size — noted for next time a role gets added to an early/middle section.
+
+`config.birthdayPingRoleId` added; the birthday announcement (from earlier tonight) now appends the
+role mention when configured. `BIRTHDAY_PING_ROLE_ID=1539844665665126470` set in `.community_env`.
+`node --check` clean local+remote, fubu-bot restarted clean, both scratch scripts deleted. Committed
+`8e30438`, pushed.
