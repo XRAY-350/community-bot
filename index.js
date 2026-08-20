@@ -7199,6 +7199,8 @@ client.on('interactionCreate', async (interaction) => {
       if ((RANK[opspanel.memberTier(member)] || 0) > (RANK[opspanel.tierOf(interaction)] || 0) && !corner.canBypassCornerTier(interaction.member || interaction.user.id, member, opspanel.tierOf(interaction)))
         return interaction.editReply(`You can’t corner someone of a higher staff tier than you (they’re **${opspanel.memberTier(member)}**).`);
       const ch = await guild.channels.fetch(channelId).catch(() => null);
+      const target = ch && await ch.messages.fetch(messageId).catch(() => null);
+      if (!target) return interaction.editReply('Couldn’t find the original message anymore (deleted?) — use `/corner @member` instead.');
       let optsStr = ''; try { optsStr = (interaction.fields.getTextInputValue('options') || '').toLowerCase(); } catch { /* older modal */ }
       const isAdult = optsStr.includes('adult');
       const isThread = optsStr.includes('thread');
