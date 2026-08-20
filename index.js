@@ -1037,7 +1037,13 @@ async function sweepBirthdays(guild) {
     const m = guild.members.cache.get(userId);
     if (!m) continue;
     const role = await grantBirthdayRole(guild, m);
-    if (role) birthday.setActive(userId, role.id, today);
+    if (role) {
+      birthday.setActive(userId, role.id, today);
+      if (config.birthdayChannelId) {
+        const ch = await guild.channels.fetch(config.birthdayChannelId).catch(() => null);
+        if (ch) await ch.send({ content: `🎉🎂 Happy Birthday, <@${userId}>! Hope it's a great one.`, allowedMentions: { users: [userId] } }).catch(e => console.error('[birthday] announce:', e.message));
+      }
+    }
   }
   birthday.setLastRunHour(hourKey);
 }
