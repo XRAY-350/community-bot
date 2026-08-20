@@ -516,6 +516,14 @@ async function fetchMemberResilient(guild, userId, tries = 4) {
 }
 async function enforceReviewThreadMembers(guild, thread) {
   const removed = [];
+  // Review threads are forum posts — forums can't contain private threads at all, so access is always
+  // gated by the forum CHANNEL's own visibility, not thread membership (unlike the applicant thread
+  // below, which really is private). Explicit removal here was both unnecessary and actively harmful:
+  // Discord's "removed from thread" system message can never be deleted by anyone (confirmed: DELETE
+  // returns 50021 "Cannot execute action on a system message"), so every no-op removal here permanently
+  // littered the review thread. Owner, 2026-08-20: "can anything delete these messages? or stop them
+  // from being made?" — this is the "stop them" half for the review-thread source specifically.
+  if (thread.type !== ChannelType.PrivateThread) return removed;
   const tm = await thread.members.fetch().catch(() => null);
   if (!tm) return removed;
   for (const [, m] of tm) {
@@ -551,23 +559,16 @@ async function enforceApplicantThreadMembers(guild, thread) {
   }
   return removed;
 }
-// When someone drops below mod+ (demoted), Discord KEEPS their existing review-thread memberships — an
-// ex-mod would still see staff deliberations. Sweep this specific user out of every review thread on the
-// demotion event (the guildMemberUpdate handler already confirmed they're now non-staff). Returns count.
+// Review threads are forum posts (forums can't contain private threads at all), so — unlike the
+// original comment here assumed — Discord doesn't actually keep an ex-mod's access via thread
+// membership: visibility is gated entirely by the review FORUM channel's own permissions, which the
+// demotion's role removal already revokes. Explicit removal was a no-op for security and a permanent-
+// litter generator (Discord's "removed from thread" system message can never be deleted by anyone —
+// confirmed via a live test, error 50021 "Cannot execute action on a system message"). Owner,
+// 2026-08-20: "can anything delete these messages? or stop them from being made?" — kept as a no-op
+// stub (rather than deleted outright) since callers still expect a count back.
 async function removeDemotedFromReviewThreads(guild, userId) {
-  const c = loadConfig();
-  if (!c.forumId) return 0;
-  const active = await guild.channels.fetchActiveThreads().catch(() => ({ threads: new Map() }));
-  const forum = await guild.channels.fetch(c.forumId).catch(() => null);
-  if (!forum) return 0;
-  const archived = await forum.threads.fetchArchived({ limit: 100 }).catch(() => ({ threads: new Map() }));
-  const all = [...active.threads.values(), ...archived.threads.values()].filter(t => t.parentId === c.forumId);
-  let removed = 0;
-  for (const t of all) {
-    const tm = await t.members.fetch().catch(() => null);
-    if (tm && tm.has(userId)) { await t.members.remove(userId).catch(() => {}); removed++; }
-  }
-  return removed;
+  return 0;
 }
 // Sweep every review thread (active + archived) in the forum on boot — catches anything added while the
 // bot was offline, or before this enforcement existed. Returns the total removed.
