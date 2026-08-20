@@ -960,3 +960,44 @@ Deployed all 3 files (permguard.js, raidguard.js, index.js) together, clean rest
 Melanin's boot sweep still corrected 1 unrelated drifted overwrite (silent, `notify:false`) —
 plausible pre-existing drift unconnected to this fix, not chased further. Committed `e2255fb`,
 pushed.
+
+## 2026-08-20 01:28 — Reworked "Protect Someone" into a general deny-list (replaces DENY_HITSQUAD)
+
+Owner: the hit-squad-only override built earlier this session "isn't really what i was looking for."
+Clarified: "there are different reasons someone could be cornered. hit squad, by staff, or by a
+member (when on)... when creating a protect someone there should be a protect from whom which can
+be a role or a person or a tier of staff or the hitsquad or from other members." Confirmed the
+model via AskUserQuestion: rework "Protect Someone" into a deny-list (pick sources to block) instead
+of today's allow-list (pick who's allowed) — everything not listed still works normally.
+
+Checked live data before touching anything: 3 real `EXCLUSIVE_CORNERER` rules already exist
+(e.g. "only server owner can corner knylvr") whose exact meaning depends on the allow-list model —
+reinterpreting that field as a deny-list would have silently inverted real protections. Kept
+`EXCLUSIVE_CORNERER` completely untouched; added a new, additive `PROTECT_FROM` type instead. "Protect
+Someone" in the panel now creates `PROTECT_FROM` going forward. `checkExclusiveProtection` (legacy)
+and the new `checkProtectFrom` run independently in corner.js — either can deny, a target can have
+either/both/neither. Retired `DENY_HITSQUAD` entirely (built minutes earlier this session, zero live
+rules existed, no migration needed) — hit-squad-only protection is now just one denied-entry choice
+within `PROTECT_FROM`.
+
+`overridesManager.js`: `denied[]` entries — `{type:'user'|'role', id}`, `{type:'tier', id}` (that
+tier and above, same TIER_RANK ladder), `{type:'hitsquad'}`, `{type:'membercorner'}`.
+`checkProtectFrom(targetMember, actorId, actorMember, actorTier, source)` where
+`source={hitSquad,memberCorner}` tells it which non-tier corner path the actor is using.
+`addDeniedEntry`/`removeDeniedEntry`/`normalizeDenied` mirror the existing actor-list helpers.
+
+`corner.js`: computes `source` from `hitsquad.isSquadMember(byId)` and a new `viaMemberCorner` opt.
+Threaded `viaMemberCorner` through both member-corner call sites — `doMemberCorner` (the Send-to-corner
+context-menu path) and the main `/corner` slash command's `mCorner` branch — neither previously told
+corner.js a call came via member-corner at all.
+
+`opspanel.js`: new `denyFromPickRow()` (member/role/tier pickers, plus 🚔 Hit Squad / 👤 Regular
+Members folded into the tier dropdown as their own options, not real tier-ladder ranks). Detail view
+gets Add Block/Remove Block buttons parallel to the legacy Add/Remove Actor. Display formatting
+(`OV_TYPE_LABEL`, `overrideActorFmt`, `overrideSummaryLine`, `overrideShortLabel`, `fmtEntity`)
+updated to render both rule families correctly.
+
+Verified with unit tests before deploying (temp override-file fixtures, not live data): `PROTECT_FROM`
+denies only the matching source and allows everything else; the 3 live `EXCLUSIVE_CORNERER` rules
+evaluate identically through `checkExclusiveProtection`, confirmed `checkProtectFrom` is a no-op on
+legacy-only rules. Deployed all 4 files, clean restart on both bots. Committed `3f39b37`, pushed.
