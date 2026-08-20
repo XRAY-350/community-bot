@@ -1070,11 +1070,22 @@ function birthdaySavedMsg(r) {
 // role just changes hands), unlike birthday's per-person ephemeral role — there's no moderation-hierarchy
 // concern here since it's one fixed role, positioned normally (bottom of the hierarchy on creation), never
 // repositioned above anyone.
+// A rotating palette for freshly-created award roles — guild.roles.create() defaults to no color (renders
+// black/default) if none is given, which is how 8 categories mirrored from Melanin ended up colorless.
+// Picked by hashing the category key, so it's deterministic (same category always gets the same color) and
+// doesn't require passing an index around.
+const AWARD_ROLE_COLORS = [0xF1C40F, 0x5DADE2, 0x16A085, 0x2ECC71, 0x922B21, 0x9B59B6, 0xE67E22, 0xF4D03F, 0xE91E63, 0x1ABC9C];
+function awardRoleColor(categoryKey) {
+  let h = 0; for (const c of categoryKey) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return AWARD_ROLE_COLORS[h % AWARD_ROLE_COLORS.length];
+}
 async function ensureAwardRole(guild, categoryKey) {
   const cat = awards.getCategory(categoryKey);
   if (!cat) return null;
   if (cat.roleId) { const r = guild.roles.cache.get(cat.roleId) || await guild.roles.fetch(cat.roleId).catch(() => null); if (r) return r; }
-  const role = await guild.roles.create({ name: cat.name.slice(0, 100), hoist: true, mentionable: false, reason: `Award role: ${cat.name}` }).catch(() => null);
+  const acolor = awardRoleColor(categoryKey);
+  const role = await guild.roles.create({ name: cat.name.slice(0, 100), colors: { primaryColor: acolor }, hoist: true, mentionable: false, reason: `Award role: ${cat.name}` })
+    .catch(() => guild.roles.create({ name: cat.name.slice(0, 100), color: acolor, hoist: true, mentionable: false, reason: `Award role: ${cat.name}` }).catch(() => null));
   if (role) awards.setCategoryRoleId(categoryKey, role.id);
   return role;
 }
@@ -1130,9 +1141,9 @@ async function awardsResultsIfDue(guild) {
 }
 // Persistent vote panel (owner, 2026-08-20: "is there a way we can make this easier instead of using
 // a command") — a pinned category dropdown replacing /awards vote. Pick a category → ephemeral member
-// picker → cast. Re-posted (not just edited) whenever the category list changes, since a
-// StringSelectMenu's option list can't be resized by editing the same component definition reliably
-// across every client — simplest to just always rebuild from scratch.
+// picker → cast. Edited in place when the existing pinned message can be found (same pattern every
+// other panel in this file already uses), so a bot restart doesn't churn a fresh message/pin every
+// time — only actually reposts if the old one is gone.
 function buildAwardsVotePanel() {
   const cats = Object.entries(awards.categories());
   if (!cats.length) return null;
@@ -1152,8 +1163,12 @@ async function ensureAwardsVotePanel(guild) {
     if (!ch) return;
     const ref = awards.panelRef();
     if (ref && ref.channelId === config.awardsAnnounceChannelId) {
-      const old = await ch.messages.fetch(ref.messageId).catch(() => null);
-      if (old) await old.delete().catch(() => {});
+      const existing = await ch.messages.fetch(ref.messageId).catch(() => null);
+      if (existing) {
+        await existing.edit(payload);
+        if (!existing.pinned) await existing.pin().catch(() => {});
+        return;
+      }
     }
     const msg = await ch.send(payload);
     await msg.pin().catch(() => {});
@@ -1316,17 +1331,19 @@ async function beginTribeDisbandFlow(interaction, t) {
     flags: MessageFlags.Ephemeral,
   });
 }
-// Keep each tribe's rank ladder ordered (owner, 2026-08-04: ranks climb ascending, rank4 + General above the
-// member role). Permutes ONLY the tribe's own 6 roles (rank1-4, member, General) among the position-slots
-// they already occupy, into the order rank1<rank2<rank3<member<rank4<General — so no other server role ever
-// moves, and it's a no-op when already correct. This is the maintenance guard against a leader dragging a
-// rank role to the wrong side of the member role; the initial even "sprinkle" spacing was done once out-of-band.
+// Keep each tribe's rank ladder ordered (owner, 2026-08-20: ranks climb ascending, the base member role sits
+// ABOVE all 4 ranks and below General — corrected from the earlier rank1<rank2<rank3<member<rank4<General,
+// which interleaved the base role in among the ranks instead of putting it above all of them). Permutes ONLY
+// the tribe's own 6 roles (rank1-4, member, General) among the position-slots they already occupy, into the
+// order rank1<rank2<rank3<rank4<member<General — so no other server role ever moves, and it's a no-op when
+// already correct. This is the maintenance guard against a leader dragging a rank role to the wrong spot; the
+// initial even "sprinkle" spacing was done once out-of-band.
 async function enforceRankOrder(guild, tribe) {
   const ranks = (tribe.ranks || []).map(r => guild.roles.cache.get(r.roleId)).filter(Boolean);
   const member = guild.roles.cache.get(tribe.roleId);
   const general = tribe.staffRankRoleId && guild.roles.cache.get(tribe.staffRankRoleId);
   if (!member || ranks.length < 4 || !general) return false;
-  const ordered = [ranks[0], ranks[1], ranks[2], member, ranks[3], general];   // ascending (bottom->top)
+  const ordered = [ranks[0], ranks[1], ranks[2], ranks[3], member, general];   // ascending (bottom->top)
   const slots = ordered.map(r => r.position).sort((a, b) => a - b);
   if (ordered.every((r, i) => r.position === slots[i])) return false;           // already correct
   await guild.roles.setPositions(ordered.map((r, i) => ({ role: r.id, position: slots[i] }))).catch(e => console.error(`[rank-order] ${tribe.key}:`, e.message));

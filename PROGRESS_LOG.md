@@ -30,6 +30,37 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 13:42 — Fixed tribe base-role hierarchy position + restored 8 colorless award roles
+
+Owner: "Something keeps moving the base tribe roles to the other rank roles and I don't want that
+to happen" — `enforceRankOrder()` (index.js, hourly + boot via `sweepLeaderRequirement`) was
+force-ordering each tribe's roles as `rank1<rank2<rank3<member<rank4<General`, interleaving the base
+membership role in between rank3 and rank4 instead of putting it above all 4 ranks. Confirmed via
+AskUserQuestion the owner wants it moved, just to the right spot — landed on
+`rank1<rank2<rank3<rank4<member<General` (base role above every rank, just under General). Changed
+the `ordered` array in `enforceRankOrder` accordingly; the function's no-op/bulk-reposition logic
+itself was already correct, only the target order was wrong.
+
+Owner also: "the superlatives have lost their color". Diagnosed live (scratch `list_award_roles.js`)
+— NOT a reset: of the 17 award roles, the 9 reused pre-existing roles (funniest, unfunniest, angry,
+goofy, kawaii, cutecuddly, freakiest, cutestever, goated) all still have their original colors. The
+8 categories newly created to mirror Melanin's set (week, pet, cool, nice, mean, nonchalant,
+chalant, happy) were colorless from the moment `ensureAwardRole()` created them — `guild.roles.create()`
+was never given a `color`, so Discord defaulted them to black/no-color. Never actually had color to
+lose.
+
+Fixed the class, not just the instance: added `AWARD_ROLE_COLORS` (10-color palette) +
+`awardRoleColor(categoryKey)` (deterministic hash-pick, same category always gets the same color) and
+wired it into `ensureAwardRole`'s role-create call (with the same `colors:`→`color:` fallback pattern
+used elsewhere in the file for the deprecated single-color API), so any FUTURE award category also
+gets a real color on creation, not just these 8. Then live-recolored the 8 existing colorless roles
+via a scratch script using the identical palette function (`week`→#e91e63, `pet`/`cool`→#1abc9c,
+`nice`/`chalant`→#9b59b6, `mean`→#f4d03f, `nonchalant`→#922b21, `happy`→#e67e22) — verified via the
+same list script that none of the 9 already-colored roles were touched.
+
+`node --check` clean local+remote, both bots restarted clean, scratch scripts (`list_award_roles.js`,
+`fix_award_colors.js`) deleted from bots-vm and confirmed gone.
+
 ## 2026-08-20 04:30 — Confirmed awards vote panel's edit-in-place fix actually holds across a restart
 
 Follow-up to the 04:20 entry. After that deploy the panel's message ID had changed AGAIN
