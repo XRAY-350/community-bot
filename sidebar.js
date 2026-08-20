@@ -5,7 +5,7 @@
 // the proven "private space, staff can see it, member can't be seen by other members" pattern.
 const fs = require('fs');
 const { statePath } = require('./statepath');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField, MessageFlags, UserSelectMenuBuilder } = require('discord.js');
 
 const CONFIG_FILE = process.env.FUBU_SIDEBAR_FILE || statePath('sidebar.json');
 const STATE_FILE = process.env.FUBU_SIDEBAR_STATE_FILE || statePath('sidebar_state.json');
@@ -39,41 +39,78 @@ async function setup(guild) {
   return { channel, created: true };
 }
 
-function sidebarEmbed(num, targetId, byId, reason, status) {
+function sidebarEmbed(num, targetIds, byId, reason, status) {
+  const ids = Array.isArray(targetIds) ? targetIds : [targetIds];
+  const who = ids.map(id => `<@${id}>`).join(', ');
+  const many = ids.length > 1;
   const e = new EmbedBuilder().setColor(status === 'closed' ? 0x99AAB5 : 0x5865F2).setTitle(`🗣️ Sidebar #${num}`)
-    .setDescription(`<@${byId}> wants to talk something through with <@${targetId}> here. Nothing's wrong — this isn't a corner, just a private space to chat.`)
-    .addFields({ name: 'With', value: `<@${targetId}>`, inline: true }, { name: 'Started by', value: `<@${byId}>`, inline: true });
+    .setDescription(`<@${byId}> wants to talk something through with ${who} here. Nothing's wrong — this isn't a corner, just a private space to chat.`)
+    .addFields({ name: many ? 'With' : 'With', value: who.slice(0, 1024), inline: true }, { name: 'Started by', value: `<@${byId}>`, inline: true });
   if (reason) e.addFields({ name: 'What about', value: String(reason).slice(0, 500), inline: false });
-  e.setFooter({ text: status === 'closed' ? 'Closed. Staff can reopen it if needed.' : 'Only the two of you and staff can see this thread.' });
+  e.setFooter({ text: status === 'closed' ? 'Closed. Staff can reopen it if needed.' : `Only ${many ? 'the people here' : 'the two of you'} and staff can see this thread.` });
   return e;
 }
 const closeRow = (closed) => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('sb_add').setEmoji('➕').setLabel('Add someone').setStyle(ButtonStyle.Secondary).setDisabled(!!closed),
   new ButtonBuilder().setCustomId('sb_close').setEmoji('🔒').setLabel('Close').setStyle(ButtonStyle.Secondary).setDisabled(!!closed),
   new ButtonBuilder().setCustomId('sb_reopen').setEmoji('🔓').setLabel('Reopen').setStyle(ButtonStyle.Secondary).setDisabled(!closed));
 
-async function pull(guild, byMember, targetMember, reason) {
+// `targets` is one member or several — a sidebar can be a 1:1 or a small group (owner: "can we sidebar
+// multiple people"). More can be pulled in later via the ➕ button, so the thread grows the way
+// appeals.js's friend threads do rather than being fixed at creation.
+async function pull(guild, byMember, targets, reason) {
   const c = loadConfig();
   if (!c.channelId) return { ok: false, msg: 'Sidebars aren’t set up yet. An admin needs to run `/sidebar-setup`.' };
-  if (targetMember.id === byMember.id) return { ok: false, msg: 'You can’t sidebar yourself.' };
-  if (targetMember.user?.bot) return { ok: false, msg: 'Can’t sidebar a bot.' };
+  const list = (Array.isArray(targets) ? targets : [targets]).filter(Boolean);
+  const seen = new Set();
+  const members = list.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+  if (!members.length) return { ok: false, msg: 'Pick at least one person to sidebar.' };
+  if (members.some(m => m.id === byMember.id)) return { ok: false, msg: 'You can’t sidebar yourself.' };
+  if (members.some(m => m.user?.bot)) return { ok: false, msg: 'Can’t sidebar a bot.' };
   const channel = await guild.channels.fetch(c.channelId).catch(() => null);
   if (!channel) return { ok: false, msg: 'The sidebars channel is missing. An admin needs to re-run `/sidebar-setup`.' };
 
   const state = loadState();
   const num = (state.counter || 0) + 1;
+  const title = members.length === 1 ? members[0].user.username : `${members[0].user.username} +${members.length - 1}`;
   const thread = await channel.threads.create({
-    name: `Sidebar #${num} · ${targetMember.user.username}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,
-    reason: `Sidebar opened by ${byMember.user.tag} with ${targetMember.user.tag}`,
+    name: `Sidebar #${num} · ${title}`.slice(0, 95), type: ChannelType.PrivateThread, invitable: false,
+    reason: `Sidebar opened by ${byMember.user.tag} with ${members.map(m => m.user.tag).join(', ')}`,
   });
-  await thread.members.add(targetMember.id).catch(() => {});
+  const targetIds = members.map(m => m.id);
+  for (const id of targetIds) await thread.members.add(id).catch(() => {});
   const msg = await thread.send({
-    content: `<@${targetMember.id}>`,
-    embeds: [sidebarEmbed(num, targetMember.id, byMember.id, reason, 'open')], components: [closeRow(false)], allowedMentions: { users: [targetMember.id] },
+    content: targetIds.map(id => `<@${id}>`).join(' '),
+    embeds: [sidebarEmbed(num, targetIds, byMember.id, reason, 'open')], components: [closeRow(false)], allowedMentions: { users: targetIds },
   });
   state.counter = num;
-  state.posts[thread.id] = { num, targetId: targetMember.id, byId: byMember.id, reason: reason || null, starterId: msg.id, status: 'open' };
+  state.posts[thread.id] = { num, targetIds, byId: byMember.id, reason: reason || null, starterId: msg.id, status: 'open' };
   saveState(state);
-  return { ok: true, num, threadId: thread.id };
+  return { ok: true, num, threadId: thread.id, count: targetIds.length };
+}
+
+// Pull additional people into an existing sidebar (staff-gated in index.js).
+async function addPeople(interaction, memberIds) {
+  const state = loadState();
+  const post = state.posts[interaction.channelId];
+  if (!post) return interaction.reply({ content: 'This sidebar is no longer tracked.', flags: MessageFlags.Ephemeral });
+  const thread = interaction.channel;
+  const already = new Set(post.targetIds || []);
+  const added = [];
+  for (const id of memberIds) {
+    if (already.has(id) || id === post.byId) continue;
+    const m = await interaction.guild.members.fetch(id).catch(() => null);
+    if (!m || m.user.bot) continue;
+    const ok = await thread.members.add(id).then(() => true).catch(() => false);
+    if (ok) { added.push(id); already.add(id); }
+  }
+  if (!added.length) return interaction.reply({ content: 'Nobody new to add (already here, a bot, or I couldn’t add them).', flags: MessageFlags.Ephemeral });
+  post.targetIds = [...already];
+  saveState(state);
+  const starter = await thread.messages.fetch(post.starterId).catch(() => null);
+  if (starter) await starter.edit({ embeds: [sidebarEmbed(post.num, post.targetIds, post.byId, post.reason, post.status)], components: [closeRow(post.status === 'closed')] }).catch(() => {});
+  await thread.send({ content: `➕ ${added.map(id => `<@${id}>`).join(', ')} pulled in by <@${interaction.user.id}>.`, allowedMentions: { users: added } }).catch(() => {});
+  return interaction.reply({ content: `➕ Added ${added.length} ${added.length === 1 ? 'person' : 'people'}.`, flags: MessageFlags.Ephemeral });
 }
 
 async function setStatus(interaction, status) {
@@ -84,7 +121,7 @@ async function setStatus(interaction, status) {
   if (status === 'open' && (thread.archived || thread.locked)) { await thread.setArchived(false).catch(() => {}); await thread.setLocked(false).catch(() => {}); }
   post.status = status; saveState(state);
   const starter = await thread.messages.fetch(post.starterId).catch(() => null);
-  if (starter) await starter.edit({ embeds: [sidebarEmbed(post.num, post.targetId, post.byId, post.reason, status)], components: [closeRow(status === 'closed')] }).catch(() => {});
+  if (starter) await starter.edit({ embeds: [sidebarEmbed(post.num, post.targetIds || post.targetId, post.byId, post.reason, status)], components: [closeRow(status === 'closed')] }).catch(() => {});
   await thread.send(status === 'closed' ? `🔒 Closed by <@${interaction.user.id}>.` : `🔓 Reopened by <@${interaction.user.id}>.`).catch(() => {});
   if (status === 'closed') { await thread.setLocked(true).catch(() => {}); await thread.setArchived(true).catch(() => {}); }
   return interaction.reply({ content: status === 'closed' ? '🔒 Closed.' : '🔓 Reopened.', flags: MessageFlags.Ephemeral });
@@ -93,6 +130,11 @@ async function setStatus(interaction, status) {
 async function handleButton(interaction) {
   if (interaction.customId === 'sb_close') return setStatus(interaction, 'closed');
   if (interaction.customId === 'sb_reopen') return setStatus(interaction, 'open');
+  if (interaction.customId === 'sb_add') {
+    const menu = new UserSelectMenuBuilder().setCustomId('sb_addpick').setPlaceholder('Who else should be in here?').setMinValues(1).setMaxValues(10);
+    return interaction.reply({ content: '➕ Pick who to pull into this sidebar:', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.customId === 'sb_addpick') return addPeople(interaction, interaction.values || []);
 }
 
-module.exports = { setup, pull, handleButton, isConfigured, loadConfig, CONFIG_FILE, STATE_FILE };
+module.exports = { setup, pull, addPeople, handleButton, isConfigured, loadConfig, CONFIG_FILE, STATE_FILE };

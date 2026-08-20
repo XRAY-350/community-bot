@@ -3,7 +3,7 @@
 // verify/rules channels), and optionally auto-releases after a duration. Releasing restores the
 // stored roles and removes the corner role.
 
-const { PermissionsBitField, ChannelType } = require('discord.js');
+const { PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const config = require('./config');
 const hitsquad = require('./hitsquad');
 const opspanel = require('./opspanel');
@@ -361,6 +361,15 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member, slowm
     });
 
     await newThread.members.add(member.id).catch(() => {});
+    // A jail thread is often about a situation BETWEEN two members, and staff shouldn't have to leave it
+    // to get the other person's side (owner, 2026-08-20: "add a sidebar as an addition to the thread
+    // corner"). Same ➕ control the sidebar threads have — staff-gated in index.js, reuses sidebar's own
+    // picker so there's one add-people flow, not two.
+    await newThread.send({
+      content: '-# Staff: pull someone else in here if this needs both sides.',
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('cornerthread_add').setEmoji('➕').setLabel('Add someone').setStyle(ButtonStyle.Secondary))],
+    }).catch(() => {});
     return newThread.id;
   } catch (err) {
     console.error('[corner] getOrCreateCornerJailThread error:', err.message);

@@ -4580,7 +4580,11 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('modmail-setup').setDescription('Create the mod-inbox channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
       new SlashCommandBuilder().setName('sidebar').setDescription('Pull a member aside for a private chat (staff)')
         .addUserOption(o => o.setName('user').setDescription('Who do you want to talk to?').setRequired(true))
-        .addStringOption(o => o.setName('reason').setDescription('What about? (optional, they’ll see this)').setRequired(false).setMaxLength(500)),
+        .addStringOption(o => o.setName('reason').setDescription('What about? (optional, they’ll see this)').setRequired(false).setMaxLength(500))
+        .addUserOption(o => o.setName('user2').setDescription('Also pull in (optional)').setRequired(false))
+        .addUserOption(o => o.setName('user3').setDescription('Also pull in (optional)').setRequired(false))
+        .addUserOption(o => o.setName('user4').setDescription('Also pull in (optional)').setRequired(false))
+        .addUserOption(o => o.setName('user5').setDescription('Also pull in (optional)').setRequired(false)),
       new SlashCommandBuilder().setName('sidebar-setup').setDescription('Create the sidebars channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('apply-mod').setDescription('Apply to become a moderator').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
@@ -7110,6 +7114,26 @@ client.on('interactionCreate', async (interaction) => {
     awards.castVote(key, interaction.user.id, target);
     return interaction.update({ content: `🗳️ Voted <@${target}> for **${cat.name}**. You can change your vote anytime before Friday.`, components: [], allowedMentions: { parse: [] } });
   }
+  // Sidebar "➕ Add someone" picker — staff-gated, adds the picked members to this sidebar's thread.
+  if (interaction.isUserSelectMenu?.() && interaction.customId === 'sb_addpick') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can manage a sidebar.', flags: MessageFlags.Ephemeral });
+    return sidebar.handleButton(interaction).catch(e => console.error('[sidebar addpick]', e.message));
+  }
+  // Corner jail thread's ➕ picker — add the picked members straight to the current thread.
+  if (interaction.isUserSelectMenu?.() && interaction.customId === 'cornerthread_addpick') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can add someone here.', flags: MessageFlags.Ephemeral });
+    const thread = interaction.channel;
+    const added = [];
+    for (const uid of interaction.values || []) {
+      const m = await interaction.guild.members.fetch(uid).catch(() => null);
+      if (!m || m.user.bot) continue;
+      const ok = await thread.members.add(uid).then(() => true).catch(() => false);
+      if (ok) added.push(uid);
+    }
+    if (!added.length) return interaction.reply({ content: 'Nobody new to add (already here, a bot, or I couldn’t add them).', flags: MessageFlags.Ephemeral });
+    await thread.send({ content: `➕ ${added.map(u => `<@${u}>`).join(', ')} pulled in by <@${interaction.user.id}>.`, allowedMentions: { users: added } }).catch(() => {});
+    return interaction.reply({ content: `➕ Added ${added.length} ${added.length === 1 ? 'person' : 'people'} to this thread.`, flags: MessageFlags.Ephemeral });
+  }
   // #roles pickers (roleselect.js) — any member, no staff gate.
   // Age/Color: single-select dropdown — swap to the chosen role, stripping any other held role in the
   // same group. Age additionally refuses outright once Verified (registration lock; index.js's
@@ -8953,9 +8977,16 @@ client.on('interactionCreate', async (interaction) => {
         if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can close or reopen a report.', flags: MessageFlags.Ephemeral });
         return await reports.handleButton(interaction);
       }
-      if (id === 'sb_close' || id === 'sb_reopen') {
-        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can close or reopen a sidebar.', flags: MessageFlags.Ephemeral });
+      if (id === 'sb_close' || id === 'sb_reopen' || id === 'sb_add') {
+        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can manage a sidebar.', flags: MessageFlags.Ephemeral });
         return await sidebar.handleButton(interaction);
+      }
+      // Corner jail thread's ➕ — same picker as a sidebar's, but adds straight to THIS thread (a jail
+      // thread isn't tracked in sidebar's state, so it can't go through sidebar.addPeople).
+      if (id === 'cornerthread_add') {
+        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can add someone here.', flags: MessageFlags.Ephemeral });
+        const menu = new UserSelectMenuBuilder().setCustomId('cornerthread_addpick').setPlaceholder('Who else should be in here?').setMinValues(1).setMaxValues(10);
+        return interaction.reply({ content: '➕ Pick who to pull into this thread:', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
       }
       if (id === 'mm_reveal') {
         if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can reveal a modmail sender.', flags: MessageFlags.Ephemeral });
@@ -10751,15 +10782,16 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'sidebar') {
     if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can open a sidebar.', flags: MessageFlags.Ephemeral });
-    const target = interaction.options.getUser('user');
-    if (target.id === interaction.user.id) return interaction.reply({ content: "You can't sidebar yourself.", flags: MessageFlags.Ephemeral });
-    if (target.bot) return interaction.reply({ content: "Can't sidebar a bot.", flags: MessageFlags.Ephemeral });
+    const users = ['user', 'user2', 'user3', 'user4', 'user5'].map(k => interaction.options.getUser(k)).filter(Boolean);
+    if (users.some(u => u.id === interaction.user.id)) return interaction.reply({ content: "You can't sidebar yourself.", flags: MessageFlags.Ephemeral });
+    if (users.some(u => u.bot)) return interaction.reply({ content: "Can't sidebar a bot.", flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const member = await interaction.guild.members.fetch(target.id).catch(() => null);
-    if (!member) return interaction.editReply('They’re not in the server anymore.');
+    const members = [];
+    for (const u of users) { const m = await interaction.guild.members.fetch(u.id).catch(() => null); if (m) members.push(m); }
+    if (!members.length) return interaction.editReply('They’re not in the server anymore.');
     try {
-      const r = await sidebar.pull(interaction.guild, interaction.member, member, interaction.options.getString('reason'));
-      return interaction.editReply(r.ok ? `✅ Opened **Sidebar #${r.num}** → <#${r.threadId}>.` : `❌ ${r.msg}`);
+      const r = await sidebar.pull(interaction.guild, interaction.member, members, interaction.options.getString('reason'));
+      return interaction.editReply(r.ok ? `✅ Opened **Sidebar #${r.num}** with ${r.count} ${r.count === 1 ? 'person' : 'people'} → <#${r.threadId}>.` : `❌ ${r.msg}`);
     } catch (e) { console.error(`[sidebar] ${e.message}`); return interaction.editReply('Could not open that sidebar.').catch(() => {}); }
   }
   if (name === 'report') {

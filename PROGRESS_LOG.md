@@ -30,6 +30,53 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 21:38 — /sidebar was never registered (bug I shipped) + multi-person sidebars + ➕ on corner jail threads
+
+Owner: "is sidebar on? also can we sidebar multiple people?" — then mid-turn, "can we also add a
+sidebar as an addition to the thread corner."
+
+**The bug: sidebar was never actually on.** Command registration is fail-off —
+`allCmds.filter(b => enabledNames.has(b.name))`, where `enabledNames` comes from the `commands`/
+`contexts` arrays of ENABLED feature-registry entries. When I built `/sidebar` earlier tonight I added
+the builders to `allCmds` but never added a `features.js` registry entry, so nothing ever claimed the
+names and all three (`sidebar`, `sidebar-setup`, and the `Sidebar` context menu) were silently
+filtered out at every boot. It looked shipped, deployed clean, logged no error, and was simply absent
+in Discord. My live verification had called `sidebar.pull()` DIRECTLY from a scratch script, which
+exercises the module but never touches command registration — so the whole feature could be missing
+and my test would still pass. Lesson worth keeping: verifying the module is not verifying the
+command; check the `[features] registered ...` line actually lists the new name.
+
+Swept the class rather than just this instance — wrote a throwaway checker that diffs every top-level
+`SlashCommandBuilder`/`ContextMenuCommandBuilder` name in index.js against what the registry claims.
+72 top-level commands, 18 unclaimed. 15 of those are DELIBERATE (their registry comments say so
+explicitly: `/report` → dashboard button, `/confess`/`/modmail`/`/suggest` → dashboard buttons, every
+`*-setup` → `/panel` → Setup, `cornered` → `/panel` → Corner page) — those entries carry
+`commands: []` on purpose. The only genuinely broken ones were my three. Fixed by adding a `sidebar`
+registry entry (`audience: 'staff'`, `built: true`, claiming both commands + the context menu, with a
+help entry). Verified live: FUBU's registration line went 56 → 59 commands and now lists `Sidebar`,
+`sidebar`, `sidebar-setup`.
+
+**Multi-person sidebars.** `pull()` now takes one member or several: dedupes, rejects self/bots,
+names the thread `Sidebar #N · alice +2`, and adds everyone. `/sidebar` gained optional `user2`-`user5`
+(the same shape `/event-award` uses for first/second/third). More importantly the thread itself gained
+a **➕ Add someone** button (staff-only) → user-select → pulls people in after the fact and updates
+the starter embed, so a 1:1 can become a group when it turns out to need both sides — mirrors how
+appeals.js grows its friend threads rather than fixing the roster at creation. State's `targetId`
+became `targetIds`; `setStatus` reads `post.targetIds || post.targetId` so the two sidebars that
+already exist from tonight's testing don't break.
+
+**➕ on corner jail threads.** Confirmed via AskUserQuestion which of three readings was meant — the
+answer was a button on the jail thread, not a second parallel thread. New jail threads now post a
+small staff-facing line with the same ➕ control, so a mod can pull the other party into an existing
+jail thread to get both sides without leaving it. Deliberately NOT routed through `sidebar.addPeople`
+— a jail thread isn't in sidebar's state, so it gets its own small handler that adds straight to
+`interaction.channel`; the picker UI is identical either way.
+
+Verified live with real non-admin members: a 3-person sidebar created with all 3 genuinely in the
+thread (`thread.members.fetch()` confirms, not just a non-error return), self-sidebar refused,
+duplicate targets deduped to 1. Test threads deleted, scratch scripts removed from bots-vm, confirmed
+gone. Both bots restarted clean.
+
 ## 2026-08-20 21:23 — Mafia: Among Us-style role config (count + % chance) and verified restart survival
 
 Two owner asks in one pass: *"in among us there's a way to picks how many of each role you want as
