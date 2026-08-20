@@ -1163,3 +1163,25 @@ current holders, ready for this week's votes and Friday's first tally. All work 
 one-off scratch scripts (awards.js state file + Discord role edits) — no code changes, nothing to
 commit. Bot restarted so the in-memory awards cache (per the statepath caching gotcha) picks up the
 final state; confirmed clean restart, all commands still registered.
+
+## 2026-08-20 03:50 — Birthday + weekly-superlatives announcement channels (built, not yet revealed)
+
+Owner: "let's create a birthday channel and a place to announce the weekly superlatives."
+
+Awards already had `config.awardsAnnounceChannelId` and the reminder/results posting code was
+already fully written (`awardsReminderIfDue`/`awardsResultsIfDue`) — it had just never been pointed
+at a real channel, so it silently no-op'd. Birthdays had NO announcement mechanism at all:
+`sweepBirthdays()` granted/revoked the per-person ephemeral role but never posted anywhere. Added
+`config.birthdayChannelId` and a post right at the moment a birthday role is freshly granted (not
+on every hourly sweep tick — only that one moment).
+
+Created both channels live on FUBU: `🎂┆ʙɪʀᴛʜᴅᴀʏꜱ` and `🏆┆ᴡᴇᴇᴋʟʏ-ꜱᴜᴘᴇʀʟᴀᴛɪᴠᴇꜱ`, small-caps styled to
+match the server's existing naming convention, placed under the `ღ ᴄᴏᴍᴍᴜɴɪᴛʏ ఌ` category alongside
+#general etc. Built hidden/staff-only first (standing practice — new channels get built hidden,
+revealed in a separate confirmed step), blessed via permguard so the drift sweep doesn't fight the
+deliberate hide. `BIRTHDAY_CHANNEL_ID=1539843842008809513` / `AWARDS_ANNOUNCE_CHANNEL_ID=1539843843363700746`
+set in `.community_env`.
+
+`node --check` clean local+remote, fubu-bot restarted clean, both scratch scripts deleted from
+bots-vm. Committed `3a9e036`, pushed. **Not yet revealed to everyone** — need to confirm with owner
+before flipping visibility.
