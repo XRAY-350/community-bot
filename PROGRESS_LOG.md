@@ -808,3 +808,21 @@ Verified `discord.js` 14.27.0 on bots-vm has `fetchActiveThreads()` (grepped nod
 directly) before deploying. `node --check` clean local+remote, both bots restarted clean,
 `corner-status` still registered on both. Scratch script `find_adult_corner.js` deleted from
 bots-vm. Committed `eac7de0`, pushed.
+
+## 2026-08-20 00:05 — Added "Any Pronouns" to the #roles pronouns section (FUBU)
+
+Owner: "we add an any pronouns role/button." Checked the live pronouns section
+(`roleselect_sections.json` on bots-vm) — She/Her, He/Him, They/Them, LGBTQ+, Ally, no "any/ask"
+option. Found an existing unused Discord role, `𝗢𝗧𝗛𝗘𝗥𝗦 (ASK)` (1526939765667008615), styled to
+match the other pronoun roles' bold-unicode convention but not wired into any #roles section —
+clearly built for exactly this and never hooked up, rather than creating a brand-new role.
+
+Wired it in via the same path `/roleselect-role add` uses: `roleselect.addRoleToSection('pronouns',
+'Any Pronouns', '1526939765667008615')` then `roleselect.rebuildFromIndex(guild, rolesChannelId,
+SECTION_BLOCK_INDEX.pronouns)` — reposted 7 blocks in #roles to reflect the new button. Ran via a
+one-off scratch script (`add_any_pronouns.js`, deleted after use) since this is a live-data change,
+not a code change — `roleselect_sections.json` is a gitignored state file, nothing to commit.
+Melanin not touched (this was specifically a FUBU pronouns-section request; Melanin's own #roles
+setup, if any, is untouched).
+
+Confirmed live: pronouns section now lists 6 entries, "Any Pronouns" → 1526939765667008615.
