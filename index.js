@@ -1128,6 +1128,38 @@ async function awardsResultsIfDue(guild) {
     awards.clearVotes(key);
   }
 }
+// Persistent vote panel (owner, 2026-08-20: "is there a way we can make this easier instead of using
+// a command") — a pinned category dropdown replacing /awards vote. Pick a category → ephemeral member
+// picker → cast. Re-posted (not just edited) whenever the category list changes, since a
+// StringSelectMenu's option list can't be resized by editing the same component definition reliably
+// across every client — simplest to just always rebuild from scratch.
+function buildAwardsVotePanel() {
+  const cats = Object.entries(awards.categories());
+  if (!cats.length) return null;
+  const menu = new StringSelectMenuBuilder().setCustomId('awards_pick_category').setPlaceholder('🗳️ Pick a category to vote in…')
+    .addOptions(cats.slice(0, 25).map(([key, c]) => ({ label: c.name.slice(0, 100), value: key })));
+  return {
+    content: '## 🏆 Weekly Superlatives\nPick a category below, then who you\'re voting for. One vote per category per week — change it anytime before Friday. You can\'t vote for yourself.',
+    components: [new ActionRowBuilder().addComponents(menu)],
+  };
+}
+async function ensureAwardsVotePanel(guild) {
+  try {
+    if (!config.awardsAnnounceChannelId) return;
+    const payload = buildAwardsVotePanel();
+    if (!payload) return;
+    const ch = await guild.channels.fetch(config.awardsAnnounceChannelId).catch(() => null);
+    if (!ch) return;
+    const ref = awards.panelRef();
+    if (ref && ref.channelId === config.awardsAnnounceChannelId) {
+      const old = await ch.messages.fetch(ref.messageId).catch(() => null);
+      if (old) await old.delete().catch(() => {});
+    }
+    const msg = await ch.send(payload);
+    await msg.pin().catch(() => {});
+    awards.setPanelRef(ch.id, msg.id);
+  } catch (e) { console.error('[awards] panel:', e.message); }
+}
 // The rotating "reigning Season Champion" role, granted to the champion tribe's members for the next season.
 async function ensureSeasonChampionRole(guild) {
   const s = tribes.load();
@@ -5041,6 +5073,7 @@ client.once('ready', async () => {
   setInterval(() => client.guilds.fetch(config.guildId).then(g => sweepBirthdays(g)).catch(() => {}), 3600000);
   if (dguild) await awardsReminderIfDue(dguild).catch(e => console.error(`[awards] boot reminder check: ${e.message}`));
   if (dguild) await awardsResultsIfDue(dguild).catch(e => console.error(`[awards] boot results check: ${e.message}`));
+  if (dguild) await ensureAwardsVotePanel(dguild).catch(e => console.error(`[awards] panel boot: ${e.message}`));
   setInterval(() => client.guilds.fetch(config.guildId).then(async g => { await awardsReminderIfDue(g); await awardsResultsIfDue(g); }).catch(() => {}), 3600000);
   if (dguild) await reconcileTribeRoles(dguild).catch(e => console.error(`[tribe reconcile] boot sweep: ${e.message}`));
   if (dguild) await backfillDefaultPaths(dguild).catch(e => console.error(`[tribe-paths] boot backfill: ${e.message}`));
@@ -7016,6 +7049,26 @@ client.on('interactionCreate', async (interaction) => {
     const modal = new ModalBuilder().setCustomId(`ban_reason_modal:${targetId}:${ruleN || 'x'}`).setTitle('Ban: reason').addComponents(
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Extra reason (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300)));
     return interaction.showModal(modal);
+  }
+  // Weekly Superlatives vote panel — category pick → ephemeral member picker → cast. Replaces typing
+  // /awards vote (owner, 2026-08-20). Any member, no staff gate — same as the slash command.
+  if (interaction.isStringSelectMenu?.() && interaction.customId === 'awards_pick_category') {
+    const key = interaction.values[0];
+    const cat = awards.getCategory(key);
+    if (!cat) return interaction.reply({ content: 'That award category doesn’t exist anymore.', flags: MessageFlags.Ephemeral });
+    const picker = new UserSelectMenuBuilder().setCustomId(`awards_vote_target:${key}`).setPlaceholder(`Who’s ${cat.name}?`).setMaxValues(1);
+    return interaction.reply({ content: `🗳️ Voting for **${cat.name}** — pick who:`, components: [new ActionRowBuilder().addComponents(picker)], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.isUserSelectMenu?.() && interaction.customId.startsWith('awards_vote_target:')) {
+    const key = interaction.customId.split(':')[1];
+    const cat = awards.getCategory(key);
+    if (!cat) return interaction.update({ content: 'That award category doesn’t exist anymore.', components: [] });
+    const target = interaction.values[0];
+    if (target === interaction.user.id) return interaction.update({ content: 'You can’t vote for yourself.', components: [] });
+    const targetMember = await interaction.guild.members.fetch(target).catch(() => null);
+    if (targetMember?.user?.bot) return interaction.update({ content: 'You can’t vote for a bot.', components: [] });
+    awards.castVote(key, interaction.user.id, target);
+    return interaction.update({ content: `🗳️ Voted <@${target}> for **${cat.name}**. You can change your vote anytime before Friday.`, components: [], allowedMentions: { parse: [] } });
   }
   // #roles pickers (roleselect.js) — any member, no staff gate.
   // Age/Color: single-select dropdown — swap to the chosen role, stripping any other held role in the
@@ -10542,6 +10595,7 @@ client.on('interactionCreate', async (interaction) => {
       awards.addCategory(key, catName);
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const role = await ensureAwardRole(interaction.guild, key);
+      await ensureAwardsVotePanel(interaction.guild).catch(() => {});
       return interaction.editReply(role ? `✅ Added **${catName}** (\`${key}\`) — role ${role}.` : `Added **${catName}**, but couldn't create its role (check my role position).`);
     }
     if (sub === 'category-remove') {
@@ -10552,6 +10606,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       if (cat.roleId) { const role = await interaction.guild.roles.fetch(cat.roleId).catch(() => null); if (role) await role.delete('Award category removed').catch(() => {}); }
       awards.removeCategory(key);
+      await ensureAwardsVotePanel(interaction.guild).catch(() => {});
       return interaction.editReply(`🗑️ Removed **${cat.name}**.`);
     }
   }

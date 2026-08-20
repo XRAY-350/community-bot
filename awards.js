@@ -56,9 +56,15 @@ function dueForResults(nowMs) {
 }
 function markResultsDone(nowMs) { const s = load(); s.lastResultsWeek = weekStartMs(nowMs); save(s); }
 
+// ---- pinned vote-panel message ref (owner, 2026-08-20: "is there a way we can make this easier
+// instead of using a command" — a persistent category/target picker replacing /awards vote) ----
+function panelRef() { return load().panel || null; }
+function setPanelRef(channelId, messageId) { const s = load(); s.panel = { channelId, messageId }; save(s); }
+
 module.exports = {
   categories, getCategory, addCategory, removeCategory, setCategoryRoleId,
   votes, castVote, myVote, tally, clearVotes,
   holder, setHolder,
   dueForReminder, markReminderDone, dueForResults, markResultsDone, weekStartMs,
+  panelRef, setPanelRef,
 };
