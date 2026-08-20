@@ -30,6 +30,42 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 23:05 — Melanin: Server Booster could @everyone server-wide (removed); FUBU audited clean
+
+Owner: "poeople in melanin can ping everyone." Live server-permission issue, no code involved.
+
+**Diagnosis (read-only first).** Scanned role-level permissions, `@everyone` base perms, and every
+channel overwrite on both guilds. `@everyone` itself was clean on both. The difference: Melanin's
+**`Server Booster` role granted `MentionEveryone` at the role level**; FUBU's does not. Held by 4
+boosters, 3 of them non-staff (l3na._10, abdiabdi_onthewall, yestitpic).
+
+First pass under-reported it — `role.members` is unreliable without the GuildMembers intent, and
+checking one `#general` showed only staff (that channel has its own deny overwrite). Re-ran with a full
+member fetch and a per-channel effective-permission check, which gave the real blast radius: **65
+channels**, i.e. effectively the whole server — #rules, #verify-here, #server-guide, every chat/gaming/
+music channel, ban-appeals, corner logs.
+
+Confirmed with the owner that this was accidental rather than a deliberate booster perk before changing
+anything, then removed just that one permission bit from the role (read-modify-write of the bitfield,
+so no other booster permission was touched). Verified by re-running the same per-channel scan:
+**65 exposed channels → 4**, and those 4 are tribe channels where it's by design (`buildTribe()` grants
+tribe members MentionEveryone in their OWN private hall/VC, so @everyone there only reaches that tribe).
+
+**FUBU audit — a false alarm worth recording.** The same scan initially flagged 64 FUBU channels and 3
+members (superami, ririlicous, everydayweeatgoood). Checked *why* they had it instead of acting on the
+count: all three are **Event Organizers**, and Event Organizer grants MentionEveryone deliberately on
+both servers (organizers need to ping for events). My filter excluded only `meets(tier, 'mod')`, so the
+`staff`-floor tier — trial mods, mini-mods, event organizers — read as ordinary members. Re-ran
+excluding any member with a staff tier at all: **FUBU is clean**, zero non-staff can @everyone outside
+their own tribe channels. Melanin re-checked with the identical script/filter afterwards: also clean.
+
+Lesson: the flagged *count* looked damning and was almost entirely an artifact of where I drew the
+staff line. Reading role membership before acting is what kept this from becoming an unnecessary
+permission strip on three legitimate event organizers.
+
+No code changed, nothing committed for the bots — this was a live Discord role edit on Melanin only.
+Scratch scanners removed from bots-vm, confirmed gone.
+
 ## 2026-08-20 22:40 — Overrides "Add Rule" was dead: a select description one char over Discord's cap
 
 Owner reported "Error: Received one or more errors" on the Personal Overrides panel (screenshots from
