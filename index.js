@@ -4566,7 +4566,7 @@ client.once('ready', async () => {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('whistleblow-setup').setDescription('Set who receives whistleblows (bot owner only)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
-      new SlashCommandBuilder().setName('report').setDescription('Anonymously report a member to staff')
+      new SlashCommandBuilder().setName('report').setDescription('Report a member to staff — opens a private thread so it can get sorted out')
         .addStringOption(o => o.setName('text').setDescription('What happened?').setRequired(true).setMaxLength(1000))
         .addUserOption(o => o.setName('user').setDescription('Who are you reporting? (optional)'))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
@@ -8794,7 +8794,7 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'pubmodal_confess') { const r = await confessions.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Posted **Confession #${r.num}** anonymously.` : `❌ ${r.msg}`); }
       if (interaction.customId === 'pubmodal_suggest') { const r = await suggestions.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Posted **Suggestion #${r.num}** in <#${r.threadId}>.` : `❌ ${r.msg}`); }
       if (interaction.customId === 'pubmodal_modmail') { const r = await modmail.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Sent **Modmail #${r.num}** to the mod team.` : `❌ ${r.msg}`); }
-      if (interaction.customId === 'pubmodal_report') { const r = await reports.submit(interaction.guild, interaction.member, null, text); return interaction.editReply(r.ok ? `✅ Sent **Report #${r.num}** to staff anonymously.` : `❌ ${r.msg}`); }
+      if (interaction.customId === 'pubmodal_report') { const r = await reports.submit(interaction.guild, interaction.member, null, text); return interaction.editReply(r.ok ? `✅ Opened **Report #${r.num}** → <#${r.threadId}>. Staff can see it there; head over to add anything else.` : `❌ ${r.msg}`); }
       if (interaction.customId.startsWith('pubmodal_whistleblow:')) {
         const choice = interaction.customId.split(':')[1];
         const r = await whistleblow.submit(interaction.guild, interaction.member, text, choice);
@@ -8925,8 +8925,8 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: 'Only staff or a current Event Organizer can vote on these.', flags: MessageFlags.Ephemeral });
         return await eventorgapps.handleButton(interaction, config);
       }
-      if (id === 'rep_reveal') {
-        if (!canWLAdmin(interaction)) return interaction.reply({ content: 'Only admins (the ADMINS-★ role) can reveal a reporter.', flags: MessageFlags.Ephemeral });
+      if (id === 'rep_close' || id === 'rep_reopen') {
+        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can close or reopen a report.', flags: MessageFlags.Ephemeral });
         return await reports.handleButton(interaction);
       }
       if (id === 'mm_reveal') {
@@ -9008,7 +9008,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const text = `Reported message: "${(target.content || '[no text, see link]').slice(0, 400)}" · ${target.url}`;
     const r = await reports.submit(interaction.guild, interaction.member, target.author, text);
-    return interaction.editReply(r.ok ? `✅ Reported that message to staff anonymously (Report #${r.num}). They won’t know it was you.` : `❌ ${r.msg}`);
+    return interaction.editReply(r.ok ? `✅ Opened **Report #${r.num}** → <#${r.threadId}>. They won’t know it was you; staff can see it there.` : `❌ ${r.msg}`);
   }
   if (interaction.isUserContextMenuCommand?.() && interaction.commandName === 'Ban') {
     // Fastest possible path (owner, 2026-08-12: "there's no way to ban someone immediately through the
@@ -10716,7 +10716,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const r = await reports.submit(interaction.guild, interaction.member, interaction.options.getUser('user'), interaction.options.getString('text'));
-      return interaction.editReply(r.ok ? `✅ Sent **Report #${r.num}** to staff anonymously.` : `❌ ${r.msg}`);
+      return interaction.editReply(r.ok ? `✅ Opened **Report #${r.num}** → <#${r.threadId}>. Staff can see it there; head over to add anything else.` : `❌ ${r.msg}`);
     } catch (e) { console.error(`[reports] ${e.message}`); return interaction.editReply('Could not send that report.').catch(() => {}); }
   }
   if (name === 'modmail') {

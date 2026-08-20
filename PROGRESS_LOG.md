@@ -30,6 +30,42 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 20:13 — /report now opens a private thread instead of a one-shot message
+
+Prompted by comparing against Ticket Tool (a Discord ticketing bot the owner was asked to add).
+Researched what it offers beyond what's already built here — most of it (visual flow builder, SLA
+timers, AI routing, analytics dashboard, knowledge base, multi-server team inbox) isn't relevant to
+what was actually being asked for. The one real gap: every existing anon-pipe module (`reports.js`,
+`modmail.js`, `confessions.js`) is fire-and-forget, one message and done, no way to follow up. Owner
+confirmed that's exactly the complaint: "User sends in a request, mods look at it, and sort the
+situation out on the thread, it's more private and the thread gets closed after... what we have works
+as a one off but it's not good for follow up."
+
+Confirmed via AskUserQuestion this should REPLACE `/report` outright (not sit alongside it as a
+separate feature) — the existing right-click "Report" + hub "Report" button both call
+`reports.submit()`, so one rewrite covers all three entry points (context menu, hub button, slash
+command).
+
+Rewrote `reports.js` mirroring `strikeAppeals.js`'s already-proven thread architecture (private
+thread per submission, member added, staff have native channel access, `setLocked`/`setArchived` to
+close/reopen) instead of inventing a new pattern. `submit()` now creates a `ChannelType.PrivateThread`
+in the reports channel, adds the reporter, posts the report as the starter message with Close/Reopen
+buttons. New `setStatus()` replaces the old admin-only `reveal()` — reveal doesn't make sense once
+staff are visibly IN the thread with the reporter; the reporter is still never added to a thread about
+themselves if they're the one BEING reported, so the "hidden from the person you're reporting"
+guarantee holds, just not "hidden from staff" (which a live conversation can't preserve anyway).
+Close/Reopen gated to mod+ (`canBan`, same tier as strike-appeal voting) in index.js's button
+dispatcher, replacing the old `rep_reveal`/admin-only gate. Removed the now-dead `copy.reports.
+revealLabel`.
+
+All 3 call sites (right-click Report, hub Report button, `/report` slash command) updated to report
+the new thread link instead of "sent anonymously." `/report`'s own description updated to match.
+
+`node --check` clean local+remote, both bots restarted clean. Live-verified end to end on FUBU: real
+`reports.submit()` call created a genuine private thread (type 12), added the reporter, then
+confirmed `setLocked(true)`+`setArchived(true)` (close) and the reverse (reopen) both worked against
+the live thread. Test thread deleted afterward; scratch scripts removed from bots-vm, confirmed gone.
+
 ## 2026-08-20 18:24 — Added a Whistleblow button to the member hub
 
 Owner: whistleblow had no button on the public member hub even though confess/suggest/modmail/

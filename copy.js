@@ -90,7 +90,6 @@ const reports = {
   tooLong: max => `Keep it under ${max} characters.`,
   filtered: 'That tripped the safety filter. Describe the behaviour without threats/slurs and resend.',
   untracked: 'This report is no longer tracked.',
-  revealLabel: revealed => revealed ? 'Revealed' : 'Reveal reporter (admins)',
 };
 const modmail = {
   notSetup: 'Modmail isn’t set up yet. An admin needs to open `/panel` → 🧩 Setup → ✉️ Mod inbox.',

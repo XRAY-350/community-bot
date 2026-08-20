@@ -54,7 +54,7 @@ function textModal(customId, title, label, placeholder) {
 const confessModal = () => textModal('pubmodal_confess', 'Anonymous confession', 'Your confession', 'Posted anonymously. Your name stays hidden.');
 const suggestModal = () => textModal('pubmodal_suggest', 'Suggestion', 'Your suggestion', 'Others can vote. Staff approve or deny.');
 const modmailModal = () => textModal('pubmodal_modmail', 'Message the mod team', 'Your message', 'Sent to staff privately. They can reply.');
-const reportModal = () => textModal('pubmodal_report', 'Report to staff', 'What happened?', 'Sent to staff anonymously.');
+const reportModal = () => textModal('pubmodal_report', 'Report to staff', 'What happened?', 'Opens a private thread with staff. The person you\'re reporting never sees it.');
 
 // Whistleblow needs one extra choice (who it goes to, and whether it can ever be unmasked) that a modal
 // can't collect alongside text — so the button flow asks for that first, THEN opens the text modal with
