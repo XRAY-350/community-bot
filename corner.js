@@ -347,7 +347,14 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member, slowm
       if (thread.archived) await thread.setArchived(false).catch(() => {});
       if (thread.locked) await thread.setLocked(false).catch(() => {});
       await thread.members.add(member.id).catch(() => {});
-      if (slowmodeSec != null) await thread.setRateLimitPerUser(slowmodeSec, `Corner slowmode set by staff`).catch(e => console.error('[corner] slowmode (reused thread):', e.message));
+      // Reused thread: apply the requested slowmode, or explicitly CLEAR a leftover one when this corner
+      // didn't ask for slowmode. Release already clears it, but a release that couldn't reach the thread
+      // (bot down, thread temporarily unfetchable) would otherwise leave the old limit in place and
+      // silently apply it to the next person cornered here.
+      // Set unconditionally rather than diffing against thread.rateLimitPerUser — a stale cached read
+      // would skip the clear, which IS the bug being guarded against.
+      const wantSlow = slowmodeSec != null ? slowmodeSec : 0;
+      await thread.setRateLimitPerUser(wantSlow, slowmodeSec != null ? 'Corner slowmode set by staff' : 'Corner: clearing slowmode left over from a previous corner').catch(e => console.error('[corner] slowmode (reused thread):', e.message));
       return thread.id;
     }
 
@@ -556,8 +563,14 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
       }
       const th = await guild.channels.fetch(rec.threadId).catch(() => null);
       if (th && th.isThread()) {
-        await th.setArchived(true, reason).catch(() => {});
+        // Drop any slowmode the corner set (owner, 2026-08-20: "the slowmode on a corner should turn off
+        // when the person is released"), then lock, and archive LAST. Discord rejects every edit to an
+        // archived thread ("Thread is archived"), so anything attempted after setArchived silently
+        // no-ops through its .catch. Verified live: with archive first, the slowmode stayed at its old
+        // value AND `locked` stayed false — this code was never actually locking released jail threads.
+        await th.setRateLimitPerUser(0, reason).catch(e => console.error('[corner] slowmode clear on release:', e.message));
         await th.setLocked(true, reason).catch(() => {});
+        await th.setArchived(true, reason).catch(() => {});
       }
     } catch (e) { console.error('[corner] thread archive on release:', e.message); }
   }

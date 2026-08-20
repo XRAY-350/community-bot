@@ -30,6 +30,43 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 21:44 — Corner slowmode now clears on release — and found the release path was never locking the thread
+
+Owner: "the slowmode on a corner should turn off when the person is released."
+
+Every release path (timed expiry, `/uncorner`, the dashboard/panel buttons, the member-left path) funnels
+through `corner.js`'s `uncorner()`, so the fix goes in one place. Added a `setRateLimitPerUser(0)` there.
+
+**Ordering turned out to be the whole ballgame, and testing it surfaced a second, pre-existing bug.**
+`uncorner()` was doing `setArchived(true)` and THEN `setLocked(true)`. Discord rejects *every* edit to an
+archived thread with "Thread is archived" — and that setLocked was wrapped in `.catch(() => {})`, so it
+has been silently failing for as long as it's existed: **released jail threads were being archived but
+never actually locked.** A naive slowmode fix appended after the archive would have silently no-op'd the
+exact same way and looked fine.
+
+Proved it rather than assuming, with a live A/B on a real throwaway private thread in #the-corner:
+- New order (clear slowmode → lock → archive): `slowmode=0 locked=true archived=true` — all three stuck.
+- Old order (archive → lock → clear): both later calls returned `ERR -> Thread is archived`, leaving
+  `slowmode=45 locked=false`. Confirmed both halves of the bug in one run.
+
+Final order in `uncorner()`: clear slowmode → `setLocked(true)` → `setArchived(true)` (archive strictly
+last).
+
+Swept the class — grepped every `setArchived(true)` call site in the repo and checked what follows each:
+`appeals.js`, `strikeAppeals.js`, `suggestions.js`, `modapps.js`, `eventorgapps.js`, `reports.js`,
+`sidebar.js` and `mafia.js` all already lock-then-archive correctly. `corner.js` was the only site with
+the inverted order, so no further fixes needed.
+
+Also hardened the reuse path in `getOrCreateCornerJailThread()`: a reused thread now gets slowmode set
+unconditionally to either the requested value or **0**, so a stale limit left behind by a release that
+couldn't reach the thread (bot down mid-release, thread momentarily unfetchable) can't silently carry
+into the next person cornered there. Deliberately not diffing against `thread.rateLimitPerUser` first —
+a stale cached read would skip the clear, which is precisely the failure being guarded against, and one
+extra API call per corner is cheap next to that.
+
+`node --check` clean local+remote, both bots restarted clean, test thread and scratch scripts deleted
+from bots-vm, confirmed gone.
+
 ## 2026-08-20 21:38 — /sidebar was never registered (bug I shipped) + multi-person sidebars + ➕ on corner jail threads
 
 Owner: "is sidebar on? also can we sidebar multiple people?" — then mid-turn, "can we also add a
