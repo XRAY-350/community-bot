@@ -1265,3 +1265,28 @@ listed as dropdown options.
 
 `node --check` clean local+remote, both bots restarted clean, scratch scripts deleted. Committed
 `0b51843`, pushed.
+
+## 2026-08-20 04:20 — Unhid birthday/awards channels + fixed the dguild boot bug
+
+**Unhide**: revealed `🎂┆birthdays` and `🏆┆weekly-superlatives` to everyone, matching #general's
+exact permission shape (VERIFIED role gets ViewChannel, The Corner role explicitly denied, @everyone
+denied MentionEveryone/thread-creation/event-creation) rather than a blanket deny. Blessed both via
+permguard. Both channels are now live and visible.
+
+**Fix**: root-caused the boot-timing quirk flagged earlier. `const dguild = await
+client.guilds.fetch(config.guildId).catch(() => null)` had two problems — an unnecessary live
+network fetch for a guild that's virtually always already in `client.guilds.cache` by that point in
+boot (the READY event populates it first), and `.catch(() => null)` silently swallowed ANY failure
+with zero logging. Every `if (dguild) await ...` boot call depending on it (awards
+reminder/results/vote-panel, MDNI sweep, dashboard tidy, birthday sweep, hitsquad sweep, and the rest
+of that whole block) would silently no-op with no way to distinguish "dguild was null" from
+"genuinely nothing due" in the logs — exactly how the awards vote panel's boot call went unnoticed
+across two restarts tonight.
+
+Fixed to prefer `client.guilds.cache.get()` first (synchronous, no failure mode), fall back to
+`fetch()` only if not cached, and actually `console.error` if that fallback fails too. Verified live
+by restarting and confirming the awards panel's message ID changed (was `1539850492505755680`, now
+`1539850762505424926`) — proof the boot call executed this time instead of silently no-opping.
+
+`node --check` clean local+remote, both bots restarted clean, scratch script deleted. Committed
+`320e25b`, pushed.
