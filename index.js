@@ -44,6 +44,7 @@ const whistleblow = require('./whistleblow');
 const reports = require('./reports');
 const modmail = require('./modmail');
 const sidebar = require('./sidebar');
+const mafia = require('./mafia');
 const modapps = require('./modapps');
 const eventorgapps = require('./eventorgapps');
 const hitsquad = require('./hitsquad');
@@ -4445,6 +4446,7 @@ client.once('ready', async () => {
     const cornerVis = null;
     const allCmds = [
       ...(features.enabled('amongUs') ? [amongus.commandBuilder()] : []),   // /amongus (staff-start VC game); off unless the flag is on
+      ...(features.enabled('mafia') ? [mafia.commandBuilder()] : []),       // /mafia (staff-start VC game, full engine); off unless the flag is on
       new SlashCommandBuilder().setName('corner').setDescription('Send a member to the corner: strips roles, pulls them from voice, jails them (optionally timed)')
         .addUserOption(o => o.setName('user').setDescription('Member to corner').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription(copy.corner.durationOpt).setRequired(false))
@@ -4930,6 +4932,7 @@ client.once('ready', async () => {
     permguard.register(client);
     raidguard.register(client);
     if (features.enabled('amongUs')) amongus.register(client);   // VC Among Us mode: voice-state hook + boot RESUME of persisted games
+    if (features.enabled('mafia')) mafia.register(client);       // VC Mafia mode: phase sweep + voice-state release hook
     // Monthly contests: arm the auto-close tick (crowns winners on the 1st of the month if a round's open).
     if (features.enabled('contest')) contest.register(client);
     // Sweep every current staff member's own application: mod+ gets archived (owner-only channel, removed
@@ -6843,6 +6846,11 @@ client.on('interactionCreate', async (interaction) => {
   if (features.enabled('amongUs')) {
     if (interaction.isChatInputCommand?.() && interaction.commandName === 'amongus') return amongus.handleCommand(interaction).catch(e => console.error('[amongus cmd]', e.message));
     if (amongus.isInteraction(interaction)) return amongus.handleInteraction(interaction).catch(e => console.error('[amongus int]', e.message));
+  }
+  // Mafia VC mode (feature-gated): same early-routing rationale as Among Us above.
+  if (features.enabled('mafia')) {
+    if (interaction.isChatInputCommand?.() && interaction.commandName === 'mafia') return mafia.handleCommand(interaction).catch(e => console.error('[mafia cmd]', e.message));
+    if (mafia.isInteraction(interaction)) return mafia.handleInteraction(interaction).catch(e => console.error('[mafia int]', e.message));
   }
   // /unban's user_id: autocomplete search over the actual ban list (see the names, don't paste a raw ID blind).
   if (interaction.isAutocomplete?.()) {

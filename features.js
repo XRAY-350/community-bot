@@ -98,6 +98,8 @@ const REGISTRY = [
   { key: 'memberCorner', audience: 'core',   built: false }, // FUBU-only: a VERIFIED member may corner one non-staff member (≤5m, 3/day cap, NO rule/reason so it never feeds corner→strike conversion). Off elsewhere. Registration-affecting: flips /corner + "Send to corner" visibility.
   { key: 'amongUs',      audience: 'member', built: false, commands: ['amongus'], // VC "Among Us mode": staff /amongus starts a game for their VC; a panel toggles mute phases (Lobby/Play/Discussion) + dead tracking. Anyone in the VC drives it. Registration-affecting.
     help: { name: '🔴 Among Us mode', value: 'Playing Among Us in a voice channel? A mod runs `/amongus` to start a game, then anyone in the VC uses the panel to mute for the round and unmute for discussion (dead players stay muted).' } },
+  { key: 'mafia',        audience: 'member', built: false, commands: ['mafia'], // VC "Mafia mode": a FULL engine (unlike amongUs) — the bot deals secret roles, collects night actions, resolves them, and calls the win condition. Voice mode mutes+deafens the town at Night so only Mafia can talk; text mode gives Mafia a private thread. Registration-affecting.
+    help: { name: '🔪 Mafia mode', value: 'A mod runs `/mafia start` in a voice channel\'s chat to open a lobby. Join, get a secret role, then survive: Mafia kill each Night, the Doctor saves, the Detective investigates, and everyone votes someone out each Day.' } },
   // Tribe Games (staff-recorded external-game events) + Tribe Lore evolution paths + Propaganda's daily
   // reaction payout, all reached via /tribe panel (a subcommand of the always-on 'tribes' feature, so gating
   // visibility means gating the HANDLER, not command registration). Built 2026-08-10, kept DARK on purpose

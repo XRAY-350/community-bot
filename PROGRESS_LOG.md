@@ -30,6 +30,68 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 21:13 — Built Mafia mode (/mafia) — a full game engine, not an /amongus-style helper
+
+Owner: "i want to build a mafia mode for the bot. like /amongus". Planned in plan mode first (plan
+saved at `~/.claude/plans/abstract-fluttering-church.md`), with the scope decided via AskUserQuestion
+before any code: **full self-contained engine** (bot deals secret roles, collects and resolves night
+actions, calls the win condition) rather than /amongus's model, where the bot only toggles VC mute
+phases and a human host tracks everything by eye. Classic 4 roles (Mafia/Villager/Doctor/Detective),
+no rewards in v1, staff-gated start (mirrors /amongus's own "only STAFF can start one" rationale),
+open joining.
+
+**Key owner correction mid-planning** that shaped the whole design: the first draft leaned on DMs for
+role delivery and night actions. Owner: *"There doesn't have to be anything in DMs or any separate
+channels for the voice version. What we can do is that we can have a button that everyone clicks to
+receive their role, and then we can deafen people as well as mute them so that if people need to
+discuss, they can obviously do that. for the text version yes we can do a private thread."* So: role
+reveal is a **My Role** button (ephemeral, re-checkable any time), and all three night actions go
+through ONE shared Night Actions panel whose buttons check the clicker's actual role server-side —
+secrecy comes from ephemeral replies + server-side role checks, not from who can see which channel.
+This is what makes voice and text mode nearly the same code path.
+
+Also owner-decided: mode is **auto-detected** at lobby close (voice only if every joined player is
+actually connected to the game's VC, else text); a tied day vote = **no elimination**; role counts
+scale with player count "similar to Among Us"; runs in **any gaming VC** (no dedicated channel, zero
+new config keys); disconnects get a grace period rather than instant ghosting.
+
+New `mafia.js`: per-VC game state (like amongus's `games[vcId]` map, not sealed.js's single active
+game), role assignment (Fisher-Yates shuffle; mafia = ⌊n/4⌋, Doctor at 5+, Detective at 6+, rest
+villagers), night resolution (mafia plurality kill vs doctor save), day elimination vote, win check
+after every death (all-mafia-dead → Town; mafia ≥ town → Mafia), and full lifecycle panels.
+
+Two design choices worth noting, both deliberate deviations from the plan as written:
+- **Voice muting is self-contained here, not reused from amongus.js.** The plan said to export
+  `setMute`/`forceUnmute`/`setVcStatus` from amongus and reuse them — but mafia needs mute AND deafen
+  together on the same member, and amongus has no deafen concept at all, so reusing its single-flag
+  helpers would have meant calling two functions with divergent guard logic per member. Wrote
+  `setVoiceState(member, mute, deaf)` / `releaseVoice(member)` instead (~8 lines), and reverted the
+  amongus.js export change — amongus.js is untouched in the final diff.
+- **One periodic sweep drives every phase transition, no per-phase setTimeout.** The plan proposed
+  setTimeout-per-transition plus a sweep as backstop (matching sealed/arena). Went sweep-only (15s
+  tick): it makes boot-reconcile fall out for free — an overdue phase is just picked up on the next
+  tick after a restart, with no resume/re-arm logic to write or get wrong. This is the single
+  highest-risk area in sealed/arena's design and skipping it entirely is simpler than replicating it.
+
+Wired into `index.js` (require, feature-gated command registration, `mafia.register(client)` boot
+call, interaction dispatch block placed immediately after amongus's, same early-routing rationale)
+and `features.js` (new `mafia` registry entry, `built: false` so it seeds DARK like every other
+unreleased feature).
+
+Verified: `node --check` on all 4 touched files locally + remotely; `require('./mafia.js')` loads
+clean on bots-vm (catches missing-export/circular-require errors `--check` can't); and a scratch
+logic harness exercising the pure helpers (now exported for exactly this purpose) — role
+distribution sums correctly at 5/6/7/8/11/12/15 players, assignment covers every player exactly once
+with correct per-role counts, roles genuinely vary across 30 runs (caught nothing, but proves the
+shuffle isn't a no-op), all 4 win-condition cases, and 4 plurality/tie cases including "votes for a
+dead player are ignored". ALL PASS. Both bots restarted clean, `mafia` confirmed seeded as `false`
+in FUBU's features.json. Scratch script deleted from bots-vm, confirmed gone.
+
+**Not yet done — the feature is still dark.** It needs a live multi-account playtest (lobby → role
+assignment → voice mute/deafen check → full night/day cycle → win condition → cleanup, plus a
+restart-mid-phase test) before flipping it on via `/features`. Timer lengths (60s lobby / 90s night /
+120s day) are first-guess constants at the top of `mafia.js`, explicitly TBD pending a real game.
+
 ## 2026-08-20 20:44 — New /sidebar (mod pulls a member aside for a private chat) + found/fixed a real bug in the just-shipped thread-based /report
 
 Owner: "build something like this / like the corner so a mod can pull someone aside for a chat." New
