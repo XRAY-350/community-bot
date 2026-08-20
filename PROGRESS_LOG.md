@@ -30,6 +30,37 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 18:24 — Added a Whistleblow button to the member hub
+
+Owner: whistleblow had no button on the public member hub even though confess/suggest/modmail/
+report/appeal all do — noticed while comparing against Ticket Tool.
+
+Whistleblow needs one extra piece of info a modal alone can't collect: WHO it goes to (head admin /
+owner / both / anonymous-unmaskable) — modals only take text inputs. Solved with a two-step button
+flow, same shape used elsewhere for select-then-modal (e.g. tribe alliance picks): tapping
+**🕊️ Whistleblow** (new `pubact_whistleblow`, its own row on the hub since actions row was already
+at Discord's 5-button cap) posts an ephemeral picker (`pubdash.whistleblowPicker()`) with 4 buttons
+for the recipient choice; picking one (`pubact_wb_to:<choice>`) opens a text modal with the choice
+baked into its customId (`pubmodal_whistleblow:<choice>`); submitting calls
+`whistleblow.submit(guild, member, text, choice)`, same call the `/whistleblow` slash command
+already makes. Guarded by the same verified-gate and `whistleblow.isConfigured()` check the slash
+command uses, with the same "not set up" message if a server hasn't run `/whistleblow-setup` yet.
+
+`pubdash.js`: new `trust` button row, `whistleblowPicker()`, `whistleblowModal(choice)`, both
+exported. `index.js`: 3 new branches in the `pub*` button handler + one in the `pubmodal_` submit
+handler.
+
+Confirmed live state first: FUBU's `whistleblow.json` already has `you`/`her` both set to the owner
+(matches "I am both the head admin and server owner"), one prior anonymous whistleblow on record —
+so the new button works immediately on FUBU with no setup step. Melanin has the feature flag on but
+no config yet — the button will correctly show the "not set up" message there until Melanin's admin
+runs `/whistleblow-setup`, not something to do on their behalf.
+
+`node --check` clean local+remote, both bots restarted clean. Manually refreshed BOTH guilds'
+already-pinned member hub panels in place (`panel.edit()`, matching the awards-panel edit-in-place
+pattern) since `/dashboard-setup` posts once and never re-edits — otherwise the new button wouldn't
+show up until someone re-ran setup. Scratch scripts deleted from bots-vm, confirmed gone.
+
 ## 2026-08-20 13:55 — Moved the 17 superlative roles above the tribe base-role cluster (live, no code)
 
 Owner had manually repositioned the tribe base-member roles "right under the staff tier" themselves

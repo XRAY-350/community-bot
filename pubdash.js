@@ -23,12 +23,14 @@ function hubButtons(guildId) {
     new ButtonBuilder().setCustomId('pubact_modmail').setEmoji('✉️').setLabel('Message staff').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('pubact_report').setEmoji('🚩').setLabel('Report').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('pubact_appeal').setEmoji('⚖️').setLabel('Appeal a strike').setStyle(ButtonStyle.Secondary));
+  const trust = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('pubact_whistleblow').setEmoji('🕊️').setLabel('Whistleblow').setStyle(ButtonStyle.Secondary));
   const nav = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('pubdash_status').setEmoji('👤').setLabel('My Status').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('pubact_tribe').setEmoji('🏴').setLabel('My Tribe').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('pubdash_info').setEmoji('📖').setLabel('Server Info').setStyle(ButtonStyle.Secondary));
   if (config.rolesChannelId && guildId) nav.addComponents(new ButtonBuilder().setEmoji('🎓').setLabel('Pick roles').setStyle(ButtonStyle.Link).setURL(`https://discord.com/channels/${guildId}/${config.rolesChannelId}`));
-  return [actions, nav];
+  return [actions, trust, nav];
 }
 
 function hubPanel(guildId) {
@@ -38,6 +40,7 @@ function hubPanel(guildId) {
       '',
       '💭 **Confess** anonymously   💡 **Suggest** an idea   ✉️ **Message staff** privately',
       '🚩 **Report** something   ⚖️ **Appeal a strike**',
+      '🕊️ **Whistleblow** — a problem about the server or staff, straight to the top, no channel',
       '👤 **My Status**   🏴 **My Tribe**   📖 **Server Info**   🎓 **Pick roles**',
     ].join('\n'));
   return { embeds: [embed], components: hubButtons(guildId) };
@@ -52,6 +55,25 @@ const confessModal = () => textModal('pubmodal_confess', 'Anonymous confession',
 const suggestModal = () => textModal('pubmodal_suggest', 'Suggestion', 'Your suggestion', 'Others can vote. Staff approve or deny.');
 const modmailModal = () => textModal('pubmodal_modmail', 'Message the mod team', 'Your message', 'Sent to staff privately. They can reply.');
 const reportModal = () => textModal('pubmodal_report', 'Report to staff', 'What happened?', 'Sent to staff anonymously.');
+
+// Whistleblow needs one extra choice (who it goes to, and whether it can ever be unmasked) that a modal
+// can't collect alongside text — so the button flow asks for that first, THEN opens the text modal with
+// the choice baked into its customId (pubmodal_whistleblow:<choice>).
+const WB_CHOICE_LABEL = { you: 'Head admin only', her: 'Server owner only', both: 'Head admin + owner', anonymous: 'Anonymous — no one can unmask' };
+function whistleblowPicker() {
+  const row = new ActionRowBuilder().addComponents(
+    ...Object.entries(WB_CHOICE_LABEL).map(([choice, label]) =>
+      new ButtonBuilder().setCustomId(`pubact_wb_to:${choice}`).setLabel(label).setStyle(choice === 'anonymous' ? ButtonStyle.Danger : ButtonStyle.Secondary)));
+  return {
+    content: '🕊️ **Whistleblow** — a private DM straight to the top, never posted in any channel. Who should it go to?\n' +
+      '_"Anonymous" is never traceable, even by the recipients — nothing identifying is ever stored._',
+    components: [row],
+  };
+}
+function whistleblowModal(choice) {
+  return textModal(`pubmodal_whistleblow:${choice}`, `Whistleblow (${WB_CHOICE_LABEL[choice] || choice})`, 'What\'s going on?',
+    choice === 'anonymous' ? 'Never traceable, not even by the recipients.' : 'Delivered privately by DM. Can be unsealed only on cause.');
+}
 
 // ---- ephemeral views ----
 function statusView(member, state) {
@@ -112,4 +134,4 @@ function infoView() {
   return { embeds: [embed] };
 }
 
-module.exports = { hubPanel, hubButtons, statusView, tribeView, infoView, confessModal, suggestModal, modmailModal, reportModal };
+module.exports = { hubPanel, hubButtons, statusView, tribeView, infoView, confessModal, suggestModal, modmailModal, reportModal, whistleblowPicker, whistleblowModal };

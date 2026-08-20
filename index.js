@@ -8771,6 +8771,15 @@ client.on('interactionCreate', async (interaction) => {
         .addOptions(choices.slice(0, 25).map(c => ({ label: c.name.slice(0, 100), value: c.value })));
       return interaction.reply({ content: '⚖️ Pick the strike you want to appeal. I will open a private thread with staff.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
     }
+    if (cid === 'pubact_whistleblow') {
+      if (verifiedGate()) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
+      if (!whistleblow.isConfigured()) return interaction.reply({ content: copy.whistleblow.notSetup, flags: MessageFlags.Ephemeral });
+      return interaction.reply({ ...pubdash.whistleblowPicker(), flags: MessageFlags.Ephemeral });
+    }
+    if (cid.startsWith('pubact_wb_to:')) {
+      const choice = cid.split(':')[1];
+      return interaction.showModal(pubdash.whistleblowModal(choice));
+    }
     // the text-modal actions
     const modals = { pubact_confess: pubdash.confessModal, pubact_suggest: pubdash.suggestModal, pubact_modmail: pubdash.modmailModal, pubact_report: pubdash.reportModal };
     if (modals[cid]) {
@@ -8786,6 +8795,13 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'pubmodal_suggest') { const r = await suggestions.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Posted **Suggestion #${r.num}** in <#${r.threadId}>.` : `❌ ${r.msg}`); }
       if (interaction.customId === 'pubmodal_modmail') { const r = await modmail.submit(interaction.guild, interaction.member, text); return interaction.editReply(r.ok ? `✅ Sent **Modmail #${r.num}** to the mod team.` : `❌ ${r.msg}`); }
       if (interaction.customId === 'pubmodal_report') { const r = await reports.submit(interaction.guild, interaction.member, null, text); return interaction.editReply(r.ok ? `✅ Sent **Report #${r.num}** to staff anonymously.` : `❌ ${r.msg}`); }
+      if (interaction.customId.startsWith('pubmodal_whistleblow:')) {
+        const choice = interaction.customId.split(':')[1];
+        const r = await whistleblow.submit(interaction.guild, interaction.member, text, choice);
+        return interaction.editReply(r.ok
+          ? `✅ Sent **Whistleblow #${r.num}**, delivered privately by DM. You chose: **${whistleblow.CHOICES[r.choice]}**.${r.choice === 'anonymous' ? ' No identity was stored. This can never be traced to you.' : ''}`
+          : `❌ ${r.msg}`);
+      }
     } catch (e) { console.error('[pubdash modal]', e.message); return interaction.editReply('Could not do that. Try the slash command instead.').catch(() => {}); }
   }
   if (interaction.isButton?.()) {
