@@ -17,6 +17,10 @@ const POWER = [P.Administrator, P.ManageGuild, P.ManageRoles, P.ManageChannels, 
 // Known staff/system roles, never requestable (belt-and-suspenders on top of the power check).
 const STAFF = ['1528316361665675316', '1516179051105226833', '1532037321740779860',
   '1516235123841040394', '1517718734989693038', '1517718258784927814', '1517717893415047328'];
+// Chatter-activity tier roles (owner, 2026-08-20: "remove the chatter level roles from role request",
+// then "missing no life" — NOLIFE is the same class, the top of this activity ladder) — earned by
+// message activity, not something a member should be able to just ask staff for.
+const CHATTER = ['1529120692845674687', '1529121181767176313', '1529121191384842330', '1529121471946035330'];
 // NOTE: OWNER⚜️ (1527430885287264438) intentionally REMOVED from this blocklist (owner 2026-08-05) — it was
 // stripped to zero permissions + zero channel overwrites to become a cosmetic joke role, so it's now
 // self-requestable via /request-role (the power check keeps any FUTURE perms from sneaking it through).
@@ -45,7 +49,7 @@ function systemRoleIds(config) {
   // Adult Verified / MDNI Verified (owner, 2026-08-19) are 100% auto-computed (Verified + adult age
   // bracket, and on top of that MDNI) — never grantable by request, since the bot's own sweep would just
   // strip a manually-approved grant right back off the next time it re-checks the real prerequisites.
-  return new Set([...STAFF, ...tribeRoles, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
+  return new Set([...STAFF, ...CHATTER, ...tribeRoles, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
     config.cornerRoleId, config.adultVerifiedRoleId, config.mdniVerifiedRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
 }
 // Why a role can't be requested (null = it's fine).
