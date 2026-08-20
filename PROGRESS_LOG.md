@@ -1205,3 +1205,20 @@ size — noted for next time a role gets added to an early/middle section.
 role mention when configured. `BIRTHDAY_PING_ROLE_ID=1539844665665126470` set in `.community_env`.
 `node --check` clean local+remote, fubu-bot restarted clean, both scratch scripts deleted. Committed
 `8e30438`, pushed.
+
+## 2026-08-20 04:03 — Blocked activity-tier roles (Chatter/NOLIFE) from /request-role
+
+Owner: "remove the chatter level roles from role request." `/request-role` has no curated role
+list — Discord's native role-option picker can't be filtered client-side, so eligibility is checked
+at submit time via `whyNotRequestable()` against a `systemRoleIds()` blocklist. Novice/Intermediate/
+Elite Chatter carry no power permission, so they were never excluded and were fully requestable
+despite being meant as auto-earned activity tiers.
+
+Added a `CHATTER` blocklist array alongside the existing `STAFF` one, folded into
+`systemRoleIds()`. Owner caught a gap in the first pass — "missing no life" — NOLIFE is the top of
+the same activity ladder, added as a 4th entry. Re-scanned all role names for chat/life/talker/
+active/activity keywords before redeploying to confirm nothing else in that family was missed
+(GOATED 💯 also matched the scan but is an unrelated awards-superlative role set up earlier
+tonight, correctly left alone).
+
+`node --check` clean local+remote, both bots restarted clean. Committed `3d5f8db`, pushed.
