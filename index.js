@@ -3703,7 +3703,7 @@ async function addRoleEffective(member, roleId, reason) {
 // ALL STAFF — mods/admins/owners are never bulk-cornered (owner ruling 2026-08-01). A deliberate single
 // /corner can still corner an equal/lower staff tier; bulk ops never touch staff, so a raid sweep can't
 // scoop up your own team. Dedupes, announces each in the corner channel, writes ONE summary. Returns {done, skipped}.
-async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false, anon = false } = {}) {
+async function cornerMany(guild, actorId, actorRank, members, durationMs, { ruleN = null, reasonText = null, allowNamedStaff = false, actorTier = null, adult = false, thread = false, anon = false, slowmodeSec = null } = {}) {
   const done = [], skipped = [], threadIds = [], jokes = [], seen = new Set();
   const relSec = durationMs ? Math.floor((Date.now() + durationMs) / 1000) : null;
   const whenPhrase = relSec ? `until <t:${relSec}:f>` : 'indefinitely';
@@ -3721,7 +3721,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
       const staffLabel = targetTier || (config.trialModRoleId && member.roles.cache.has(config.trialModRoleId) ? 'trial mod' : null);
       if (staffLabel) { skipped.push(`<@${member.id}> (${staffLabel})`); continue; }   // bulk-corner never touches staff (mod/admin/owner/trial mod)
     }
-    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread, anon });
+    const r = await corner.corner(guild, member, durationMs, state, actorId, ruleN, actorTier, { adult, thread, anon, slowmodeSec });
     if (r.ok) {
       done.push(member.id);
       if (r.joke) jokes.push(member.id);
@@ -4390,6 +4390,7 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('reason').setDescription('Or type a custom reason (optional)').setRequired(false))
         .addBooleanOption(o => o.setName('adult').setDescription('Send to the 18+ Adult Corner for adult chat offenses?').setRequired(false))
         .addBooleanOption(o => o.setName('thread').setDescription('Imprison to a private jail thread?').setRequired(false))
+        .addStringOption(o => o.setName('slowmode').setDescription('Slowmode for their jail thread, e.g. 30s/5m (needs thread:true)').setRequired(false))
         .addBooleanOption(o => o.setName('anon').setDescription('Hide your name and announce as Anonymous Staff (bot)').setRequired(false))
         .addStringOption(o => o.setName('also').setDescription('Corner more members too: @mention them or paste IDs, space-separated (same duration/reason)').setRequired(false))
         .addStringOption(o => o.setName('sweep').setDescription('Also corner everyone non-staff who posted in THIS channel in the last N minutes, e.g. 5').setRequired(false))
@@ -10749,6 +10750,19 @@ client.on('interactionCreate', async (interaction) => {
       const isAdult = interaction.options.getBoolean('adult') || false;
       const isThread = interaction.options.getBoolean('thread') || false;
       const isAnon = interaction.options.getBoolean('anon') || false;
+      // Slowmode on their PRIVATE jail thread specifically (owner, 2026-08-20: "now that we have
+      // individual threads we can set the slowmode in the specific thread when cornering") — needs
+      // thread:true, since without a dedicated thread there's no per-person channel to rate-limit
+      // (the shared #the-corner channel is everyone's, setting slowmode there would throttle the whole
+      // room, not just this one person). Discord caps rateLimitPerUser at 6h (21600s).
+      const slowmodeStr = interaction.options.getString('slowmode');
+      let slowmodeSec = null;
+      if (slowmodeStr) {
+        if (!isThread) return interaction.reply({ content: '🔒 `slowmode` needs `thread:true` too — it applies to their private jail thread, not the shared corner channel.', flags: MessageFlags.Ephemeral });
+        const ms = corner.parseDuration(slowmodeStr);
+        if (!ms) return interaction.reply({ content: 'Bad slowmode. Use e.g. `30s`, `5m`, `1h` (max 6h).', flags: MessageFlags.Ephemeral });
+        slowmodeSec = Math.min(Math.round(ms / 1000), 21600);
+      }
       // joke is NOT a command option (owner ruling, this session: "don't add it to the command") — it's a
       // per-corner default (staff-on-staff → joke, staff-on-member → real) the actor can flip afterward via
       // the ephemeral jokeCheckIn() prompt. Leave undefined here so corner() computes its own default.
@@ -10781,7 +10795,7 @@ client.on('interactionCreate', async (interaction) => {
             if (mm && !opspanel.memberTier(mm) && !(config.trialModRoleId && mm.roles.cache.has(config.trialModRoleId))) { extras.push(mm); seen.add(m.author.id); sweptCount++; }
           }
         }
-        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier, adult: isAdult, thread: isThread, anon: isAnon });
+        const { done, skipped, whenPhrase, jokes } = await cornerMany(guild, interaction.user.id, actorRank, extras, durationMs, { ruleN, reasonText, allowNamedStaff: true, actorTier, adult: isAdult, thread: isThread, anon: isAnon, slowmodeSec });
         const lines = [];
         if (done.length) lines.push(`⛓️ Cornered **${done.length}** ${whenPhrase}: ${done.map(id => `<@${id}>`).join(', ')}${reasonText ? ` (${reasonText})` : ''}`);
         if (sweptCount) lines.push(`🧹 Swept the last ${Math.min(sweepMins, 120)}m of this channel.`);
@@ -10793,7 +10807,7 @@ client.on('interactionCreate', async (interaction) => {
       // Hide the mod ack if the command is run IN the corner channel (the themed embed already posts there).
       const inCorner = interaction.channelId === config.cornerChannelId;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon, viaMemberCorner: mCorner });
+      const r = await corner.corner(guild, member, durationMs, state, interaction.user.id, ruleN, opspanel.tierOf(interaction), { adult: isAdult, thread: isThread, anon: isAnon, viaMemberCorner: mCorner, slowmodeSec });
       if (!r.ok) {
         if (r.error === 'gated') {
           const actorTier = opspanel.tierOf(interaction);

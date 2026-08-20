@@ -711,6 +711,7 @@ function commandRefEntries() {
         'reason (optional) — custom reason instead of a rule',
         'adult (optional) — send to the 18+ Adult Corner',
         'thread (optional) — jail to a private thread',
+        'slowmode (optional) — e.g. 30s/5m on their jail thread; needs thread:true',
         'anon (optional) — hide your name, announce as Anonymous Staff',
         'also (optional) — corner more members too: @mentions or IDs, space-separated (same duration/reason)',
         'sweep (optional) — also corner non-staff who posted here in the last N minutes',

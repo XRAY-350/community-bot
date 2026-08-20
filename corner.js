@@ -326,13 +326,13 @@ async function stripThreadMemberships(guild, memberId, exceptThreadId) {
 }
 
 // Find existing dedicated jail thread or create a new private thread for cornered member
-async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
+async function getOrCreateCornerJailThread(guild, targetChannelId, member, slowmodeSec = null) {
   try {
     const parentChannel = await guild.channels.fetch(targetChannelId).catch(() => null);
     if (!parentChannel || !parentChannel.threads) return null;
 
     const threadName = `⛓️ Jail · ${member.user?.username || member.displayName || member.id}`;
-    
+
     // Search active threads
     const activeThreads = await parentChannel.threads.fetchActive().catch(() => null);
     let thread = activeThreads?.threads?.find(t => t.name === threadName || t.name.includes(member.id));
@@ -347,6 +347,7 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
       if (thread.archived) await thread.setArchived(false).catch(() => {});
       if (thread.locked) await thread.setLocked(false).catch(() => {});
       await thread.members.add(member.id).catch(() => {});
+      if (slowmodeSec != null) await thread.setRateLimitPerUser(slowmodeSec, `Corner slowmode set by staff`).catch(e => console.error('[corner] slowmode (reused thread):', e.message));
       return thread.id;
     }
 
@@ -355,6 +356,7 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
       name: threadName,
       autoArchiveDuration: 1440,
       type: 12, // ChannelType.PrivateThread
+      rateLimitPerUser: slowmodeSec != null ? slowmodeSec : undefined,
       reason: `Corner jail thread for ${member.user?.tag || member.id}`
     });
 
@@ -369,7 +371,7 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member) {
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
-  const { forceReal = false, adult = false, thread = false, anon = false, viaMemberCorner = false } = opts || {};
+  const { forceReal = false, adult = false, thread = false, anon = false, viaMemberCorner = false, slowmodeSec = null } = opts || {};
   const now = Date.now();
   // Fetch actor member if byId provided to evaluate role-based granted powers
   let actorMember = null;
@@ -440,7 +442,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     let threadId = existing.threadId || null;
     if (thread && !threadId) {
-      threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member);
+      threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member, slowmodeSec);
       if (threadId) {
         existing.threadId = threadId;
         state.setCornered(member.id, existing);
@@ -480,7 +482,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   // Optional Thread Imprisonment & Adult Corner routing
   let threadId = null;
   if (thread) {
-    threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member);
+    threadId = await getOrCreateCornerJailThread(guild, targetChannelId, member, slowmodeSec);
     if (threadId) {
       const ch = await guild.channels.fetch(targetChannelId).catch(() => null);
       if (ch) {
