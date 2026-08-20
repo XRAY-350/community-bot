@@ -4949,7 +4949,15 @@ client.once('ready', async () => {
   }, 60 * 1000);
 
   // Weekly mod-dashboard tidy (catch-up on boot if due, then hourly gate check).
-  const dguild = await client.guilds.fetch(config.guildId).catch(() => null);
+  // Prefer the already-populated cache (client.guilds.cache is filled by the READY event, which has
+  // already fired by this point in boot) over a fresh network fetch — faster, and has no failure mode
+  // of its own. Only fall back to fetch() if genuinely not cached yet, and actually LOG if that fails
+  // too, instead of the old `.catch(() => null)` silently swallowing it — every `if (dguild) await ...`
+  // below (awards reminder/results/vote-panel, MDNI sweep, dashboard tidy, etc.) depended on this and
+  // had no way to tell "dguild was null" from "genuinely nothing to do" in the logs (owner, 2026-08-20:
+  // caught the awards vote panel silently not posting on boot, traced to this).
+  const dguild = client.guilds.cache.get(config.guildId)
+    || await client.guilds.fetch(config.guildId).catch(e => { console.error('[boot] dguild fetch failed:', e.message); return null; });
   if (dguild) await dashCleanTick(dguild).catch(() => {});
   setInterval(() => client.guilds.fetch(config.guildId).then(g => dashCleanTick(g)).catch(() => {}), 3600000);
 
