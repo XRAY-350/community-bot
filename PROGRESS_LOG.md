@@ -855,3 +855,71 @@ after the first deploy instead of trusting the tool's success message, fixed in 
 
 Both bots restarted clean after each deploy, `node --check` clean throughout. Committed `147b68a`
 (partial) then `d7e6b01` (the actual fix, both call sites verified via grep before deploying).
+
+## 2026-08-20 00:52 — Trial Mod generalized to a real 'staff' tier everywhere + hit-squad-deny override
+
+Owner asked (garbled voice-to-text on the corner-status/overrides thread, clarified live): how to deny
+hit squad from cornering someone, and pointed out there's no trial-mod-level tier in the overrides
+picker. First pass scoped the tier fix to overrides only; owner then said "the trial mod tier should be
+generalized to the 'staff' tier everywhere" — clarified via AskUserQuestion as a real floor rank
+(Trial Mod / any Mini-Mod / Event Organizer) in the CORE authorization ladder, not scoped to one
+feature, and confirmed "full pass now, done carefully" once I flagged it as ~90 call sites with real
+security stakes.
+
+**Core change** (opspanel.js): `memberTier()` gains a `'staff'` branch below `mod` (checked via the
+same cornered-snapshot-aware role lookup admin/mod already use). `RANK`/`meets()` ladder became
+`{staff:1, mod:2, admin:3, owner:4, botowner:5}` (was `mod:1..botowner:4`). Exported `meets` and
+`TIER_RANK` for other modules.
+
+**Audit**: went through every `tierOf()`/`memberTier()` call site across index.js, opspanel.js,
+corner.js, contest.js, eventorgapps.js, modapps.js, smartwatch.js, suggest.js, permguard.js. Most
+were already safe (explicit tier arrays/equality, or a local corner-authority RANK dict that
+deliberately excludes staff, matching corner.js's own). Real bugs found and fixed — worst first:
+
+- **enforceTierNesting**: a bare `if (tier)` would have stripped Trial Mod's own role from every
+  trial mod on their next role-change event (the "mod+ never keep Trial Mod" cleanup, now matching
+  their own new 'staff' tier). Most severe finding — would have de-modded every trial mod almost
+  immediately.
+- **opspanel.handlePanel's top gate**: `if (!tier)` would have let trial/mini-mod/event-org into
+  every shared-panel button handler, including Corner and Ban buttons.
+- **canBan** (`!!tierOf`, index.js): gates ~20 downstream sites (strike, watchlist admin,
+  suggest/role-request approve, ban/strike appeal votes, mod-app votes, media filters, Tribe Games
+  start/report). One fix at the source corrected all of them.
+- **modClicked, buildTribePanelView's isStaff** (Tribe Games is mod+ only per its own comment),
+  **canManageTribe** (tribe leader-tools — trial-tier joined as a regular member, shouldn't get
+  leader authority), **staffBlockedFromMemberTribe + removePromotedFromMemberTribe + its
+  guildMemberUpdate callers + the cosign skip-check** (four sites all documented "trial mods are
+  fine in a member-founded tribe" — all four were about to start blocking them), **the mod-app
+  archive/seal split** (mod+ archived, trial-only sealed — was about to archive trial mods' own
+  applications instead of sealing them), **demotion/promotion sweep triggers** in
+  guildMemberUpdate, **modapps.js's two thread-membership enforcers** ("legitimately mod+
+  belongs"), **the /tribe member-founding cosign-block message routing** (trial mods were about to
+  get the wrong denial message), and **the /panel command routing** (rewritten so 'staff' routes to
+  the read-only view and the "event organizer with no other role gets the event dashboard"
+  special-case still fires exactly as before).
+
+Left several bare-truthy sites unchanged as intentional, low-stakes broadening (Live Tally scoring,
+contest management, word-filter/smart-watch/watch-log staff exemptions, jail-thread bypass
+allowlist, auto-corner-thread staff exemption) — consistent with treating 'staff' as genuine staff
+for those non-security-critical purposes.
+
+**Verification**: no live trial mod/mini-mod/event-organizer holders on FUBU right now to test
+against directly, so verified via a synthetic-member unit test on bots-vm instead — a Trial-Mod-only
+fake member resolves to `memberTier()='staff'`, `meets(_,'mod')=false`, `meets(_,'staff')=true`; a
+real Mod still resolves to `'mod'` with `meets(_,'mod')=true`. Confirms the ladder and gate logic
+are correct even without a live test subject.
+
+**overridesManager.js**: `TIER_RANK` now mirrors opspanel's ladder exactly, so a tier-type override
+actor entry ("staff+") matches naturally via whatever `tierOf()` already returns. Added a "Staff+"
+option to the overrides tier picker.
+
+**Second feature, same deploy**: `DENY_HITSQUAD` override type — a genuine deny-only rule (owner:
+EXCLUSIVE_CORNERER's allow-list model would mean enumerating every legitimate staff member just to
+block hit squad specifically). `overridesManager.isHitSquadDenied(targetMember)`, checked in
+corner.js's `corner()` only when the actor is actually hit-squad-active, leaving staff/member-corner
+completely untouched. New "Block Hit Squad" option in the panel's Add Override flow (target-only, no
+actor picker), plus list/detail view formatting.
+
+Deployed all 5 touched files (corner.js, index.js, modapps.js, opspanel.js, overridesManager.js)
+together to both bots — `node --check` clean local+remote for every file, clean restart, all
+commands registered on both, `corner-status` still present. Committed `24dc3b7`, pushed.
