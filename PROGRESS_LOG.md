@@ -30,6 +30,32 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 13:55 — Moved the 17 superlative roles above the tribe base-role cluster (live, no code)
+
+Owner had manually repositioned the tribe base-member roles "right under the staff tier" themselves
+(their own live edit, not this session's code), then: "i think the superlatives should go above
+them tho." Confirmed via AskUserQuestion which cluster they meant (the rank-ladder roles at the
+bottom of the whole server vs. the base/leader/General cluster near staff) before touching anything
+live.
+
+First attempt (`reposition_awards2.js`, targeting only the 17 award roles at positions right above
+the base cluster's top) went wrong — Discord's bulk role-PATCH only cleanly relocates roles you
+fully re-specify; targeting just the 17 movers while leaving surrounding roles' old position numbers
+untouched caused an overlap, and Discord's resort interleaved the award roles into the
+Leader/General/Mods/Trial-Mods block instead of forming a clean group. Caught it immediately by
+re-listing roles after the patch, didn't leave it live.
+
+Fixed by rebuilding the ENTIRE role order explicitly (`reposition_awards3.js`): took the full current
+top-to-bottom role list, pulled the 17 award roles out, found the topmost base-tribe-member role's
+index, spliced the award block back in immediately above it, then bulk-patched dense positions for
+all 236 non-@everyone roles in one request — no ambiguity, no partial-list resort surprises.
+Verified after: every previously-correct role landed back at its old relative spot, and the 17
+superlatives now sit as one contiguous block directly above the base-tribe cluster, still below
+Event Organizer/Mini-Mods/Trial Mods.
+
+Live Discord change only, no code touched. Scratch scripts (`list_roles.js`, `reposition_awards.js`,
+`reposition_awards2.js`, `reposition_awards3.js`) deleted from bots-vm, confirmed gone.
+
 ## 2026-08-20 13:42 — Fixed tribe base-role hierarchy position + restored 8 colorless award roles
 
 Owner: "Something keeps moving the base tribe roles to the other rank roles and I don't want that
