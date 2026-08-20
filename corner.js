@@ -500,7 +500,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
-  await stripThreadMemberships(guild, member.id, threadId);
+  stripThreadMemberships(guild, member.id, threadId).catch(() => {});   // fire-and-forget: don't hold up the announcement on a guild-wide thread sweep
   return { ok: true, stripped: strip.length, repeatCount, joke, threadId, targetChannelId };
 }
 
