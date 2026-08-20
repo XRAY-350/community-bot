@@ -1026,3 +1026,25 @@ exist again.
 No conversion of the 3 live legacy rules was needed or attempted — they were never broken, only the
 *creation path* for new ones like them was missing. Deployed, clean restart on both bots. Committed
 `1bef9b1`, pushed.
+
+## 2026-08-20 02:13 — Thread strip was leaving visible "removed" messages in casual forums
+
+Owner: cornered members were getting kicked from Hobbies & Interests and LGBTQ forum threads.
+Confirmed via question this was about access being right but the MECHANISM being wrong: "i don't
+want them to be able to access it when cornered but removing them leaves a permanent message in the
+thread" — `thread.members.remove()` posts a permanent "removed from thread" system message, fine in
+a staff-only private thread but a visible leak in a completely casual public forum.
+
+Turned out the removal was also unnecessary for those: every forum post is a PUBLIC thread (forums
+can't contain private threads at all), and public-thread access derives purely from the parent
+channel's ViewChannel permission — which the corner role-strip already revokes. Explicit membership
+grants no bypass there, unlike PRIVATE threads (jail threads, mod-application applicant threads),
+which genuinely do grant access independent of parent visibility — that's the actual gap
+`stripThreadMemberships()` exists to close.
+
+Fixed: added a `thread.type !== ChannelType.PrivateThread` filter so the function now skips every
+public/forum thread entirely — no system message, no membership churn — while still fully closing
+access via the channel-level permission the role strip already handles. Private threads (the real
+gap) are unaffected, still get the explicit removal exactly as before.
+
+`node --check` clean local+remote, both bots restarted clean. Committed `e30ba30`, pushed.
