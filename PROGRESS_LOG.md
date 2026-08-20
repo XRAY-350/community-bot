@@ -30,6 +30,33 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 04:30 — Confirmed awards vote panel's edit-in-place fix actually holds across a restart
+
+Follow-up to the 04:20 entry. After that deploy the panel's message ID had changed AGAIN
+(`1539850762505424926` → `1539851808409649192`), which looked like the edit-in-place fix hadn't
+actually taken — worth double-checking before calling it closed.
+
+Root-caused via a scratch diagnostic (`check_panel_messages.js`, fetched all 3 known message IDs +
+`fetchPinned()`): the two older IDs are genuinely gone (`Unknown Message`, not a permissions/cache
+issue — confirmed the bot can view the channel fine), and there is exactly 1 pinned message right
+now, matching the current ref. Cross-referenced the 04:16 and 04:20 log entries: at 04:20 the
+*deployed* code was still the old always-delete-and-repost version (04:16's entry says so outright)
+— that restart deleted message 1 and created message 2 using the OLD logic, coincidentally at the
+same moment the dguild fix made the boot call fire for the first time. The edit-in-place rewrite
+was written and deployed only afterward, so the 04:23 restart that produced message 3 was its
+first-ever run, inheriting a stale ref (message 2) left over from the old code's just-prior repost
+— not a bug in the new logic.
+
+Restarted both bots once more to test the new code on a self-consistent ref: `awards.panelRef()`
+came back identical (`1539851808409649192`) after the restart. Edit-in-place confirmed working —
+the one extra ID change was a one-time artifact of the deploy sequence, not a recurring issue.
+
+Deleted all leftover scratch scripts from bots-vm (`check_panel_messages.js`,
+`make_superlatives_readonly.js`, `unhide_new_channels.js`, `test_awards_panel.js`), verified gone.
+No code changes this entry — investigation/verification only.
+
+---
+
 ## 2026-08-19 16:20 — FUBU: consolidated Text/Hobbies/Confessions categories, deleted empty archived category
 
 Live Discord server change, no code touched. Owner asked to merge "Text Channels" and "Hobbies and
