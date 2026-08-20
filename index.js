@@ -43,6 +43,7 @@ const confessions = require('./confessions');
 const whistleblow = require('./whistleblow');
 const reports = require('./reports');
 const modmail = require('./modmail');
+const sidebar = require('./sidebar');
 const modapps = require('./modapps');
 const eventorgapps = require('./eventorgapps');
 const hitsquad = require('./hitsquad');
@@ -4575,6 +4576,10 @@ client.once('ready', async () => {
         .addStringOption(o => o.setName('text').setDescription('Your message').setRequired(true).setMaxLength(1000))
         .setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('modmail-setup').setDescription('Create the mod-inbox channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+      new SlashCommandBuilder().setName('sidebar').setDescription('Pull a member aside for a private chat (staff)')
+        .addUserOption(o => o.setName('user').setDescription('Who do you want to talk to?').setRequired(true))
+        .addStringOption(o => o.setName('reason').setDescription('What about? (optional, they’ll see this)').setRequired(false).setMaxLength(500)),
+      new SlashCommandBuilder().setName('sidebar-setup').setDescription('Create the sidebars channel (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
       new SlashCommandBuilder().setName('apply-mod').setDescription('Apply to become a moderator').setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),
       new SlashCommandBuilder().setName('apply-mod-setup').setDescription('Create the private mod-applications forum (owner)').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
@@ -4831,6 +4836,8 @@ client.once('ready', async () => {
       new ContextMenuCommandBuilder().setName('Strike').setType(ApplicationCommandType.Message)
         .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
       new ContextMenuCommandBuilder().setName('Report').setType(ApplicationCommandType.Message).setDefaultMemberPermissions(PermissionsBitField.Flags.UseApplicationCommands),   // member-facing anon report
+      new ContextMenuCommandBuilder().setName('Sidebar').setType(ApplicationCommandType.User)
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),   // right-click a member → pull them into a private chat thread
       // Immediate ban (owner, 2026-08-12: "there's no way to ban someone immediately through the bot" — the
       // only existing path was buried inside the verify-panel's deny→kick→ban escalation chain, reachable
       // only for fresh joiners going through verification). Two entry points to the same handler: a slash
@@ -7271,6 +7278,15 @@ client.on('interactionCreate', async (interaction) => {
     await ownerlog.log(interaction.guild, { emoji: '🔨', title: 'Banned', color: 0x992D22, detail: `${targetUser ? targetUser.tag : targetId} (\`${targetId}\`) — ${reason} — by <@${interaction.user.id}>.` });
     return interaction.reply({ content: `🔨 Banned **${targetUser ? targetUser.tag : targetId}**.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('sidebar_reason_modal:')) {
+    const targetId = interaction.customId.split(':')[1];
+    const reason = (interaction.fields.getTextInputValue('reason') || '').trim();
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target) return interaction.editReply('They’re not in the server anymore.');
+    const r = await sidebar.pull(interaction.guild, interaction.member, target, reason);
+    return interaction.editReply(r.ok ? `✅ Opened **Sidebar #${r.num}** → <#${r.threadId}>.` : `❌ ${r.msg}`);
+  }
   if (interaction.isModalSubmit?.() && interaction.customId.startsWith('corner_reason:')) {
     try {
       const [, memberId, channelId, messageId, ruleSeg] = interaction.customId.split(':');
@@ -8929,6 +8945,10 @@ client.on('interactionCreate', async (interaction) => {
         if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can close or reopen a report.', flags: MessageFlags.Ephemeral });
         return await reports.handleButton(interaction);
       }
+      if (id === 'sb_close' || id === 'sb_reopen') {
+        if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can close or reopen a sidebar.', flags: MessageFlags.Ephemeral });
+        return await sidebar.handleButton(interaction);
+      }
       if (id === 'mm_reveal') {
         if (!isOwner(interaction)) return interaction.reply({ content: 'Only owners can reveal a modmail sender.', flags: MessageFlags.Ephemeral });
         return await modmail.handleButton(interaction);
@@ -9009,6 +9029,17 @@ client.on('interactionCreate', async (interaction) => {
     const text = `Reported message: "${(target.content || '[no text, see link]').slice(0, 400)}" · ${target.url}`;
     const r = await reports.submit(interaction.guild, interaction.member, target.author, text);
     return interaction.editReply(r.ok ? `✅ Opened **Report #${r.num}** → <#${r.threadId}>. They won’t know it was you; staff can see it there.` : `❌ ${r.msg}`);
+  }
+  if (interaction.isUserContextMenuCommand?.() && interaction.commandName === 'Sidebar') {
+    // Staff-facing: right-click a member → Apps → Sidebar → pull them into a private chat thread. No rule
+    // picker (this isn't punishment) — straight to an optional-reason modal.
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can open a sidebar.', flags: MessageFlags.Ephemeral });
+    const target = interaction.targetUser;
+    if (target.id === interaction.user.id) return interaction.reply({ content: "You can't sidebar yourself.", flags: MessageFlags.Ephemeral });
+    if (target.bot) return interaction.reply({ content: "Can't sidebar a bot.", flags: MessageFlags.Ephemeral });
+    const modal = new ModalBuilder().setCustomId(`sidebar_reason_modal:${target.id}`).setTitle(`Sidebar: ${target.username}`.slice(0, 45)).addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('What about? (optional, they’ll see this)').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)));
+    return interaction.showModal(modal);
   }
   if (interaction.isUserContextMenuCommand?.() && interaction.commandName === 'Ban') {
     // Fastest possible path (owner, 2026-08-12: "there's no way to ban someone immediately through the
@@ -10701,14 +10732,27 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply(r.ok ? `✅ Opened your strike appeal → <#${r.threadId}>. Explain your side there. Staff will decide.` : `❌ ${r.msg}`);
     } catch (e) { console.error(`[strikeAppeals] ${e.message}`); return interaction.editReply('Could not open that appeal.').catch(() => {}); }
   }
-  if (name === 'report-setup' || name === 'modmail-setup') {
+  if (name === 'report-setup' || name === 'modmail-setup' || name === 'sidebar-setup') {
     if (!isOwner(interaction)) return interaction.reply({ content: copy.guards.ownerSetupOnly, flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
-      const mod = name === 'report-setup' ? reports : modmail;
+      const mod = name === 'report-setup' ? reports : name === 'modmail-setup' ? modmail : sidebar;
       const { channel, created } = await mod.setup(interaction.guild, config);
       return interaction.editReply(`${created ? '✅ Created' : copy.common.alreadySetup} <#${channel.id}>.`);
     } catch (e) { console.error(`[${name}] ${e.message}`); return interaction.editReply(`Setup failed: ${e.message}`).catch(() => {}); }
+  }
+  if (name === 'sidebar') {
+    if (!canBan(interaction)) return interaction.reply({ content: 'Only staff (mods+) can open a sidebar.', flags: MessageFlags.Ephemeral });
+    const target = interaction.options.getUser('user');
+    if (target.id === interaction.user.id) return interaction.reply({ content: "You can't sidebar yourself.", flags: MessageFlags.Ephemeral });
+    if (target.bot) return interaction.reply({ content: "Can't sidebar a bot.", flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+    if (!member) return interaction.editReply('They’re not in the server anymore.');
+    try {
+      const r = await sidebar.pull(interaction.guild, interaction.member, member, interaction.options.getString('reason'));
+      return interaction.editReply(r.ok ? `✅ Opened **Sidebar #${r.num}** → <#${r.threadId}>.` : `❌ ${r.msg}`);
+    } catch (e) { console.error(`[sidebar] ${e.message}`); return interaction.editReply('Could not open that sidebar.').catch(() => {}); }
   }
   if (name === 'report') {
     if (!isVerifiedOrStaff(interaction))

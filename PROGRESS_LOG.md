@@ -30,6 +30,58 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 20:44 — New /sidebar (mod pulls a member aside for a private chat) + found/fixed a real bug in the just-shipped thread-based /report
+
+Owner: "build something like this / like the corner so a mod can pull someone aside for a chat." New
+staff-initiated feature, explicitly NOT punitive (no role strips, no restrictions elsewhere, unlike
+/corner) — just a private 1:1 space. Three entry points: `/sidebar user:<member> reason:<optional>`,
+right-click a member → Apps → **Sidebar** (opens a reason modal, no rule picker since nothing's being
+enforced), and `/sidebar-setup` (owner-only, creates the channel). New `sidebar.js` mirrors
+`reports.js`'s thread shape exactly: one private thread per pull in a dedicated hidden channel, the
+target added to it, Close/Reopen buttons (`sb_close`/`sb_reopen`, gated mod+ same as reports' now
+`canBan` gate). `index.js` gained the require, 2 SlashCommandBuilder entries, 1 ContextMenuCommandBuilder
+entry, the context-menu handler (shows the reason modal), the modal-submit handler, the slash-command
+handler, `sidebar-setup` folded into the existing report-setup/modmail-setup branch, and the
+`sb_close`/`sb_reopen` button gate.
+
+**Found a real, already-live bug while testing this** (fix the class, not the instance — the bug in
+sidebar.js's first draft turned out to already be live in reports.js, deployed earlier tonight):
+both `reports.js` and the new `sidebar.js` created their channel with `deny: [ViewChannel]` for
+`@everyone` (reports.js additionally tried copying watch-log's overwrites, same problem if
+watch-log is *also* fully hidden). Adding a member to a private thread needs the bot to have
+permission to add them — Discord's "Add Thread Member" call fails with **`Missing Access`** if the
+target has zero visibility into the parent channel and the actor lacks `MANAGE_THREADS`-derived
+override for that specific add. My own testing of the new thread-based `/report` had used the guild
+owner as the reporter, whose Administrator permission bypasses all channel denies — so this never
+surfaced until testing sidebar with an ordinary member. **This meant real `/report` submissions from
+any non-admin member were silently failing to add the reporter to their own report thread since
+tonight's earlier deploy.** Root-caused by comparing against the already-correct pattern used
+elsewhere in the codebase (`strikeAppeals.js`, `appeals.js`, `modapps.js`'s applicant-thread channel):
+`@everyone` gets `ViewChannel`+`ReadMessageHistory`+`SendMessagesInThreads` ALLOWED at the channel
+root, with only `SendMessages`+`CreatePublicThreads`+`CreatePrivateThreads` denied — members can see
+the channel exists but can't post in root or see each other's private threads (Discord only shows a
+private thread to its own members or `ManageThreads` holders), yet the bot CAN add anyone to a thread
+there. Rewrote both `reports.js` and `sidebar.js`'s `setup()` to this shape.
+
+Patched the LIVE channels on FUBU to match (both had already been created with the broken overwrite —
+one from before this session, one from testing sidebar minutes earlier) via a scratch script, and
+**blessed both through `permguard`** immediately after, since an un-blessed manual overwrite edit gets
+silently reverted by the 45-second post-boot sweep or the 20-min interval sweep otherwise — this
+actually happened once during verification (first bless attempt got raced/reverted, caught it by
+re-checking the manifest file directly afterward, redid it, confirmed the manifest and live overwrite
+matched on a second check). Live-verified end to end with real non-admin members for both `/report`
+and `/sidebar` after the fix: target genuinely gets added to the thread now (`thread.members.fetch()`
+shows their ID, not just the bot's).
+
+**Found in passing, not fixed (out of scope, flagging only):** Melanin's `reports.json` still points
+to a `channelId` that no longer exists on Discord — `/report` there currently fails with
+"channel missing" for any member. Pre-existing, unrelated to tonight's changes (the channel was
+apparently deleted at some point before this session). Melanin's own admin needs to run
+`/report-setup` again there; not something to do on their behalf.
+
+`node --check` clean local+remote every deploy, both bots restarted clean each time. Scratch scripts
+(6 total across this fix cycle) deleted from bots-vm, confirmed gone.
+
 ## 2026-08-20 20:13 — /report now opens a private thread instead of a one-shot message
 
 Prompted by comparing against Ticket Tool (a Discord ticketing bot the owner was asked to add).

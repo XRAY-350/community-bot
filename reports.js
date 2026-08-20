@@ -25,17 +25,21 @@ const loadState = () => _load(STATE_FILE, { counter: 0, cooldown: {}, posts: {} 
 const saveState = s => _save(STATE_FILE, s);
 function isConfigured() { return !!loadConfig().channelId; }
 
-async function setup(guild, config) {
+// @everyone gets ViewChannel on the ROOT (so the bot can add a plain member to a thread here — adding
+// someone to a private thread needs them to at least be able to see the parent channel, or the bot's
+// add call fails with "Missing Access"), but can't post in the root or start their own threads. Other
+// members' threads stay invisible regardless — Discord only shows a private thread to its own members
+// or to ManageThreads holders, same shape as strikeAppeals.js's channel.
+async function setup(guild) {
   let c = loadConfig();
   if (c.channelId) { const ex = await guild.channels.fetch(c.channelId).catch(() => null); if (ex) return { channel: ex, created: false }; }
-  const wl = config?.watchLogChannelId ? await guild.channels.fetch(config.watchLogChannelId).catch(() => null) : null;
-  const overwrites = (wl && wl.permissionOverwrites.cache.size)
-    ? [...wl.permissionOverwrites.cache.values()].map(o => ({ id: o.id, allow: o.allow, deny: o.deny, type: o.type }))
-    : [{ id: guild.id, deny: [P.ViewChannel] }];
   const channel = await guild.channels.create({
     name: '🚩┆reports', type: ChannelType.GuildText,
     topic: 'Member reports. Each one opens a private thread with staff so it can actually get sorted out.',
-    permissionOverwrites: overwrites, reason: 'Reports channel (owner request)',
+    permissionOverwrites: [{ id: guild.id,
+      allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessagesInThreads],
+      deny: [P.SendMessages, P.CreatePublicThreads, P.CreatePrivateThreads] }],
+    reason: 'Reports channel (owner request)',
   });
   c = { channelId: channel.id }; saveConfig(c);
   return { channel, created: true };
