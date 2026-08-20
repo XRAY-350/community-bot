@@ -1238,3 +1238,30 @@ post up to 17 separate per-category messages, so left those unping'd to avoid sp
 times for one event. `EVENT_PING_ROLE_ID=1531010348126044412` set in `.community_env`.
 
 `node --check` clean local+remote, fubu-bot restarted clean. Committed `c934586`, pushed.
+
+## 2026-08-20 04:16 — Persistent vote panel for weekly awards (no more typing /awards vote)
+
+Owner: "is there a way we can make this easier instead of using a command" — confirmed via
+AskUserQuestion this meant `/awards vote` specifically.
+
+Built a pinned panel in the weekly-superlatives channel: a category dropdown
+(`awards_pick_category`) → picking one replies ephemerally with a member picker
+(`awards_vote_target:<key>`) → casting the vote reuses `awards.castVote()`, same self-vote/bot-
+target checks the slash command already had. `/awards vote` itself is untouched — this is an
+additional entry point, not a replacement.
+
+`awards.js` gained `panelRef()`/`setPanelRef()` to track the pinned message. `ensureAwardsVotePanel`
+always deletes-and-reposts rather than editing (a StringSelectMenu's option list needs a full
+rebuild when categories change), wired into boot and into both `category-add`/`category-remove` so
+the dropdown stays in sync with staff's category changes.
+
+The boot-time call didn't actually fire on either restart tonight — traced it to `dguild` not being
+ready yet at that point in boot, the exact same pre-existing timing quirk the two neighboring boot
+calls (`awardsReminderIfDue`/`awardsResultsIfDue`) already have, confirmed via the panel ref staying
+identical across a restart that should have deleted+reposted it. Out of scope to chase tonight — not
+something my new code introduced, and it self-heals via the category-add/remove triggers either way.
+Verified the panel logic directly instead (scratch script): posted, pinned, correct 17 categories
+listed as dropdown options.
+
+`node --check` clean local+remote, both bots restarted clean, scratch scripts deleted. Committed
+`0b51843`, pushed.
