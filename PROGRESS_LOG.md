@@ -30,6 +30,54 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 21:23 — Mafia: Among Us-style role config (count + % chance) and verified restart survival
+
+Two owner asks in one pass: *"in among us there's a way to picks how many of each role you want as
+well as the percent chance that role will be granted. i think we should add that"* and, mid-turn,
+*"i also need games to survive restarts"*.
+
+**Role config.** Each role now has a configurable count, and the two special roles also have a percent
+chance that each slot actually spawns (so "2× 50%" can yield 0, 1, or 2 — the chance is rolled per
+slot, not once for the whole role). Settings persist across games like a host's lobby settings, and
+default to **Auto**, which reproduces the previous player-count scaling exactly — an untouched server
+behaves identically to before this existed. Edited from a new ⚙️ **Roles** button on the lobby panel
+(staff-only, ephemeral); count and chance are combined into one preset per role so each change is a
+single click rather than two selects that have to agree, and the whole setup fits on one screen
+within Discord's 5-row cap. The lobby panel shows the current setup inline so players can see it
+without opening anything, and it re-renders when staff change it.
+
+Two safety clamps, because a mis-set count could otherwise hand the game away before it starts:
+Mafia is forced to at least 1 and to stay a strict **minority** at assignment time (mafia ≥ town is
+an instant Mafia win), and special roles are clamped into the town slots that actually exist so
+villager count can never go negative. Verified both: requesting 9 Mafia in a 5-player game clamps to
+2 (town 3), and over-subscribing specials in a 5-player game still sums to exactly 5.
+
+**Restart survival.** State was already written on every mutation, so games were persisting on disk —
+what was missing was the live-Discord half on boot. Added `bootResume(client)`: drops any game whose
+VC is gone (releasing anyone it had muted, so nobody is left stuck), re-applies mute/deafen for a
+surviving *voice* game mid-Night/Day (server-mutes do outlive a restart, but someone who joined the
+VC while the bot was down would be out of sync), and runs one sweep immediately after resuming so a
+phase whose deadline passed during downtime resolves right away instead of idling up to a full 15s
+tick. Panels need no repair — their customIds carry the vcId and every handler reads live state.
+
+The state file also changed shape from a bare games map to `{games, settings}` to hold the new
+settings; `load()` still reads the old flat shape, so an in-flight game from the previous build isn't
+lost on upgrade (tested).
+
+Verified: a 24-check logic harness — auto defaults unchanged at 5/6/8/15 players, explicit counts
+honoured, 1×50% produces both outcomes over 200 rolls and 2×50% is genuinely graduated (0/1/2),
+100%/0%/Off deterministic, both safety clamps, assignRoles honouring settings, and settings + an
+in-flight game (phase, day number, night votes) both surviving a fresh module load, plus the v1
+file-shape upgrade path. ALL PASS. Then a **live** restart test on FUBU rather than trusting the unit
+test: injected a synthetic mid-Night game (text mode, empty VC, far-future deadline so nothing could
+fire or touch a real member's voice state) into the real state file, restarted fubu-bot, and
+confirmed both `[mafia] boot: resumed 1 game(s)` in the journal and the game intact on disk
+afterward — phase, day 2, night votes and settings all preserved. Injected game removed and state
+reset to empty afterward; scratch scripts deleted from bots-vm, confirmed gone.
+
+Owner enabled the `mafia` flag on FUBU during this work (Melanin still dark). Still needs the live
+multi-account playtest; timer lengths remain first-guess constants.
+
 ## 2026-08-20 21:13 — Built Mafia mode (/mafia) — a full game engine, not an /amongus-style helper
 
 Owner: "i want to build a mafia mode for the bot. like /amongus". Planned in plan mode first (plan

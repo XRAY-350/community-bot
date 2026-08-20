@@ -39,27 +39,76 @@ const ROLE_DESC = {
   detective: 'Each Night, investigate one living player — you\'ll learn if they\'re Mafia-aligned.',
 };
 
-// games: { [vcId]: { ...game } } — see the Mafia plan for the full shape.
-let games = {};
-function load() { try { games = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { games = {}; } return games; }
-function save() { try { fs.writeFileSync(STATE_FILE, JSON.stringify(games)); } catch (e) { console.error('[mafia] save:', e.message); } }
+// State file holds BOTH the live games and the persistent role settings:
+//   { games: { [vcId]: {...game} }, settings: {...} }
+// (v1 wrote a bare games map at the root; load() still reads that shape so an in-flight game from an
+// older build isn't lost on the upgrade.)
+let games = {}, settings = null;
+function load() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    if (raw && raw.games && typeof raw.games === 'object') { games = raw.games; settings = raw.settings || null; }
+    else { games = raw || {}; settings = null; }                       // v1 flat shape
+  } catch { games = {}; settings = null; }
+  return games;
+}
+function save() { try { fs.writeFileSync(STATE_FILE, JSON.stringify({ games, settings })); } catch (e) { console.error('[mafia] save:', e.message); } }
 function get(vcId) { return games[vcId] || null; }
 function isActive(vcId) { return !!get(vcId); }
 function update(vcId, patch) { games[vcId] = { ...games[vcId], ...patch }; save(); return games[vcId]; }
 function clear(vcId) { delete games[vcId]; save(); }
 function allActive() { return Object.values(games); }
 
-// ---- role assignment ---------------------------------------------------------------------------------
-function roleCounts(n) {
-  const mafiaN = Math.max(1, Math.floor(n / 4));
-  const doctorN = n >= 5 ? 1 : 0;
-  const detectiveN = n >= 6 ? 1 : 0;
-  return { mafia: mafiaN, doctor: doctorN, detective: detectiveN, villager: n - mafiaN - doctorN - detectiveN };
+// ---- role settings (Among Us style: per-role COUNT + percent CHANCE that each slot actually spawns).
+// 'auto' keeps the original player-count scaling (mafia = n/4, Doctor at 5+, Detective at 6+) and is the
+// default, so an unconfigured server behaves exactly as it did before this existed. Settings persist
+// across games, like a host's lobby settings. -----------------------------------------------------------
+const DEFAULT_SETTINGS = { mafia: { count: 'auto' }, doctor: { count: 'auto', chance: 100 }, detective: { count: 'auto', chance: 100 } };
+function getSettings() {
+  if (!settings) load();
+  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
 }
-function assignRoles(joinOrder) {
+function setRoleSetting(role, patch) {
+  const s = getSettings();
+  s[role] = { ...s[role], ...patch };
+  settings = s; save();
+  return s;
+}
+function describeRole(role, s) {
+  const c = s[role];
+  if (c.count === 'auto') return 'Auto';
+  if (!c.count) return 'Off';
+  return `${c.count}×${role === 'mafia' ? '' : ` ${c.chance}%`}`;
+}
+function describeSettings(s = getSettings()) {
+  return `🔪 Mafia **${describeRole('mafia', s)}** · 💉 Doctor **${describeRole('doctor', s)}** · 🔎 Detective **${describeRole('detective', s)}**`;
+}
+
+// ---- role assignment ---------------------------------------------------------------------------------
+// Rolls each configured slot independently against its chance (so "2× 50%" can yield 0, 1, or 2), then
+// clamps: Mafia must be at least 1 and must stay a MINORITY at the start (mafia >= town is an instant
+// win, so a mis-set count can't hand the game away before it begins), and special roles can never
+// outnumber the remaining town slots.
+function roleCounts(n, s = getSettings()) {
+  let mafiaN = s.mafia.count === 'auto' ? Math.max(1, Math.floor(n / 4)) : Number(s.mafia.count) || 1;
+  mafiaN = Math.max(1, Math.min(mafiaN, Math.floor((n - 1) / 2)));
+  const special = {};
+  for (const role of ['doctor', 'detective']) {
+    const cfg = s[role];
+    if (cfg.count === 'auto') { special[role] = (role === 'doctor' ? n >= 5 : n >= 6) ? 1 : 0; continue; }
+    let got = 0;
+    for (let i = 0; i < (Number(cfg.count) || 0); i++) if (Math.random() * 100 < (Number(cfg.chance) ?? 100)) got++;
+    special[role] = got;
+  }
+  // clamp special roles into the town slots that actually exist
+  let townSlots = n - mafiaN;
+  for (const role of ['doctor', 'detective']) { special[role] = Math.min(special[role], Math.max(0, townSlots)); townSlots -= special[role]; }
+  return { mafia: mafiaN, doctor: special.doctor, detective: special.detective, villager: n - mafiaN - special.doctor - special.detective };
+}
+function assignRoles(joinOrder, s = getSettings()) {
   const ids = [...joinOrder];
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[ids[i], ids[j]] = [ids[j], ids[i]]; }
-  const counts = roleCounts(ids.length);
+  const counts = roleCounts(ids.length, s);
   const players = {};
   let idx = 0;
   for (let i = 0; i < counts.mafia; i++) players[ids[idx++]] = { role: 'mafia', alive: true };
@@ -138,13 +187,44 @@ const roleRow = vcId => new ActionRowBuilder().addComponents(
 function lobbyPanel(game) {
   const names = game.joinOrder.map(id => `<@${id}>`).join('\n') || '_nobody yet_';
   const e = new EmbedBuilder().setColor(COLOR).setTitle('🔪 Mafia — Lobby')
-    .setDescription(`Starting in <#${game.vcId}>. Tap **Join** to play.\n\n**Players (${game.joinOrder.length}/${MAX_PLAYERS}):**\n${names}`)
+    .setDescription(`Starting in <#${game.vcId}>. Tap **Join** to play.\n\n**Roles:** ${describeSettings()}\n\n**Players (${game.joinOrder.length}/${MAX_PLAYERS}):**\n${names}`)
     .setFooter({ text: `Need at least ${MIN_PLAYERS} to start · auto-starts <t:${Math.floor(game.lobbyDeadline / 1000)}:R>` });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`mafia_join:${game.vcId}`).setEmoji('✅').setLabel('Join / Leave').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`mafia_startnow:${game.vcId}`).setEmoji('⏩').setLabel('Start Now').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`mafia_settings:${game.vcId}`).setEmoji('⚙️').setLabel('Roles').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`mafia_end:${game.vcId}`).setEmoji('⏹️').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
   return { embeds: [e], components: [row] };
+}
+
+// Role-setup panel (ephemeral, staff-only). Count and chance are combined into one preset per role so
+// each change is a single click instead of two selects to reconcile — Discord caps a message at 5 rows,
+// and this keeps the whole setup on one screen.
+const MAFIA_COUNT_OPTS = [['auto', 'Auto (scales with player count)'], ['1', '1 Mafia'], ['2', '2 Mafia'], ['3', '3 Mafia'], ['4', '4 Mafia']];
+const SPECIAL_OPTS = [['auto', 'Auto (1 if enough players)'], ['off', 'Off — never spawns'],
+  ['1:100', '1× · always'], ['1:75', '1× · 75% chance'], ['1:50', '1× · 50% chance'], ['1:25', '1× · 25% chance'],
+  ['2:100', '2× · always'], ['2:50', '2× · 50% chance each']];
+function settingValue(role, s) {
+  const c = s[role];
+  if (c.count === 'auto') return 'auto';
+  if (!c.count) return 'off';
+  return role === 'mafia' ? String(c.count) : `${c.count}:${c.chance}`;
+}
+function settingsPanel(vcId) {
+  const s = getSettings();
+  const e = new EmbedBuilder().setColor(COLOR).setTitle('⚙️ Mafia — Role setup')
+    .setDescription(`${describeSettings(s)}\n\nPick how many of each role, and the chance each slot actually spawns. **Auto** scales with the player count. These stick for future games.`)
+    .setFooter({ text: 'Mafia is always at least 1 and always a minority at the start, whatever you set.' });
+  const sel = (role, opts, placeholder) => {
+    const cur = settingValue(role, s);
+    return new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`mafia_setrole:${vcId}:${role}`).setPlaceholder(placeholder)
+      .addOptions(opts.map(([value, label]) => ({ label, value, default: value === cur }))));
+  };
+  return { embeds: [e], components: [
+    sel('mafia', MAFIA_COUNT_OPTS, '🔪 Mafia count'),
+    sel('doctor', SPECIAL_OPTS, '💉 Doctor'),
+    sel('detective', SPECIAL_OPTS, '🔎 Detective'),
+  ] };
 }
 
 function nightPanel(game) {
@@ -370,6 +450,22 @@ async function handleInteraction(interaction) {
     await interaction.deferUpdate().catch(() => {});
     return closeLobby(interaction.client, guild, game);
   }
+  if (action === 'mafia_settings') {
+    if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can change the role setup.', flags: EPH });
+    return interaction.reply({ ...settingsPanel(vcId), flags: EPH });
+  }
+  if (action === 'mafia_setrole') {
+    if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can change the role setup.', flags: EPH });
+    const role = parts[2], v = interaction.values[0];
+    if (v === 'auto') setRoleSetting(role, { count: 'auto' });
+    else if (v === 'off') setRoleSetting(role, { count: 0 });
+    else if (role === 'mafia') setRoleSetting(role, { count: Number(v) });
+    else { const [c, ch] = v.split(':'); setRoleSetting(role, { count: Number(c), chance: Number(ch) }); }
+    await interaction.update(settingsPanel(vcId)).catch(() => {});
+    // keep the public lobby panel's "Roles:" line in sync with what staff just picked
+    if (get(vcId)?.phase === 'lobby') await postPanel(interaction.client, get(vcId), lobbyPanel(get(vcId))).catch(() => {});
+    return;
+  }
   if (action === 'mafia_end') {
     if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can cancel.', flags: EPH });
     await interaction.deferUpdate().catch(() => {});
@@ -437,8 +533,36 @@ async function sweepExpiredPhases(client) {
   }
 }
 
+// Boot RESUME: games persist across restarts. State is written on every mutation, so the game itself
+// survives on disk — what needs re-establishing is the live Discord side: a game whose VC/channel is
+// gone can never finish (drop it, releasing anyone it had muted), and a surviving voice game's
+// mute/deafen state has to be re-applied (server-mutes do outlive a restart, but someone who joined
+// the VC while the bot was down, or a phase that advanced in the meantime, would be out of sync).
+// Panels need no repair — their buttons carry the vcId and every handler reads live state.
+async function bootResume(client) {
+  const active = allActive();
+  if (!active.length) return;
+  let resumed = 0, dropped = 0;
+  for (const g of active) {
+    const guild = client.guilds.cache.get(g.guildId) || await client.guilds.fetch(g.guildId).catch(() => null);
+    const vc = guild && (guild.channels.cache.get(g.vcId) || await guild.channels.fetch(g.vcId).catch(() => null));
+    if (!guild || !vc) {
+      if (guild) await releaseAllVoices(guild, g).catch(() => {});
+      clear(g.vcId); dropped++; continue;
+    }
+    if (g.mode === 'voice' && (g.phase === 'night' || g.phase === 'day')) await applyVoicePhase(guild, g).catch(e => console.error('[mafia] resume voice:', e.message));
+    resumed++;
+  }
+  if (resumed || dropped) console.log(`[mafia] boot: resumed ${resumed} game(s)${dropped ? `, dropped ${dropped} (VC gone)` : ''}`);
+}
+
 function register(client) {
   load();
+  // Resume first, THEN sweep immediately — a phase whose deadline passed while the bot was down
+  // resolves right away instead of idling up to a full tick.
+  bootResume(client)
+    .catch(e => console.error('[mafia] bootResume:', e.message))
+    .then(() => sweepExpiredPhases(client).catch(e => console.error('[mafia] boot sweep:', e.message)));
   setInterval(() => sweepExpiredPhases(client).catch(e => console.error('[mafia] sweep:', e.message)), SWEEP_MS);
 
   // Voice disconnect handling (voice-mode games only): unconditionally release anyone leaving a game's VC
@@ -461,4 +585,5 @@ function register(client) {
 
 module.exports = { commandBuilder, handleCommand, isInteraction, handleInteraction, register, isActive, get,
   // pure helpers, exported for verification (no Discord dependency)
-  roleCounts, assignRoles, checkWin, pluralityTarget, livingIds, livingMafiaIds };
+  roleCounts, assignRoles, checkWin, pluralityTarget, livingIds, livingMafiaIds,
+  getSettings, setRoleSetting, describeSettings, load, save, update, clear, allActive };
