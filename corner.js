@@ -389,6 +389,15 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member, slowm
 async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
   const { forceReal = false, adult = false, thread = false, anon = false, viaMemberCorner = false, slowmodeSec = null } = opts || {};
   const now = Date.now();
+  // A hit-squad corner is chaos, not discipline — it must never carry a rule (owner, 2026-08-20: "we
+  // don't want them polluting the rule count for corner to strike"). logCornerHistory() counts prior
+  // corners sharing the SAME ruleIndex and that repeatCount is what alerts staff to convert a pattern
+  // into a Strike, so a squad corner tagged with a rule would inflate a real member's escalation count
+  // for something that was never a genuine offence. Stripped HERE rather than only at the /corner
+  // handler so every entry path (slash, context menu, modal, panel buttons) is covered by one guard;
+  // the history entry itself is still written, just with ruleIndex null, which returns 1 and matches no
+  // rule's filter. Window-scoped: isSquadMember is false the moment the activation expires.
+  if (byId && ruleIndex && hitsquad.isSquadMember(byId)) ruleIndex = null;
   // Fetch actor member if byId provided to evaluate role-based granted powers
   let actorMember = null;
   if (byId && guild) {
@@ -646,5 +655,7 @@ function setJoke(state, userId, joke) {
 }
 
 module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
+  logCornerHistory,   // exported for verification: the corner->strike repeat counter
+
   setReleaseHandler, armTimer, clearTimer, rearmAll, setJoke,
   RANK, canBypassCornerTier, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };

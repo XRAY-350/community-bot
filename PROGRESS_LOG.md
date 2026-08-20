@@ -30,6 +30,41 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 23:25 — Hit-squad corners can no longer carry a rule or reason (they were polluting corner→strike)
+
+Owner: "make sure hit squad can't use a rule or reason" — then, clarifying the actual stake: "we don't
+want them polluting the rule count for corner to strike."
+
+That names the real damage precisely. `logCornerHistory()` (corner.js) stores each corner's `ruleIndex`
+and returns how many times that member has been cornered for the **same** rule; that `repeatCount` is
+what alerts staff to convert a pattern into a Strike. A hit-squad corner tagged with a rule would
+inflate a real member's escalation count for an "offence" that never happened — the same reasoning that
+already made member corners rule-less ("so it never feeds corner→strike conversion").
+
+Enforced centrally in `corner()` rather than only at the /corner handler: one guard nulls `ruleIndex`
+when the actor is an active squad member, which covers every entry path (slash, context menu, modal,
+panel buttons) instead of leaving each to remember. The history entry is still written, just with
+`ruleIndex: null` — so the event is on record, returns 1, and matches no rule's filter. Window-scoped:
+`isSquadMember` goes false the instant the activation expires.
+
+Two user-facing guards on top, so nothing is silently dropped:
+- `/corner` with a rule/reason as a squad member → explicit refusal explaining why.
+- Right-click **Send to corner** as a squad member → refused before the rule picker appears, since that
+  route ends in the reason modal. This applies **even to a mod who happens to be on the squad**: for
+  the ~10 minutes the window is live they're acting as squad. That's a deliberate trade — it briefly
+  costs a squad-member mod the ability to log a rule via right-click (they can still `/corner`, or
+  `/strike` separately) — chosen because protecting the strike record matters more than convenience
+  during a short window. Worth revisiting if it annoys staff in practice.
+
+Verified against the real `logCornerHistory` (exported for testability, same approach used for mafia's
+pure helpers) rather than a reimplementation: 3 genuine rule-5 corners escalate 1→2→3, a squad corner
+returns 1 and doesn't escalate, the next genuine rule-5 corner counts **4 not 5**, and all 5 events are
+still recorded with exactly one rule-less entry. Plus a **control case** running the same sequence
+WITHOUT the strip, which correctly produces the polluted count of 5 — so the passing result reflects the
+fix, not a test that can't tell the difference. ALL PASS.
+
+`node --check` clean local+remote, both bots restarted clean, scratch script removed from bots-vm.
+
 ## 2026-08-20 23:05 — Melanin: Server Booster could @everyone server-wide (removed); FUBU audited clean
 
 Owner: "poeople in melanin can ping everyone." Live server-permission issue, no code involved.

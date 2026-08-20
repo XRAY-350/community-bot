@@ -9131,6 +9131,12 @@ client.on('interactionCreate', async (interaction) => {
     if (target.author?.bot) return interaction.reply({ content: "Can't corner a bot.", flags: MessageFlags.Ephemeral });
     if (target.author.id === client.user.id) return interaction.reply({ content: 'I can’t corner myself.', flags: MessageFlags.Ephemeral });
     if (target.author.id === interaction.guild.ownerId) return interaction.reply({ content: 'You can’t corner the server owner.', flags: MessageFlags.Ephemeral });
+    // An active hit-squad member never sees the rule picker at all — this route ends in the reason modal,
+    // and a squad corner must carry neither (owner, 2026-08-20). Applies even to a mod who happens to be
+    // on the squad: for the ~10 minutes the window is live they're acting as squad, and letting a rule
+    // through here would feed the corner→strike repeat count. They can still corner via `/corner`.
+    if (hitsquad.isSquadMember(interaction.user.id))
+      return interaction.reply({ content: '🔪 While you’re on the hit squad, corners carry no **rule or reason** (they don’t count toward anyone’s strike record). Use `/corner` — just pick who.', flags: MessageFlags.Ephemeral });
     // Show the rule picker IMMEDIATELY — no member fetch here (that await was blowing the 3s ack window under
     // load, so nothing appeared). The tier-hierarchy check runs at modal submit, where the member is fetched.
     try {
@@ -10940,6 +10946,13 @@ client.on('interactionCreate', async (interaction) => {
         if ((interaction.options.getString('also') || '').trim() || (interaction.options.getString('sweep') || '').trim())
           return interaction.reply({ content: 'At your tier, you can only corner **one member at a time** — `also` and `sweep` are mod-only.', flags: MessageFlags.Ephemeral });
       }
+      // Hit-squad restrictions: NO rule/reason, for the same reason member corners have none — a squad
+      // corner is chaos, not discipline, and tagging one with a rule would pollute that member's
+      // corner→strike repeat count for an offence that never happened (owner, 2026-08-20). corner.js
+      // strips ruleIndex centrally as the real guarantee; this just says so out loud instead of
+      // silently dropping what they typed. Only fires while the activation window is live.
+      if (isHitSquad && (ruleN || customReason))
+        return interaction.reply({ content: '🔪 Hit-squad corners can’t carry a **rule or reason** — they’re not disciplinary and don’t count toward anyone’s strike record. Just pick who.', flags: MessageFlags.Ephemeral });
       // Verified-member restrictions: NO rule/reason (so it never feeds corner→strike conversion), single
       // target, ≤ the member max (blank → max), and a hard daily cap.
       if (mCorner) {
