@@ -1222,3 +1222,19 @@ active/activity keywords before redeploying to confirm nothing else in that fami
 tonight, correctly left alone).
 
 `node --check` clean local+remote, both bots restarted clean. Committed `3d5f8db`, pushed.
+
+## 2026-08-20 04:09 — Bulk-seeded Birthday ping, reused Event ping for weekly awards
+
+Owner: "in the future the birthday role will be opt in but for now i want every person that has sent
+a message over the last 24 hours to get it." One-off bulk grant, not a code change: scanned all 77
+text channels (+ their active threads) for messages within the last 24h, collected 101 unique
+non-bot authors, granted 🎂 Birthday ping to each — 99 succeeded, 2 already had it or had left,
+0 failures. Ran in the background (~2-3 min) given the channel count. Scratch script deleted after.
+
+Separately, owner: "we can use the event ping for superlatives" — instead of creating a dedicated
+role for the weekly-superlatives channel, reuse the existing 🤾 Event ping role. Added
+`config.eventPingRoleId`, pinged once on the Wednesday "vote now" reminder only — Friday's results
+post up to 17 separate per-category messages, so left those unping'd to avoid spamming the role 17
+times for one event. `EVENT_PING_ROLE_ID=1531010348126044412` set in `.community_env`.
+
+`node --check` clean local+remote, fubu-bot restarted clean. Committed `c934586`, pushed.
