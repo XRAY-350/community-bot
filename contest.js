@@ -26,6 +26,7 @@ const config = require('./config');
 const ownerlog = require('./ownerlog');
 const opspanel = require('./opspanel');
 const copy = require('./copy');
+const botdeletes = require('./botdeletes');
 
 const P = PermissionsBitField.Flags;
 const CFG_FILE = process.env.FUBU_CONTEST_FILE || statePath('contest.json');
@@ -371,6 +372,7 @@ async function onMessage(msg) {
 
     if (!valid) {
       if (staff) return { deleted: false };               // trust staff (announcements, moderation)
+      botdeletes.mark(msg.id);   // auto-moderation, keep it out of #deletion-log
       await msg.delete().catch(() => {});
       await notify(msg.author, `Your message in **${contest.label} Contest** was removed. That channel is only for posting entries and voting 🩷. ${contest.kind === 'image' ? 'Please post your entry as an image.' : 'Please post your written entry.'} For chatting, use the event chat!`);
       return { deleted: true };
@@ -378,6 +380,7 @@ async function onMessage(msg) {
     // valid entry — enforce one per person
     if (entries[msg.author.id]) {
       if (staff) return { deleted: false };
+      botdeletes.mark(msg.id);   // auto-moderation, keep it out of #deletion-log
       await msg.delete().catch(() => {});
       await notify(msg.author, `You've already entered the **${contest.label} Contest** this month. One entry per theme 🩷. Your first entry still stands; ask a mod if you'd like to swap it.`);
       return { deleted: true };

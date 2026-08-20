@@ -30,6 +30,46 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 21:52 — Filter-deleted messages no longer show up in #deletion-log as self-deletes
+
+Owner: "Make sure messages the bot deletes because of media filter or word filter don't end up in the
+deletion log. Right now they show up as deleted by the person themself."
+
+The intent was already coded (2026-08-17: `if (deleterId === client.user.id) return;`) — the mechanism
+it relied on just doesn't work. `messageDelete` carries no executor, so the listener inferred one by
+correlating against MESSAGE_DELETE audit entries. That inference fails in exactly this case, two
+different ways:
+1. **Race** — the gateway event normally lands BEFORE Discord has written the audit entry, so the
+   immediate lookup finds nothing.
+2. **Coalescing** — Discord merges repeated MESSAGE_DELETE entries for the same (target, channel) into
+   one entry with a bumped count rather than writing a fresh one, so a second auto-delete for the same
+   member frequently has no new entry at all.
+Both look identical to "no entry exists", which the code reads as a self-delete — hence "deleted by
+<them> _(themselves)_". Confirmed the symptom before changing anything: 13 of the last 15 log entries
+were "themselves".
+
+Fix: stop inferring, start declaring. New `botdeletes.js` — a small TTL'd registry (60s) of message ids
+the bot deleted deliberately. `mark(id)` is called immediately BEFORE each bot-initiated delete;
+`was(id)` in the deletion-log listener skips them. `was()` consumes the entry (one delete = one event,
+so holding it longer only risks a stale hit on a recycled id), `mark()` accepts an array/Set for
+`bulkDelete`, and ids are swept on a timer plus a cheap size bound.
+
+Swept the class rather than just the two filters named — marked every bot-initiated deletion of a
+message a real member authored: **wordfilter** and **mediafilter** (the reported ones), raidguard flood
+auto-delete, the "X pinned a message" system-notice cleanup, throne 24h expiry (both the single-message
+timer and the bulk cleanup), dashboard bulk cleanup, and contest.js's two invalid/duplicate-entry
+deletes. Kept the old audit-log check as a harmless backstop.
+
+Verified: 7-case unit test of the registry (mark/was, single-consume, array + Set marking, numeric-id
+normalisation, null-safety) all pass; all 8 mark sites plus the skip check confirmed by grep; syntax
+clean local + remote; both bots restarted clean.
+
+**Not verified end-to-end by me, and worth knowing why:** every one of these paths requires a *real
+member* to post — `if (msg.author?.bot || !msg.guild) return;` sits above the filter code (checked, not
+assumed), so a bot-posted message can never trip its own filter and I have no way to fire these from a
+script. The remaining check is a 10-second one for the owner: post a filtered word from a normal
+account, confirm it's deleted and that nothing new appears in #deletion-log.
+
 ## 2026-08-20 21:44 — Corner slowmode now clears on release — and found the release path was never locking the thread
 
 Owner: "the slowmode on a corner should turn off when the person is released."

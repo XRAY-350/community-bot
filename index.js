@@ -45,6 +45,7 @@ const reports = require('./reports');
 const modmail = require('./modmail');
 const sidebar = require('./sidebar');
 const mafia = require('./mafia');
+const botdeletes = require('./botdeletes');
 const modapps = require('./modapps');
 const eventorgapps = require('./eventorgapps');
 const hitsquad = require('./hitsquad');
@@ -2497,6 +2498,7 @@ async function clearThroneMessages(guild, channelId) {
     if (!msgs || !msgs.size) break;
     const toDelete = [...msgs.values()].filter(m => !m.pinned);
     if (toDelete.length) {
+      botdeletes.mark(toDelete.map(m => m.id));
       await ch.bulkDelete(toDelete, true).catch(e => console.error(`[throne-cleanup] ${channelId}:`, e.message));
       cleared += toDelete.length;
     }
@@ -4005,7 +4007,7 @@ async function deleteThroneExpired(channelId, messageId) {
   try {
     const ch = await client.channels.fetch(channelId).catch(() => null);
     const m = ch && await ch.messages.fetch(messageId).catch(() => null);
-    if (m) await m.delete().catch(() => {});
+    if (m) { botdeletes.mark(m.id); await m.delete().catch(() => {}); }
   } finally { throneExpire.remove(messageId); }
 }
 function armThroneExpire(channelId, messageId, ms) {
@@ -4347,6 +4349,7 @@ async function cleanDashboard(guild) {
     if (!msgs || !msgs.size) break;
     const del = [...msgs.values()].filter(m => !m.pinned && m.id !== panelId);
     if (!del.length) break;
+    botdeletes.mark(del.map(m => m.id));
     const done = await ch.bulkDelete(del, true).catch(e => { console.error('[dashclean]', e.message); return null; });
     const n = done ? done.size : 0;
     total += n;
@@ -6579,12 +6582,13 @@ client.on('messageCreate', async (msg) => {
     // Checked before the bot early-return so a webhook flood is covered too; excludes THIS bot's own id so
     // its own rapid-fire posts (Arena rounds, etc.) never self-trigger.
     if (msg.guild && msg.author.id !== client.user.id && raidguard.checkFlood(msg.author.id)) {
+      botdeletes.mark(msg.id);   // auto-moderation, not a human deletion — keep it out of #deletion-log
       await msg.delete().catch(() => {});
       await raidguard.quarantine(msg.guild, msg);
     }
     // Auto-delete the "X pinned a message" system notification so pins don't clutter channels (owner 2026-08-05).
     // Checked BEFORE the bot-author early-return below, since a bot-pinned notice is authored by the bot.
-    if (msg.guild && msg.type === MessageType.ChannelPinnedMessage) { await msg.delete().catch(() => {}); return; }
+    if (msg.guild && msg.type === MessageType.ChannelPinnedMessage) { botdeletes.mark(msg.id); await msg.delete().catch(() => {}); return; }
     // Blanket 24h self-expiry for EVERYTHING posted in a tribe throne (owner: "add the timer to all messages
     // in the throne") — not just the bot's transient throneSend() posts, but human leader announcements and any
     // other post too, to keep the throne clear. Excludes the persistent pinned control panel (its own marker).
@@ -6663,7 +6667,7 @@ client.on('messageCreate', async (msg) => {
     const earlyMember = msg.member || await msg.guild.members.fetch(msg.author.id).catch(() => null);
     if (earlyMember && features.enabled('wordFilter') && !opspanel.memberTier(earlyMember)) {
       const specificHit = await mediafilter.checkSpecific(state, msg).catch(e => { console.error('[mediafilter] checkSpecific:', e.message); return null; });
-      if (specificHit) { await msg.delete().catch(e => console.error('[mediafilter] delete:', e.message)); return; }
+      if (specificHit) { botdeletes.mark(msg.id); await msg.delete().catch(e => console.error('[mediafilter] delete:', e.message)); return; }
     }
     if (!msg.content) return;
     const member = earlyMember;
@@ -6687,7 +6691,7 @@ client.on('messageCreate', async (msg) => {
     // everyone EXCEPT staff (so mods can still discuss the term). Deleting ends the scan for this message.
     if (features.enabled('wordFilter') && !opspanel.memberTier(member)) {
       const hit = wordfilter.check(state, msg.content);
-      if (hit) { await msg.delete().catch(e => console.error('[wordfilter] delete:', e.message)); return; }
+      if (hit) { botdeletes.mark(msg.id); await msg.delete().catch(e => console.error('[wordfilter] delete:', e.message)); return; }
     }
     // LAB pass (independent, private admin channel) — runs BEFORE the production routing so the watchlist
     // strict early-return below doesn't skip it. Staff excluded, same population as loose. Own try/catch so
@@ -6767,6 +6771,14 @@ client.on('messageDelete', async (msg) => {
   try {
     if (msg.partial || !msg.guild || !config.deletionLogChannelId || msg.channelId === config.deletionLogChannelId) return;
     if (!msg.author || msg.author.bot) return;
+    // The bot deleted this itself (word/media filter, raid flood, throne expiry, contest/dashboard
+    // cleanup) — not a human moderation event, so it doesn't belong here. This is an EXPLICIT mark set
+    // right before each of those deletes; the audit-log check further down can't be trusted for this
+    // because the gateway event usually beats the audit entry being written, and Discord coalesces
+    // repeated MESSAGE_DELETE entries for the same member+channel instead of writing a fresh one — both
+    // of which read as "no entry found", i.e. a self-delete, which is exactly why filter-deleted
+    // messages were showing up here as "deleted by <them> (themselves)" (owner, 2026-08-20).
+    if (botdeletes.was(msg.id)) return;
     // Skip THRONE channels — throneExpire.js routinely auto-deletes every throne message after 24h by
     // design (not a moderation event), so logging those was just clutter (owner, 2026-08-08: "skip
     // messages deleted by the bot in the deletion log" re: throne 24h expiry).
