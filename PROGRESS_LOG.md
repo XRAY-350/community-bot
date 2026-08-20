@@ -1001,3 +1001,28 @@ Verified with unit tests before deploying (temp override-file fixtures, not live
 denies only the matching source and allows everything else; the 3 live `EXCLUSIVE_CORNERER` rules
 evaluate identically through `checkExclusiveProtection`, confirmed `checkProtectFrom` is a no-op on
 legacy-only rules. Deployed all 4 files, clean restart on both bots. Committed `3f39b37`, pushed.
+
+## 2026-08-20 01:59 — Restored allow-list rule creation (nothing stays a one-off)
+
+Owner: "convert existing entries to the new format" — before answering the AskUserQuestion I'd
+raised about how to convert them, owner interrupted with a standing principle: "all existing rules
+are a shape that should be able to be created again... i don't want anything to be a one off only
+able to be made through you." This reframed the actual problem: the deny-list rework had made
+`EXCLUSIVE_CORNERER` (allow-list, "only X can corner them") data that still worked but was no
+longer CREATABLE — the rule-type picker's only path led to `PROTECT_FROM` now. A future allow-list
+rule would only ever exist if I hand-wrote it via `addOverride()` directly, exactly the class of
+thing the owner doesn't want to depend on me for.
+
+Fixed by adding back the allow-list flow as its own explicit, distinctly-labeled picker option:
+"🔐 Only These Can Corner Them" (EXCLUSIVE_CORNERER) alongside "🚫 Block Specific Sources" (renamed
+from the earlier generic "Protect Someone", so the two opposite mental models are chosen
+deliberately rather than one silently winning). Restored the exact `actorPickRow`-based creation
+branch and its `fops_ov_exclusiveactors:`/`fops_ov_exclusiverole:`/`fops_ov_exclusiveactortier:`
+handler that existed before the deny-list rework — same code, just re-added alongside `PROTECT_FROM`
+instead of replaced by it. The detail-view Add/Remove Actor buttons and Hit Squad Exempt toggle for
+`EXCLUSIVE_CORNERER` were never removed, so they already worked correctly once rules of that shape
+exist again.
+
+No conversion of the 3 live legacy rules was needed or attempted — they were never broken, only the
+*creation path* for new ones like them was missing. Deployed, clean restart on both bots. Committed
+`1bef9b1`, pushed.
