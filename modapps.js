@@ -523,7 +523,7 @@ async function enforceReviewThreadMembers(guild, thread) {
     if (userId === guild.client.user.id) continue;
     const r = await fetchMemberResilient(guild, userId);
     if (r.unknown) continue;                                   // couldn't verify — never remove on uncertainty
-    if (r.member && opspanel.memberTier(r.member)) continue;   // legitimately mod+ — belongs here
+    if (r.member && opspanel.meets(opspanel.memberTier(r.member), 'mod')) continue;   // legitimately mod+ — belongs here ('staff' floor doesn't, was a bare truthy check pre-'staff' tier)
     await thread.members.remove(userId).catch(() => {});       // non-staff, or left the guild → strip
     if (r.member) removed.push(r.member);
   }
@@ -545,7 +545,7 @@ async function enforceApplicantThreadMembers(guild, thread) {
     if (userId === guild.client.user.id || userId === applicantId) continue;
     const r = await fetchMemberResilient(guild, userId);
     if (r.unknown) continue;
-    if (r.member && opspanel.memberTier(r.member)) continue;   // staff belong
+    if (r.member && opspanel.meets(opspanel.memberTier(r.member), 'mod')) continue;   // staff (mod+) belong — 'staff' floor tier doesn't, colloquial "staff" predates that formal tier name
     await thread.members.remove(userId).catch(() => {});
     if (r.member) removed.push(r.member);
   }

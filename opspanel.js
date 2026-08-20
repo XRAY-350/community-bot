@@ -32,7 +32,12 @@ const OWNER_DISPLAY_ROLE_ID = process.env.FUBU_OWNER_DISPLAY_ROLE_ID || '1527430
 // role). Ranks above everyone: passes every gate ("no command the bot owner can't run") and can hold
 // commands NOBODY else can run. Structural, not role-dependent.
 const BOT_OWNER_ID = process.env.FUBU_BOT_OWNER_ID || '865843812907089940';
-const RANK = { mod: 1, admin: 2, owner: 3, botowner: 4 };
+// 'staff' (owner, 2026-08-20: "generalized to the staff tier everywhere") is the floor rank below Mod —
+// Trial Mod, any language Mini-Mod, and Event Organizer all resolve to it (see memberTier below). It is
+// NOT the same thing as "any real tier" used to mean — every bare truthy tierOf()/memberTier() check
+// that meant "mod or above" had to be swept to meets(tier, 'mod') instead, or 'staff' would silently
+// qualify. See the memberTier comment for exactly which roles land here.
+const RANK = { staff: 1, mod: 2, admin: 3, owner: 4, botowner: 5 };
 const meets = (tier, needed) => (RANK[tier] || 0) >= (RANK[needed] || 99);
 // True for the bot owner ONLY. Accepts an interaction (.user.id) or a member (.id).
 function isBotOwner(x) { const id = x && (x.user ? x.user.id : x.id); return !!id && id === BOT_OWNER_ID; }
@@ -62,7 +67,22 @@ function memberTier(member) {
   } catch { /* fall through to live roles */ }
   if (effRoles.has(ADMIN_ROLE_ID)) return 'admin';
   if (effRoles.has(MOD_ROLE_ID)) return 'mod';
+  if (isStaffFloorRoles(effRoles)) return 'staff';
   return null;
+}
+// 'staff' floor (owner, 2026-08-20): Trial Mod, any language Mini-Mod, or Event Organizer — the exact
+// same set index.js's isTrialMod/isAnyMiniMod/hasTrialCornerTier check, generalized into the real tier
+// ladder instead of a parallel one-off boolean. Takes the already-cornered-aware effRoles (a plain
+// `.has(id)` object, live roles.cache or the pre-corner snapshot — see memberTier above), not a member,
+// so it works identically whether the member is currently jailed or not.
+// eventorgapps.js requires opspanel.js — lazy-require here (same pattern as modapps.js elsewhere in this
+// file) so this doesn't become a load-time circular require.
+function isStaffFloorRoles(effRoles) {
+  if (D && D.config && D.config.trialModRoleId && effRoles.has(D.config.trialModRoleId)) return true;
+  if (langmods.languages().some(lang => { const rid = langmods.roleForLang(lang); return rid && effRoles.has(rid); })) return true;
+  const eventorgapps = require('./eventorgapps');
+  if (effRoles.has(eventorgapps.ORGANIZER_ROLE_ID)) return true;
+  return false;
 }
 // ACTOR authority tier — who can USE things. Ladder: mod (MODS-✰) < admin (ADMINS-★ role) < owner < server
 // owner < bot owner. The bot owner is supreme BY USER ID (role-independent → keeps access even role-stripped,
@@ -109,6 +129,7 @@ const PAGES = [
 const pageIdx = (name) => PAGES.findIndex(p => p.name === name);   // reorder-safe page lookup
 const watchlist = require('./watchlist');
 const features = require('./features');
+const langmods = require('./langmods');
 
 // Instant-ban reason categories — used to write the ban's audit-log reason AND (in appeals.js) to
 // recognize which bans the "more limited" ban-appeal path must refuse outright.
@@ -202,7 +223,11 @@ async function buildPersonal(page, tier) {
 }
 async function openPersonalPanel(interaction) {
   const tier = tierOf(interaction);
-  if (!tier) return interaction.reply({ content: 'This panel is for the mod team.', flags: MessageFlags.Ephemeral });
+  // Defense in depth, not the primary gate: the /panel command routes 'staff' tier to openReadOnly()
+  // before this ever runs (index.js), but this function is itself a security boundary (the full
+  // interactive panel), so it must not trust the caller — require mod+ explicitly, not just "any tier",
+  // now that 'staff' is a real (lower) tier value and would otherwise pass a bare truthy check.
+  if (!meets(tier, 'mod')) return interaction.reply({ content: 'This panel is for the mod team.', flags: MessageFlags.Ephemeral });
   return interaction.reply(await buildPersonal(0, tier));
 }
 // Read-only dashboard for trial mods: the live Overview status, with NO action components — genuinely
@@ -512,11 +537,11 @@ async function buildPromotions() {
 
 // Plain-language type labels — matches how cornering rules actually get talked about, not the internal
 // enum names (owner, 2026-08-19: "the terminology doesn't really match how we already describe things").
-const OV_TYPE_LABEL = { EXCLUSIVE_CORNERER: '🔒 Protected', ALLOW_SELF_CORNER: '🙋 Self-corner allowed', BYPASS_TIER: '🔓 Rank bypass' };
+const OV_TYPE_LABEL = { EXCLUSIVE_CORNERER: '🔒 Protected', DENY_HITSQUAD: '🚔 Hit squad blocked', ALLOW_SELF_CORNER: '🙋 Self-corner allowed', BYPASS_TIER: '🔓 Rank bypass' };
 function overrideTypeLabel(o) {
   return o.type === 'GRANT_POWER' ? `⚡ Cornering authority (${o.powerTier || 'owner'}-level)` : (OV_TYPE_LABEL[o.type] || o.type);
 }
-const TIER_ACTOR_LABEL = { mod: '✰ Mod+ staff', admin: '⭐ Admin+ staff', owner: '👑 Owner+', botowner: '🤖 Bot Owner' };
+const TIER_ACTOR_LABEL = { staff: '🔰 Staff+ (Trial Mod/Mini-Mod/Event Organizer)', mod: '✰ Mod+ staff', admin: '⭐ Admin+ staff', owner: '👑 Owner+', botowner: '🤖 Bot Owner' };
 function fmtEntity(type, id) {
   if (id === '*') return 'Everyone';
   if (type === 'tier') return TIER_ACTOR_LABEL[id] || `${id}+ staff`;
@@ -541,6 +566,7 @@ function overrideTargetFmt(o) {
 function overrideSummaryLine(o) {
   const noteSuffix = o.note ? ` _(${o.note})_` : '';
   if (o.type === 'EXCLUSIVE_CORNERER') return `**${overrideTypeLabel(o)}** — only ${overrideActorFmt(o)} can corner ${overrideTargetFmt(o)}${noteSuffix}`;
+  if (o.type === 'DENY_HITSQUAD') return `**${overrideTypeLabel(o)}** — hit squad can't corner ${overrideTargetFmt(o)} (staff/member-corner unaffected)${noteSuffix}`;
   if (o.type === 'GRANT_POWER') return `**${overrideTypeLabel(o)}** — ${overrideActorFmt(o)} can corner up to **${o.powerTier || 'owner'}**-tier, over ${overrideTargetFmt(o)}${noteSuffix}`;
   if (o.type === 'ALLOW_SELF_CORNER') return `**${overrideTypeLabel(o)}** — ${overrideTargetFmt(o)} may corner themselves${noteSuffix}`;
   if (o.type === 'BYPASS_TIER') return `**${overrideTypeLabel(o)}** — ${overrideActorFmt(o)} may corner above their rank, against ${overrideTargetFmt(o)}${noteSuffix}`;
@@ -590,12 +616,13 @@ function buildOverrideDetail(ruleId) {
   const o = overridesManager.getOverride(ruleId);
   if (!o) return { content: 'That rule no longer exists — it may have already been deleted.', embeds: [], components: [navRow(pageIdx('Overrides'))] };
   const isExclusive = o.type === 'EXCLUSIVE_CORNERER';
-  const multiActor = o.type !== 'ALLOW_SELF_CORNER';   // every type except self-corner supports several actors
+  const isDenyHitsquad = o.type === 'DENY_HITSQUAD';
+  const multiActor = o.type !== 'ALLOW_SELF_CORNER' && !isDenyHitsquad;   // no actor concept at all for DENY_HITSQUAD — it's implicitly hit squad
   const fields = [
     { name: 'Type', value: overrideTypeLabel(o), inline: true },
-    { name: isExclusive ? 'Allowed to corner them' : 'Actor', value: overrideActorFmt(o), inline: true },
-    { name: 'Target', value: overrideTargetFmt(o), inline: true },
   ];
+  if (!isDenyHitsquad) fields.push({ name: isExclusive ? 'Allowed to corner them' : 'Actor', value: overrideActorFmt(o), inline: true });
+  fields.push({ name: 'Target', value: overrideTargetFmt(o), inline: true });
   if (o.powerTier) fields.push({ name: 'Power Tier', value: o.powerTier, inline: true });
   fields.push({ name: 'Note', value: o.note || '_none_', inline: false });
   const created = o.createdBy ? `<@${o.createdBy}>${o.createdAt ? ` · <t:${Math.floor(o.createdAt / 1000)}:R>` : ''}` : '_unknown (predates audit trail)_';
@@ -836,7 +863,7 @@ function followupModal(customId, title, fields) {
     new TextInputBuilder().setCustomId(f.id).setLabel(f.label).setStyle(TextInputStyle.Short).setRequired(!!f.required).setPlaceholder(f.placeholder || '')));
   return m;
 }
-const LABEL = { mod: '✰ Mod', admin: '⭐ Admin', owner: '👑 Owner' };
+const LABEL = { staff: '🔰 Staff', mod: '✰ Mod', admin: '⭐ Admin', owner: '👑 Owner' };
 // Shared override-wizard steps — every rule type but self-corner now follows the same shape: pick the
 // target scope (or skip straight to a specific target for Protect Someone), then multi-select the
 // actor(s) last, so the final step can add several people in one interaction instead of one rule apiece.
@@ -864,6 +891,7 @@ function actorPickRow(userCustomId, roleCustomId, subject, verb = 'the actor(s) 
   if (tierCustomId) {
     rows.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder().setCustomId(tierCustomId).setPlaceholder('🎚️ OR any staff at/above a tier…').addOptions([
+        { label: '🔰 Staff+ (Trial Mod/Mini-Mod/Event Org)', value: 'staff' },
         { label: '✰ Mod+ staff', value: 'mod' },
         { label: '⭐ Admin+ staff', value: 'admin' },
         { label: '👑 Owner+', value: 'owner' },
@@ -877,7 +905,12 @@ async function handlePanel(interaction) {
   const id = interaction.customId;
   const tier = tierOf(interaction);
   const roleTier = isBotOwner(interaction) ? 'botowner' : memberTier(interaction.member);   // role-only (ADMINS-★, not the Admin perm) — but the bot owner passes by user id even role-stripped
-  if (!tier) return interaction.reply({ content: 'This dashboard is for the mod team.', flags: MessageFlags.Ephemeral });
+  // mod+ required to touch ANY button on the shared/personal panel (view-only nav for 'staff' tier is via
+  // the read-only /panel route instead, not this dispatcher) — was `if (!tier)` before 'staff' existed as
+  // a real tierOf() value; a bare truthy check here would now let Trial Mod/Mini-Mod/Event Organizer reach
+  // every action handler below, including Corner/Ban buttons. Preserves exactly what already happened to
+  // trial mods pre-'staff' (tierOf was null for them too, so this always blocked them).
+  if (!meets(tier, 'mod')) return interaction.reply({ content: 'This dashboard is for the mod team.', flags: MessageFlags.Ephemeral });
   // Gate helper for pre-defer (reply) responses.
   const denyReply = needed => interaction.reply({ content: `🔒 That's **${LABEL[needed]}+** only. You're ${LABEL[tier]}.`, flags: MessageFlags.Ephemeral });
 
@@ -1383,6 +1416,7 @@ async function handlePanel(interaction) {
         new StringSelectMenuBuilder().setCustomId('fops_ov_picktype').setPlaceholder('Select Rule Type…').addOptions([
           { label: '⚡ Give Cornering Authority', value: 'GRANT_POWER', description: 'Give someone the power to corner like an Owner, Admin, or Mod' },
           { label: '🔒 Protect Someone', value: 'EXCLUSIVE_CORNERER', description: 'Only specific people (chosen by you) can corner this member or role' },
+          { label: '🚔 Block Hit Squad', value: 'DENY_HITSQUAD', description: "Hit squad can't corner this member or role — staff/members untouched" },
           { label: '🙋 Allow Self-Corner', value: 'ALLOW_SELF_CORNER', description: 'Let a member or role corner themselves' },
           { label: '🔓 Allow Rank Bypass', value: 'BYPASS_TIER', description: 'Let someone corner above their normal staff rank' },
         ])
@@ -1487,6 +1521,17 @@ async function handlePanel(interaction) {
         const targetType = isUser ? 'user' : 'role';
         return interaction.editReply(actorPickRow(`fops_ov_exclusiveactors:${targetType}:${pickedId}`, `fops_ov_exclusiverole:${targetType}:${pickedId}`,
           `Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}`, 'who is allowed to corner them', `fops_ov_exclusiveactortier:${targetType}:${pickedId}`));
+      }
+      if (ruleType === 'DENY_HITSQUAD') {
+        const entry = overridesManager.addOverride({
+          targetType: isUser ? 'user' : 'role',
+          targetId: pickedId,
+          type: 'DENY_HITSQUAD',
+          note: '',
+          createdBy: interaction.user.id
+        });
+        await interaction.editReply({ content: `✅ Hit squad is now **blocked** from cornering ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`} (rule \`${entry.id}\`) — staff and member-corner are unaffected.`, components: [] });
+        return refreshPanel(interaction.client);
       }
       // ALLOW_SELF_CORNER: target IS the actor, one rule per pick — no multi-actor step needed.
       const entry = overridesManager.addOverride({
@@ -1613,4 +1658,4 @@ async function handlePanel(interaction) {
   }
 }
 
-module.exports = { wire, ensurePanel, ensureCommandRef, refreshPanel, isPanelInteraction, handlePanel, openPersonalPanel, openReadOnly, tierOf, memberTier, isBotOwner, BOT_OWNER_ID, PAGES, PANEL_FILE, CATEGORY_LABEL, OWNER_ROLE_IDS, OWNER_DISPLAY_ROLE_ID, ADMIN_ROLE_ID, MOD_ROLE_ID };
+module.exports = { wire, ensurePanel, ensureCommandRef, refreshPanel, isPanelInteraction, handlePanel, openPersonalPanel, openReadOnly, tierOf, memberTier, isBotOwner, BOT_OWNER_ID, PAGES, PANEL_FILE, CATEGORY_LABEL, OWNER_ROLE_IDS, OWNER_DISPLAY_ROLE_ID, ADMIN_ROLE_ID, MOD_ROLE_ID, meets, TIER_RANK: RANK };

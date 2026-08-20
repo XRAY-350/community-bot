@@ -51,10 +51,14 @@ const DEFAULT_OVERRIDES = [
     note: 'Server owner opted-in as cornerable target (admin+ only)'
   }
 ];
-// Tier rank, for tier-type actor entries ("mod+ / admin+ / owner+ / botowner") — the general-purpose
+// Tier rank, for tier-type actor entries ("staff+ / mod+ / admin+ / owner+ / botowner") — the general-purpose
 // version of what used to be a BYPASS_TIER-only minActorTier field (owner, 2026-08-19: "there are more
 // tiers in between" all-members and a single named actor — this is available on every rule type now).
-const TIER_RANK = { botowner: 4, owner: 3, admin: 2, mod: 1 };
+// Mirrors opspanel.js's RANK exactly (owner, 2026-08-20: "generalized to the staff tier everywhere") —
+// 'staff' is Trial Mod / any Mini-Mod / Event Organizer, the floor rank below Mod. actorTier is whatever
+// opspanel.tierOf(interaction) returned at the call site, so it already carries 'staff' correctly; no
+// special-casing needed here beyond having it in the ladder.
+const TIER_RANK = { staff: 1, mod: 2, admin: 3, owner: 4, botowner: 5 };
 
 function loadOverrides() {
   try {
@@ -224,6 +228,16 @@ function checkExclusiveProtection(targetMember, actorId, actorMember = null, act
   return { allowed: false, requiredActors: normalizeActors(rules[0]), hitSquadExempt: rules.some(r => r.hitSquadExempt) };
 }
 
+// Deny-only rule scoped to hit squad specifically (owner, 2026-08-20: "how do I deny the hit squad from
+// cornering someone" — EXCLUSIVE_CORNERER is an allow-list, so blocking just hit squad would otherwise
+// mean enumerating every other legitimate actor/tier). No actors[] list — the "actor" is implicitly hit
+// squad, checked by the caller (corner.js) only when the actor IS currently a hit squad member; staff and
+// member-corner are never touched by this rule type at all.
+function isHitSquadDenied(targetMember) {
+  const list = loadOverrides();
+  return list.some(o => o.type === 'DENY_HITSQUAD' && matchEntity(o.targetType, o.targetId, targetMember));
+}
+
 // actorTier is the actor's OWN current tier (not a granted one) — needed to evaluate a tier-type actor
 // entry on a GRANT_POWER rule itself. Callers pass the raw tier (e.g. opspanel.tierOf), never the result
 // of this same function, to avoid a rule granting itself eligibility.
@@ -267,6 +281,7 @@ module.exports = {
   updateOverride,
   removeOverride,
   checkExclusiveProtection,
+  isHitSquadDenied,
   normalizeActors,
   addRuleActor,
   removeRuleActor,

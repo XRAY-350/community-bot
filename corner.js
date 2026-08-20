@@ -400,6 +400,12 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     if (exclusive.hitSquadExempt) who.push('🚔 hit squad (while active)');
     return { ok: false, error: `only ${who.join(', ') || 'nobody currently allowed'} can corner ${member.displayName || member.user?.username || 'this member'}.` };
   }
+  // Hit-squad-specific deny (owner, 2026-08-20): a DENY_HITSQUAD override blocks hit squad from cornering
+  // this person WITHOUT restricting staff/member-corner the way an EXCLUSIVE_CORNERER allow-list would —
+  // only checked when the actor is actually cornering via their hit-squad grant.
+  if (byId && hitsquad.isSquadMember(byId) && overridesManager.isHitSquadDenied(member)) {
+    return { ok: false, error: `hit squad is blocked from cornering ${member.displayName || member.user?.username || 'this member'}.` };
+  }
   // Adult Corner protection: members with the 16-17 role (1516185172213628989) are denied Adult Corner
   const MINOR_ROLE_ID = '1516185172213628989';
   if (adult && member.roles?.cache?.has(MINOR_ROLE_ID)) {

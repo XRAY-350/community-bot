@@ -155,9 +155,11 @@ async function syncStaffRank(guild, member, tribe) {
   else if (has && !(isTribeMember && isStaff)) await member.roles.remove(tribe.staffRankRoleId, 'Tribe: no longer eligible for the staff rank').catch(() => {});
 }
 // A member-founded tribe stays MEMBER-ONLY (owner ruling): mods/admins/owners can't join it — they'd get the
-// "General" staff rank and overshadow the regular-member co-leaders. Trial mods (memberTier null) are fine, same
-// as they can cosign/co-lead. This is the one gate that keeps a member-led tribe actually member-led.
-function staffBlockedFromMemberTribe(member, tribe) { return tribes.isMemberFounded(tribe) && !!opspanel.memberTier(member); }
+// "General" staff rank and overshadow the regular-member co-leaders. Trial mods (and mini-mods/event
+// organizers — the 'staff' floor tier) are fine, same as they can cosign/co-lead. This is the one gate that
+// keeps a member-led tribe actually member-led. Was a bare `!!memberTier(member)` before 'staff' existed as
+// a real (truthy) tierOf() value — that would now wrongly block trial-tier members too.
+function staffBlockedFromMemberTribe(member, tribe) { return tribes.isMemberFounded(tribe) && opspanel.meets(opspanel.memberTier(member), 'mod'); }
 async function joinTribeSelfServe(guild, tribe, member, reason = 'First tribe — self-join via #roles') {
   if (staffBlockedFromMemberTribe(member, tribe)) return { ok: false, content: `**${tribe.shortName || tribe.name}** is a member-founded tribe — it stays member-only, so mods/admins/owners can’t join it.` };
   tribes.setMembership(tribe.key, member.id, true);   // authorize first so the guard honors the join
@@ -1312,7 +1314,7 @@ async function alertModTribe(guild, content, pingRoleId) {
 // as a backstop, leader role first (if held) then the base tribe role, with an alert + throne post so the
 // tribe knows to pick a replacement leader instead of a staff member silently overriding it.
 async function removePromotedFromMemberTribe(guild, member, tribe) {
-  if (!tribes.isMemberFounded(tribe) || !opspanel.memberTier(member)) return null;
+  if (!tribes.isMemberFounded(tribe) || !opspanel.meets(opspanel.memberTier(member), 'mod')) return null;
   const wasLeader = tribes.isLeader(member, tribe);
   if (wasLeader && tribe.leaderRoleId) await member.roles.remove(tribe.leaderRoleId, 'Member-founded tribe: promoted to staff, no longer eligible to lead it').catch(() => {});
   const hadRole = !!(tribe.roleId && member.roles.cache.has(tribe.roleId));
@@ -1358,7 +1360,7 @@ async function sweepLeaderRequirement(guild) {
     // instantly on the actual promotion; this catches anything missed (bot downtime, a stale partial member).
     if (tribes.isMemberFounded(tribe) && tribe.roleId) {
       const role = guild.roles.cache.get(tribe.roleId);
-      if (role) for (const m of [...role.members.values()]) if (opspanel.memberTier(m)) await removePromotedFromMemberTribe(guild, m, tribe).catch(() => {});
+      if (role) for (const m of [...role.members.values()]) if (opspanel.meets(opspanel.memberTier(m), 'mod')) await removePromotedFromMemberTribe(guild, m, tribe).catch(() => {});
     }
     const leaderRole = tribe.leaderRoleId && guild.roles.cache.get(tribe.leaderRoleId);
     const holderCount = leaderRole ? leaderRole.members.size : 0;
@@ -3531,7 +3533,7 @@ function relPhrase(releaseAt) {
 
 // Mod gate shared by the button handlers below (MOD role, Administrator overrides).
 function modClicked(interaction) {
-  return !!opspanel.tierOf(interaction);   // any staff tier (mod/admin/owner incl Admin-perm/bot owner)
+  return opspanel.meets(opspanel.tierOf(interaction), 'mod');   // mod/admin/owner incl Admin-perm/bot owner — NOT 'staff' floor (trial/mini-mod/event-org)
 }
 
 // /pending — paginated, read-only list of open verify threads (verifying happens in-thread, not here).
@@ -4858,7 +4860,7 @@ client.once('ready', async () => {
     // from the forum), trial-only gets sealed (removed from their applicant thread). Keeps history either way.
     let archived = 0, sealed = 0;
     for (const m of guild.members.cache.values()) {
-      if (opspanel.memberTier(m)) archived += await modapps.archiveOwnApplication(guild, m.id).catch(() => 0);
+      if (opspanel.meets(opspanel.memberTier(m), 'mod')) archived += await modapps.archiveOwnApplication(guild, m.id).catch(() => 0);
       else if (m.roles.cache.has(config.trialModRoleId)) sealed += await modapps.sealOwnApplication(guild, m.id).catch(() => 0);
     }
     console.log(`[modapps] own-application sweep: ${archived} archived (mod+), ${sealed} sealed (trial)`);
@@ -5503,8 +5505,8 @@ async function enforceTierNesting(member) {
   // role that was independently held BEFORE nesting ever touched it is simply never marked, permanently.
   if ((tier === 'owner' || tier === 'admin') && NEST_MOD_ROLE && !has(NEST_MOD_ROLE)) { add.push(NEST_MOD_ROLE); nestedRoles.mark(member.id, NEST_MOD_ROLE); }
   if (tier === 'owner' && NEST_ADMIN_ROLE && !has(NEST_ADMIN_ROLE)) { add.push(NEST_ADMIN_ROLE); nestedRoles.mark(member.id, NEST_ADMIN_ROLE); }
-  if (tier) {
-    const trial = modapps.loadConfig().trialModRoleId;   // mod+ never keep Trial Mod
+  if (opspanel.meets(tier, 'mod')) {
+    const trial = modapps.loadConfig().trialModRoleId;   // mod+ never keep Trial Mod ('staff' floor, e.g. a genuine Trial Mod, must NOT hit this — was a bare `if (tier)` that would've stripped Trial Mod's own role the moment 'staff' became a real tierOf() value)
     if (trial && has(trial)) remove.push(trial);
   }
   // Demotion cleanup: a role WE nested-in shouldn't outlive the tier that justified it — real incident:
@@ -5568,17 +5570,17 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     // removing thread membership isn't enough — archive their own post to the owner-only channel instead
     // (record kept, just moved out of reach). A trial mod can't see the forum at all; sealing their
     // applicant-thread membership is sufficient there. Idempotent either way.
-    if (opspanel.memberTier(newMember)) await modapps.archiveOwnApplication(newMember.guild, newMember.id).catch(e => console.error('[modapps archive]', e.message));
+    if (opspanel.meets(opspanel.memberTier(newMember), 'mod')) await modapps.archiveOwnApplication(newMember.guild, newMember.id).catch(e => console.error('[modapps archive]', e.message));
     else if (newMember.roles.cache.has(config.trialModRoleId)) await modapps.sealOwnApplication(newMember.guild, newMember.id).catch(e => console.error('[modapps seal]', e.message));
     // DEMOTION: was mod+, no longer is → Discord keeps their review-thread memberships, so an ex-mod would
     // still see staff deliberations (this is exactly how two demoted mods lingered, 2026-08-01). Sweep them out.
-    if (oldMember && !oldMember.partial && opspanel.memberTier(oldMember) && !opspanel.memberTier(newMember)) {
+    if (oldMember && !oldMember.partial && opspanel.meets(opspanel.memberTier(oldMember), 'mod') && !opspanel.meets(opspanel.memberTier(newMember), 'mod')) {
       const n = await modapps.removeDemotedFromReviewThreads(newMember.guild, newMember.id).catch(() => 0);
       if (n) console.log(`[modapps] demoted ${newMember.user.tag} removed from ${n} review thread(s)`);
     }
     // PROMOTION: wasn't mod+, now is → member-founded tribes stay member-only (staffBlockedFromMemberTribe
     // blocks staff from JOINING one; this is the mirror for someone already inside who gets promoted).
-    if (oldMember && !oldMember.partial && !opspanel.memberTier(oldMember) && opspanel.memberTier(newMember)) {
+    if (oldMember && !oldMember.partial && !opspanel.meets(opspanel.memberTier(oldMember), 'mod') && opspanel.meets(opspanel.memberTier(newMember), 'mod')) {
       const tribe = tribes.myTribe(newMember);
       if (tribe) await removePromotedFromMemberTribe(newMember.guild, newMember, tribe).catch(e => console.error('[tribe-staff-promote]', e.message));
     }
@@ -5753,7 +5755,7 @@ async function sweepExistingAutoCornerThreads(guild) {
 //   canBan   = any staff tier (mod / admin / owner) — any mod can ban on a violation.
 //   canWLAdmin = ADMINS-★ role or owner ONLY — unban + editing the watchlist/terms.
 // Authority via tierOf (bot owner supreme by user id; Administrator PERMISSION = owner tier; ADMINS-★ = admin).
-const canBan = (i) => !!opspanel.tierOf(i);                                        // any staff (mod+)
+const canBan = (i) => opspanel.meets(opspanel.tierOf(i), 'mod');                   // any staff (mod+) — NOT the 'staff' floor (trial/mini-mod/event-org)
 const canWLAdmin = (i) => ['admin', 'owner', 'botowner'].includes(opspanel.tierOf(i)); // admin+
 const isOwner = (i) => ['owner', 'botowner'].includes(opspanel.tierOf(i));         // owner (role or Admin-perm) or bot owner
 // Trial Mod — a restricted training tier BELOW mod. Not staff for canBan purposes, but may do a few
@@ -5823,7 +5825,7 @@ function canManageTribe(interaction, tribe) {
   if (tribes.isLeader(interaction.member, tribe)) return true;
   const tier = opspanel.tierOf(interaction);
   if (tier === 'owner' || tier === 'botowner') return true;                 // owner override — any tribe
-  return !!(tier && interaction.member?.roles?.cache?.has(tribe.roleId));    // in-tribe staff
+  return opspanel.meets(tier, 'mod') && !!interaction.member?.roles?.cache?.has(tribe.roleId);    // in-tribe staff (mod+ — trial-tier joined as a REGULAR tribe member, not via the staff auto-rank flow, so shouldn't get leader-tool authority just by being in one)
 }
 const canVerify = (i) => canBan(i) || isTrialMod(i);
 // General member-facing gates ("you must hold Verified to use this") shouldn't block staff who were
@@ -5843,7 +5845,7 @@ function tribeGameEntrantLines() {
 async function buildTribePanelView(interaction, forcedTribeKey = null) {
   const member = interaction.member;
   const tier = opspanel.tierOf(interaction);
-  const isStaff = !!tier;
+  const isStaff = opspanel.meets(tier, 'mod');   // Tribe Games is mod+ only (see the canLaunchClassic comment below) — NOT the 'staff' floor
   const isAdminTier = tier === 'owner' || tier === 'botowner';
   const ownTribe = tribes.leaderTribe(member) || tribes.memberTribe(member);
   const myTribe = forcedTribeKey ? tribes.get(forcedTribeKey) : ownTribe;
@@ -7385,7 +7387,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!req) return interaction.reply({ content: 'This founding petition is no longer active.', flags: MessageFlags.Ephemeral });
     if (interaction.user.id === req.founderId) return interaction.reply({ content: 'You can’t cosign your own founding petition.', flags: MessageFlags.Ephemeral });
     if (!isVerifiedOrStaff(interaction)) return interaction.reply({ content: 'You need to be verified to cosign.', flags: MessageFlags.Ephemeral });
-    if (opspanel.tierOf(interaction)) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
+    if (opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Mods/admins/owners can’t cosign a member-led tribe — only regular members and trial mods.', flags: MessageFlags.Ephemeral });
     if (tribes.myTribe(interaction.member)) {
       // Cosigning JOINS this tribe, so you must leave your current one first. Rather than just tell them,
       // kick off the SAME leave flow the hub/command use (files a leave request to their throne for the leader).
@@ -7418,7 +7420,7 @@ client.on('interactionCreate', async (interaction) => {
       const enrolled = [], skipped = [];
       for (const cid of req.cosigns) {
         const cm = await interaction.guild.members.fetch(cid).catch(() => null);
-        if (!cm || opspanel.memberTier(cm)) { skipped.push(cid); continue; }   // gone, or became staff since cosigning — member tribe stays member-only
+        if (!cm || opspanel.meets(opspanel.memberTier(cm), 'mod')) { skipped.push(cid); continue; }   // gone, or became staff since cosigning — member tribe stays member-only (trial-tier is fine, matches staffBlockedFromMemberTribe)
         const cr = await addCoLeader(interaction.guild, b.tribe, b.leaderRole, cm);
         if (cr?.ok) enrolled.push(cid); else skipped.push(cid);
       }
@@ -9194,12 +9196,18 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'panel') {
     try {
-      // Event organizers who aren't staff get the EVENT dashboard instead of the mod-only ops panel.
-      if (features.enabled('contest') && !opspanel.tierOf(interaction) && !isTrialMod(interaction)
+      const panelTier = opspanel.tierOf(interaction);
+      // Event organizers who hold NO other staff-floor role get the EVENT dashboard instead of the mod-only
+      // ops panel — keyed off the underlying roles directly (not tierOf/meets) since 'staff' now covers
+      // trial mod/mini-mod/event-organizer uniformly and tierOf() alone can't tell "only an event organizer"
+      // apart from any of the others; isTrialMod/isAnyMiniMod excluded explicitly, matching the exact
+      // condition this had before 'staff' existed as a tierOf() value.
+      if (features.enabled('contest') && !opspanel.meets(panelTier, 'mod') && !isTrialMod(interaction) && !isAnyMiniMod(interaction)
           && interaction.member?.roles?.cache?.has('1529976148706984110'))
         return await contest.openEventPanel(interaction);
-      // Trial mods (not mod+) get the read-only view; mod+ get the full interactive panel.
-      if (!opspanel.tierOf(interaction) && isTrialMod(interaction)) return await opspanel.openReadOnly(interaction);
+      // 'staff' floor (trial mod / mini-mod / event organizer) gets the read-only view; mod+ get the full
+      // interactive panel (openPersonalPanel enforces mod+ itself too — belt and suspenders).
+      if (panelTier === 'staff') return await opspanel.openReadOnly(interaction);
       return await opspanel.openPersonalPanel(interaction);
     } catch (e) { console.error(`[fops] /panel ${e.message}`); return interaction.reply({ content: 'Could not open the panel.', flags: MessageFlags.Ephemeral }).catch(() => {}); }
   }
@@ -9996,7 +10004,9 @@ client.on('interactionCreate', async (interaction) => {
     if (sub === 'found') {
       if (!features.enabled('memberFoundedTribe')) return interaction.reply({ content: 'Founding a tribe as a member isn’t available yet.', flags: MessageFlags.Ephemeral });
       if (!isVerifiedOrStaff(interaction)) return interaction.reply({ content: 'You need to be verified first.', flags: MessageFlags.Ephemeral });
-      if (opspanel.tierOf(interaction)) return interaction.reply({ content: 'This is a **member-led** tribe path — mods/admins/owners found tribes through `/tribe-admin`.', flags: MessageFlags.Ephemeral });
+      // mod+ explicitly (not the 'staff' floor) so a trial mod still falls through to their own message
+      // below instead of getting the generic mods/admins/owners one.
+      if (opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'This is a **member-led** tribe path — mods/admins/owners found tribes through `/tribe-admin`.', flags: MessageFlags.Ephemeral });
       if (isTrialMod(interaction)) return interaction.reply({ content: 'Trial mods can **cosign** a member-founded tribe, but the founder has to be a regular member.', flags: MessageFlags.Ephemeral });
       if (tribes.myTribe(interaction.member)) return interaction.reply({ content: 'You’re already in a tribe — leave it first before founding a new one.', flags: MessageFlags.Ephemeral });
       if (tribes.getMemberFoundedTribeKey()) return interaction.reply({ content: 'There’s already a member-founded tribe (only one is allowed at a time). It has to disband before another can be founded.', flags: MessageFlags.Ephemeral });
