@@ -1455,7 +1455,8 @@ async function handlePanel(interaction) {
       const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder().setCustomId('fops_ov_picktype').setPlaceholder('Select Rule Type…').addOptions([
           { label: '⚡ Give Cornering Authority', value: 'GRANT_POWER', description: 'Give someone the power to corner like an Owner, Admin, or Mod' },
-          { label: '🔒 Protect Someone', value: 'PROTECT_FROM', description: 'Block hit squad / a staff tier / member-corner / specific people or roles from cornering them' },
+          { label: '🚫 Block Specific Sources', value: 'PROTECT_FROM', description: 'Deny-list: block hit squad / a staff tier / member-corner / people or roles — everyone else still can' },
+          { label: '🔐 Only These Can Corner Them', value: 'EXCLUSIVE_CORNERER', description: 'Allow-list: ONLY the people/role/tier you pick can corner them — everyone else denied' },
           { label: '🙋 Allow Self-Corner', value: 'ALLOW_SELF_CORNER', description: 'Let a member or role corner themselves' },
           { label: '🔓 Allow Rank Bypass', value: 'BYPASS_TIER', description: 'Let someone corner above their normal staff rank' },
         ])
@@ -1561,6 +1562,14 @@ async function handlePanel(interaction) {
         return interaction.editReply(denyFromPickRow(`fops_ov_denyfrom:${targetType}:${pickedId}`,
           `Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}`));
       }
+      if (ruleType === 'EXCLUSIVE_CORNERER') {
+        // Allow-list model, restored as its own explicit option (owner, 2026-08-20: "i don't want anything
+        // to be a one off only able to be made through you" — every rule shape that exists must stay
+        // creatable through the panel, not just left running as data I hand-wrote once).
+        const targetType = isUser ? 'user' : 'role';
+        return interaction.editReply(actorPickRow(`fops_ov_exclusiveactors:${targetType}:${pickedId}`, `fops_ov_exclusiverole:${targetType}:${pickedId}`,
+          `Protect ${isUser ? `<@${pickedId}>` : `<@&${pickedId}>`}`, 'who is allowed to corner them', `fops_ov_exclusiveactortier:${targetType}:${pickedId}`));
+      }
       // ALLOW_SELF_CORNER: target IS the actor, one rule per pick — no multi-actor step needed.
       const entry = overridesManager.addOverride({
         actorType: isUser ? 'user' : 'role',
@@ -1583,6 +1592,18 @@ async function handlePanel(interaction) {
         : interaction.values.map(uid => ({ type: 'user', id: uid }));
       const entry = overridesManager.addOverride({ denied, targetType, targetId, type: 'PROTECT_FROM', note: '', createdBy: interaction.user.id });
       await interaction.editReply({ content: `✅ Protected ${targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`} — blocked from ${overrideActorFmt(entry)}.`, components: [] });
+      return refreshPanel(interaction.client);
+    }
+    if (id.startsWith('fops_ov_exclusiveactors:') || id.startsWith('fops_ov_exclusiverole:') || id.startsWith('fops_ov_exclusiveactortier:')) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const isRole = id.startsWith('fops_ov_exclusiverole:');
+      const isTier = id.startsWith('fops_ov_exclusiveactortier:');
+      const [, targetType, targetId] = id.split(':');
+      const actors = isTier ? [{ type: 'tier', id: interaction.values[0] }]
+        : isRole ? [{ type: 'role', id: interaction.values[0] }]
+        : interaction.values.map(uid => ({ type: 'user', id: uid }));
+      const entry = overridesManager.addOverride({ actors, targetType, targetId, type: 'EXCLUSIVE_CORNERER', note: '', createdBy: interaction.user.id });
+      await interaction.editReply({ content: `✅ Protected ${targetType === 'role' ? `<@&${targetId}>` : `<@${targetId}>`} — only ${overrideActorFmt(entry)} can corner them now.`, components: [] });
       return refreshPanel(interaction.client);
     }
     if (id.startsWith('fops_ov_addactor:')) {
