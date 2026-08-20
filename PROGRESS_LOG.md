@@ -1101,3 +1101,31 @@ clear ephemeral error if it's gone ("deleted?") instead of the generic "Could no
 Confirmed `cornerFromMessage()` has exactly one call site, so no other handler needed the same fix.
 
 `node --check` clean local+remote, both bots restarted clean. Committed `8ff55f6`, pushed.
+
+## 2026-08-20 02:55 — New /corner slowmode argument for jail threads
+
+Owner: "now that we have individual threads we can set the slowmode in the specific thread when
+cornering. so add a slowmode argument."
+
+New `/corner slowmode` option (string, duration format like `30s`/`5m`/`1h`, reuses
+`corner.parseDuration`). Requires `thread:true` — rejected with a clear ephemeral message otherwise,
+since slowmode is a per-CHANNEL Discord setting and without a dedicated jail thread there's no
+per-person channel to throttle (the shared #the-corner channel is everyone's). Clamped to Discord's
+6h (21600s) `rateLimitPerUser` cap.
+
+Threaded `slowmodeSec` through the whole chain: index.js's `/corner` handler → both `cornerMany()`
+(the bulk `also`/`sweep` path) and `corner.corner()` (single-target path) → corner.js's
+`getOrCreateCornerJailThread()`, which now sets `rateLimitPerUser` at thread creation and re-applies
+it via `setRateLimitPerUser()` when an existing jail thread gets reused (so a re-corner doesn't
+silently inherit whatever slowmode a prior corner left set). Caught the same leading-whitespace
+`replace_all` gap from earlier tonight — one of the two `getOrCreateCornerJailThread` call sites had
+different indentation and didn't match, caught by re-grepping before deploying rather than trusting
+the tool's success message.
+
+Also updated the pinned per-command reference (built earlier tonight) to document the new argument
+— verified still well under Discord's message/embed size limits (110/2000 content chars, 623/4096
+embed description chars) before deploying.
+
+`node --check` clean local+remote for all 3 files, both bots restarted clean, `/corner` registered
+fine on both (confirms the new option's description stayed under the 100-char limit). Committed
+`82487c9`, pushed.
