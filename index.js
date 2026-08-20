@@ -4849,6 +4849,12 @@ client.once('ready', async () => {
     // Permission-drift guard: reconcile every channel's ROLE overwrites against the golden manifest
     // snapshot (see permguard.js) — catches the "channel overwrite silently stopped inheriting the
     // category's deny-by-default" class of bug (found 2026-07-30, #mod-announcements) automatically.
+    // Bless any owner-made changes FIRST — same "never revert something you just changed" guarantee
+    // register()'s periodic sweep already gets, but this direct boot-time call was skipping it (owner,
+    // 2026-08-20: "make sure changes that owner makes is excluded from the permguard sweep" — this repo
+    // gets restarted often during active dev sessions, so every restart was a real revert-on-boot window
+    // for a not-yet-blessed owner edit, not just a rare cold-boot case).
+    await permguard.pollOwnerOverwrites(guild).catch(e => console.error('[permguard] boot owner-poll failed:', e.message));
     const permResult = await permguard.sweepPermissions(guild, { notify: false }).catch(e => { console.error('[permguard] boot sweep failed:', e.message); return null; });
     if (permResult) console.log(`[permguard] boot sweep: ${permResult.fixed} overwrite(s) corrected, ${permResult.newMemberOverwrites.length} new member-overwrite(s) flagged, ${permResult.unmanagedChannels} channel(s) unmanaged (created after snapshot)`);
     permguard.register(client);

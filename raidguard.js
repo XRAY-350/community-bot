@@ -14,6 +14,7 @@ const { PermissionsBitField, AuditLogEvent, ActionRowBuilder, ButtonBuilder, But
 const fs = require('fs');
 const { statePath } = require('./statepath');
 const config = require('./config');
+const permguard = require('./permguard');
 
 const FILE = process.env.FUBU_RAIDGUARD_FILE || statePath('raidguard.json');
 function load() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { return { knownWebhookIds: {}, authorizedWebhookIds: {} }; } }
@@ -146,13 +147,30 @@ async function onChannelUpdate(oldChannel, newChannel) {
   try {
     if (!newChannel.permissionOverwrites) return;
     const guild = newChannel.guild;
+    const flagged = [];
     for (const [id, newOw] of newChannel.permissionOverwrites.cache) {
       const oldOw = oldChannel.permissionOverwrites?.cache?.get(id);
       const oldAllow = oldOw ? oldOw.allow.bitfield : 0n;
       const newAllow = newOw.allow.bitfield;
       const newlyGranted = DANGEROUS_PERMS.filter(([, bit]) => (newAllow & bit) && !(oldAllow & bit));
-      if (!newlyGranted.length) continue;
-      const subject = newOw.type === 0 ? (guild.roles.cache.get(id)?.name ? `role **${guild.roles.cache.get(id).name}**` : `role \`${id}\``)
+      if (newlyGranted.length) flagged.push({ id, type: newOw.type, newlyGranted });
+    }
+    if (!flagged.length) return;
+    // A trusted owner/bot-owner's own deliberate edit doesn't need an alarm — same "don't flag your own
+    // legitimate change" fix permguard's boot sweep just got (owner, 2026-08-20: "make sure changes that
+    // owner makes is excluded"). Best-effort audit-log lookup for who actually made this change; if it
+    // fails or nothing matches, fall through and alert anyway — a false positive here is far cheaper than
+    // silently swallowing a real one.
+    try {
+      const page = await guild.fetchAuditLogs({ limit: 5 }).catch(() => null);
+      const matches = page ? [...page.entries.values()]
+        .filter(e => (e.action === AuditLogEvent.ChannelOverwriteCreate || e.action === AuditLogEvent.ChannelOverwriteUpdate) && e.target?.id === newChannel.id)
+        .sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1) : [];
+      const entry = matches[matches.length - 1];
+      if (entry?.executorId && await permguard.isTrustedOwner(guild, entry.executorId)) return;
+    } catch { /* best-effort, fall through to alert */ }
+    for (const { id, type, newlyGranted } of flagged) {
+      const subject = type === 0 ? (guild.roles.cache.get(id)?.name ? `role **${guild.roles.cache.get(id).name}**` : `role \`${id}\``)
         : `<@${id}>`;
       await alertMods(guild, `⚠️ **Dangerous permission granted** in <#${newChannel.id}> to ${subject}: `
         + `**${newlyGranted.map(([n]) => n).join(', ')}**. If this wasn't intentional, remove it and check who has channel-manage access there.`);

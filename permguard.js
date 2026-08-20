@@ -380,4 +380,4 @@ async function applyDecisions(guild, s, userId) {
   return { summary: `Reverted **${reverted}** change(s) to the old baseline, kept **${kept}**, adopted **${adopted}** new channel(s)${ignored ? `, left **${ignored}** unguarded` : ''}${dropped ? `, dropped **${dropped}** deleted channel(s)` : ''}.\n\n📸 New baseline saved: **${snap.channels}** channels, **${snap.overwrites}** overwrite entries.` };
 }
 
-module.exports = { sweepPermissions, resnapshot, loadManifest, blessChannel, register, computeDiff, openReconcile, isReconcileInteraction, handleReconcile, renderReconcile };
+module.exports = { sweepPermissions, resnapshot, loadManifest, blessChannel, register, computeDiff, openReconcile, isReconcileInteraction, handleReconcile, renderReconcile, isTrustedOwner, pollOwnerOverwrites };
