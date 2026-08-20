@@ -437,7 +437,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
         }
       }
     }
-    await stripThreadMemberships(guild, member.id, threadId);
+    stripThreadMemberships(guild, member.id, threadId).catch(() => {});   // fire-and-forget: don't hold up the announcement on a guild-wide thread sweep
     return { ok: true, updated: true, stripped: (existing.roles || []).length, repeatCount, threadId, targetChannelId };
   }
   const me = await guild.members.fetchMe();
