@@ -1101,7 +1101,11 @@ async function awardsReminderIfDue(guild) {
   const ch = await guild.channels.fetch(config.awardsAnnounceChannelId).catch(() => null);
   if (!ch) return;
   const list = cats.map(([, c]) => `**${c.name}**`).join(', ');
-  await ch.send({ content: `🗳️ Weekly awards close **Friday** — vote with \`/awards vote\`! Categories open: ${list}. You can't vote for yourself.`, allowedMentions: { parse: [] } }).catch(() => {});
+  // Reuses the existing Event ping role for the weekly reminder (owner, 2026-08-20: "we can use the
+  // event ping for superlatives" — no dedicated role needed). One ping on the Wednesday call-to-vote;
+  // Friday's results stay unping'd since that's up to 17 separate category messages, not one.
+  const ping = config.eventPingRoleId ? `<@&${config.eventPingRoleId}> ` : '';
+  await ch.send({ content: `${ping}🗳️ Weekly awards close **Friday** — vote with \`/awards vote\`! Categories open: ${list}. You can't vote for yourself.`, allowedMentions: { roles: config.eventPingRoleId ? [config.eventPingRoleId] : [] } }).catch(() => {});
 }
 // Friday: tally each category, swap the role to the winner (ties broken by keeping the current holder if
 // they're tied for first, else the first voted-in), announce, clear votes for next week.
