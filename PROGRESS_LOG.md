@@ -1048,3 +1048,37 @@ access via the channel-level permission the role strip already handles. Private 
 gap) are unaffected, still get the explicit removal exactly as before.
 
 `node --check` clean local+remote, both bots restarted clean. Committed `e30ba30`, pushed.
+
+## 2026-08-20 02:22 — Confirmed nothing can delete these messages; found + fixed 2 more sources
+
+Owner: "can anything delete these messages? or stop them from being made?" Tested live rather than
+guessing: fetched a real "removed from thread" system message (type 2, RecipientRemove) sitting in
+FUBU's LGBTQ forum and attempted to delete it with the bot's own (guild-wide Manage Messages)
+permissions. Discord's API refused outright — `DiscordAPIError[50021]: Cannot execute action on a
+system message` — confirming this isn't a permissions gate, it's a hard platform restriction. Not
+the bot, not a human in the Discord client, nothing can remove one of these once posted.
+
+That makes prevention the only real lever. Audited every other `thread.members.remove()` call site
+in the codebase (grepped all 6). Found two more sources beyond the corner.js one fixed earlier
+tonight, both in modapps.js, both operating on mod-application REVIEW threads — which are forum
+posts (forums structurally cannot contain private threads, so they're always public, same class as
+the Hobbies & Interests / LGBTQ case):
+- `enforceReviewThreadMembers` — fires on `threadMembersUpdate` plus a boot sweep
+  (`sweepReviewThreadMembers`), was stripping "unauthorized" members from review threads even though
+  public-thread visibility is gated entirely by the parent forum channel, not membership.
+- `removeDemotedFromReviewThreads` — fires on a mod/admin demotion, same root issue: swept a
+  demoted ex-mod out of every review thread's membership, generating one permanent litter message
+  per thread for no security benefit (the demotion's role removal already revokes their forum
+  visibility).
+
+Confirmed the other 4 `.members.remove()` sites (corner.js's now-fixed one, index.js's jail-thread
+ejector, modapps.js's `enforceApplicantThreadMembers` and `sealOwnApplication`) all correctly
+operate on genuinely PRIVATE threads (jail threads, applicant threads) where explicit removal is the
+real, necessary fix — left those untouched.
+
+`enforceReviewThreadMembers` now early-returns for any thread that isn't `ChannelType.PrivateThread`
+(mirrors the corner.js pattern). `removeDemotedFromReviewThreads` reduced to a no-op stub — its
+entire body only ever touched review-forum threads, so there was nothing left to keep; kept as a
+function (not deleted) since its one index.js caller still expects a count back.
+
+`node --check` clean local+remote, both bots restarted clean. Committed `d77f123`, pushed.
