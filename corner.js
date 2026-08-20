@@ -3,7 +3,7 @@
 // verify/rules channels), and optionally auto-releases after a duration. Releasing restores the
 // stored roles and removes the corner role.
 
-const { PermissionsBitField } = require('discord.js');
+const { PermissionsBitField, ChannelType } = require('discord.js');
 const config = require('./config');
 const hitsquad = require('./hitsquad');
 const opspanel = require('./opspanel');
@@ -302,17 +302,23 @@ function logCornerHistory(state, memberId, ruleIndex, durationMs = null, at = Da
   return list.filter(e => e.ruleIndex === ruleIndex).length;
 }
 
-// Role-strip removes ViewChannel on every normal channel, but Discord grants PRIVATE thread access to
-// an explicitly-added member independent of whether they can see the parent channel — so a cornered
-// mod who was already a member of, say, a mod-applications review thread keeps reading/posting there
-// even after every role (including Mod) is gone. Sweep every active thread and drop their membership,
-// except the jail thread we may just have put them in.
+// Role-strip removes ViewChannel on every normal channel. For PUBLIC threads (including every forum
+// post — forums can't contain private threads at all) that's already sufficient: access derives from
+// the parent channel's visibility, not thread membership, so leaving membership alone is both harmless
+// AND avoids Discord posting a permanent "removed from thread" system message into what might be a
+// completely casual channel (Hobbies & Interests, LGBTQ, etc.) — owner, 2026-08-20: "i don't want them
+// to be able to access it when cornered but removing them leaves a permanent message in the thread".
+// PRIVATE threads are the real gap Discord grants an explicitly-added member access independent of
+// parent-channel visibility — jail threads and mod-application applicant threads are the ones built
+// that way. Only those need the explicit removal, and only staff/the applicant themselves would ever
+// see that system message there, not a random member of a hobby forum.
 async function stripThreadMemberships(guild, memberId, exceptThreadId) {
   try {
     const active = await guild.channels.fetchActiveThreads().catch(() => null);
     if (!active) return;
     for (const thread of active.threads.values()) {
       if (thread.id === exceptThreadId) continue;
+      if (thread.type !== ChannelType.PrivateThread) continue;
       const tm = await thread.members.fetch(memberId).catch(() => null);
       if (tm) await thread.members.remove(memberId, 'Sent to the corner: thread membership stripped').catch(() => {});
     }
