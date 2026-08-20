@@ -826,3 +826,13 @@ Melanin not touched (this was specifically a FUBU pronouns-section request; Mela
 setup, if any, is untouched).
 
 Confirmed live: pronouns section now lists 6 entries, "Any Pronouns" → 1526939765667008615.
+
+## 2026-08-20 00:08 — Renamed the Any Pronouns role to match
+
+Owner: "Change the role name to any pronouns." Renamed the Discord role itself (1526939765667008615,
+previously "𝗢𝗧𝗛𝗘𝗥𝗦 (ASK)") to "𝗔𝗡𝗬 𝗣𝗥𝗢𝗡𝗢𝗨𝗡𝗦" — matching the bold-sans-unicode capitals convention
+the other pronoun roles already use (𝗦𝗛𝗘/𝗛𝗘𝗥, 𝗛𝗘/𝗛𝗜𝗠, 𝗧𝗛𝗘𝗬/𝗧𝗛𝗘𝗠), same Unicode Mathematical
+Sans-Bold block, offset verified against the existing roles' actual codepoints rather than guessed.
+`#roles` picker label was already "Any Pronouns" from the prior entry — unaffected by a role
+rename, roleselect.js stores its own label text separately from the Discord role name. One-off
+scratch script (`rename_pronoun_role.js`), deleted after use.
