@@ -30,6 +30,34 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-20 22:40 — Overrides "Add Rule" was dead: a select description one char over Discord's cap
+
+Owner reported "Error: Received one or more errors" on the Personal Overrides panel (screenshots from
+both #general-2 and #mod-dashboard, so it wasn't channel-specific). The panel itself rendered all 7
+rules fine — journalctl showed `btn:fops_ov_addstart` as the last thing logged with no error after it,
+which pinned it to the **Add Rule (Pick Member / Role)** button rather than the panel.
+
+Cause: the rule-type picker's `PROTECT_FROM` option had a **101-character description**. Discord caps
+select-option descriptions at 100 and rejects the whole payload with a nested Invalid Form Body error,
+which discord.js surfaces as the useless top-level string "Received one or more errors". One character
+over, and the entire Add-Rule flow was unreachable — nothing could be created through the UI at all.
+
+Same family as the already-recorded `/`-command description gotcha (>100 chars → opaque "Invalid string
+length", which broke ALL command registration) — same limit, different surface, equally uninformative
+error. Shortened the description to 82 chars and left a comment naming the cap so it doesn't creep back.
+
+Swept the class with a throwaway scanner over every `.js` in the repo, checking string literals fed to
+length-capped Discord fields (select option label/description 100, `setLabel` 80, `setDescription` 100,
+`setPlaceholder` 150): **no other over-length literals**. Then — because a check that finds nothing is
+worthless until it's been seen to find something — re-ran the scanner against a file containing the
+original 101-char string and confirmed it flags it. Only then trusted the clean result.
+
+Verified the fix against the real API rather than by eyeballing the length: built the exact picker
+payload and posted it live — Discord **accepted** it. Then re-ran the identical test with only the old
+101-char description swapped back in, and Discord **rejected** it with the exact "Received one or more
+errors" the owner saw. So the cause is confirmed, not inferred. Temp messages deleted, scratch script
+removed from bots-vm, both bots restarted clean.
+
 ## 2026-08-20 22:10 — Mafia: added the Jester (neutral role that wins by getting itself lynched)
 
 Owner: "The people in the server play with a jester role. I'm not sure what that is." Explained it

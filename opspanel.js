@@ -1456,7 +1456,9 @@ async function handlePanel(interaction) {
       const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder().setCustomId('fops_ov_picktype').setPlaceholder('Select Rule Type…').addOptions([
           { label: '⚡ Give Cornering Authority', value: 'GRANT_POWER', description: 'Give someone the power to corner like an Owner, Admin, or Mod' },
-          { label: '🚫 Block Specific Sources', value: 'PROTECT_FROM', description: 'Deny-list: block hit squad / a staff tier / member-corner / people or roles — everyone else still can' },
+          // Keep descriptions under Discord's 100-char cap — at 101 this silently broke the whole
+          // "Add Rule" picker with an opaque "Received one or more errors" (owner-reported 2026-08-20).
+          { label: '🚫 Block Specific Sources', value: 'PROTECT_FROM', description: 'Deny-list: block hit squad, a staff tier, or people/roles — everyone else still can' },
           { label: '🔐 Only These Can Corner Them', value: 'EXCLUSIVE_CORNERER', description: 'Allow-list: ONLY the people/role/tier you pick can corner them — everyone else denied' },
           { label: '🙋 Allow Self-Corner', value: 'ALLOW_SELF_CORNER', description: 'Let a member or role corner themselves' },
           { label: '🔓 Allow Rank Bypass', value: 'BYPASS_TIER', description: 'Let someone corner above their normal staff rank' },
