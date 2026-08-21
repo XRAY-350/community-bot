@@ -30,6 +30,19 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 16:35 — Reverted an anon-corner logging change — the existing fix was already fine
+
+Earlier tonight, changed `logCorner()` so an anon corner skipped the public `#corner-log` entirely,
+posting only to the owner-only log. Owner: "the existng fix was fine. i didn't notice it was fixed."
+The 2026-08-19 masking behavior (actor shown as "🎭 Anonymous Staff" in the public log, real identity
+only in the owner-log mirror) was already what was wanted — the ask to suppress the public entry
+entirely was based on not having noticed the mask was already live, not a real requirements change.
+
+`git revert --no-edit 4e68528`, clean, no conflicts. Confirmed the revert lands exactly back on the
+pre-change state — `git diff cb527cf fb4e103 -- index.js` is empty, byte-identical to the last
+known-good commit, not just "looks similar." `node --check` clean local+remote, both bots restarted
+clean.
+
 ## 2026-08-21 15:55 — Tribe Games were auto-starting; turned off, they're manual only
 
 Owner: "Is something triggering tribe games automatically?" — then "It's supposed to be manual only."
