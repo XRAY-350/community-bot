@@ -30,6 +30,60 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 00:33 — URGENT: mods could read any hidden channel via ManageChannels. Closed + auto-revert added
+
+Owner, urgent: "someone (a mod) supposedly built a logger that allows them access to channels they're
+not in. i need to find out how that's possible and how to block it." Later named the mod: `.newclover`.
+
+**How it was possible — confirmed empirically, not theorised.** The `MODS - ✰` role granted
+**ManageChannels** to 20 mods. In Discord that permission lets you rewrite a channel's permission
+overwrites, and crucially it **survives into channels you cannot see**. Probed a plain mod against
+every channel hidden from them: they retained ManageChannels on **all 13**, including `#owner-log`,
+`#admin-discussion` and `#application-archive`. So any mod could add an overwrite granting themselves
+ViewChannel, read the channel and its history, then delete the overwrite. No "logger" required at all.
+
+Second, separate vector found while looking: **6 third-party bots hold Administrator** (Carl-bot,
+Arcane, greed, Rythm, Jockie Music, Invite Tracker), plus more with server-wide ViewChannel (Mimu,
+Translator Bot, .fmbot, VoiceMaster, Birthday Bot). A bot with Administrator reads every channel, and
+Carl-bot/Arcane ship message-logging features that can pipe content anywhere — and **that leaves no
+audit-log entry whatsoever**, because the bot reads with its own permissions. Their dashboards
+authenticate by ManageGuild, which on FUBU is only wadonkadonk, thrifthunterx_, le_pope_. Flagged but
+NOT changed (owner didn't select it): `greed` has Administrator and was added by `reinsanaxd`, who is
+not currently staff.
+
+**On .newclover specifically — no evidence they used it.** Paged their entire audit-log footprint (298
+entries back to 2026-07-19, covering their whole tenure, not just the default first 100 — the first
+pull only reached 08-11 and would have been a misleading "all clear"). Their only overwrite activity is
+mundane: VC user limits, corner slowmode, an #announcements overwrite, a channel they created. No bots
+added by them. Current member-overwrites on their account are all age-gate DENIES. So: the capability
+was real and open to 20 people; there is no proof this particular mod exploited it. Also worth noting a
+much duller explanation fits "channels they're not in" — a mod can already VIEW ~100 of ~115 channels,
+so a logger that just archives what they can legitimately see needs no exploit at all.
+
+**Blocks applied (owner picked these two):**
+1. **Removed ManageChannels from `MODS - ✰`.** Re-probed a plain mod afterwards: hidden channels 13,
+   still-manageable **0** — closed. Mods keep ManageMessages/ModerateMembers/ManageThreads/KickMembers
+   etc, so real moderation is untouched. *Tradeoff to watch:* mods lose manual VC user-limit and
+   slowmode edits (`.newclover` legitimately used both) — Discord has no way to split channel-settings
+   from channel-permissions, it's one permission. `/corner slowmode` still covers the corner case.
+2. **permguard now auto-reverts self-grants.** Member-level overwrites were previously report-only, on
+   the theory they're deliberate special cases — but a report nobody reads is not a control. Now any
+   NEW member overwrite that **grants ViewChannel** is deleted on sight and alerted to owner-log at
+   🚨/red, including on the boot sweep (notify=false no longer suppresses it). Deny-only member
+   overwrites keep the old report-only behaviour, so the MDNI minor-staff locks still work.
+
+Verified by simulating the actual attack against the real sweep: planted a ViewChannel overwrite for
+.newclover on `#mod-discussion`, ran `sweepPermissions()`, confirmed it was **auto-reverted** and
+reported. Then the **control**: planted a deny-only overwrite for the same member and confirmed it
+**survived** and was not misclassified — proving the new rule targets grants specifically and can't
+clobber legitimate denies. ALL PASS, test overwrite cleaned up.
+
+`node --check` clean local+remote, both bots restarted clean, permguard boot sweep healthy, scratch
+scripts removed from bots-vm.
+
+**Still open (not selected):** bot Administrator reduction, and ManageRoles on `ADMINS - ★` (9 people,
+same class of hole one tier up).
+
 ## 2026-08-20 23:25 — Hit-squad corners can no longer carry a rule or reason (they were polluting corner→strike)
 
 Owner: "make sure hit squad can't use a rule or reason" — then, clarifying the actual stake: "we don't

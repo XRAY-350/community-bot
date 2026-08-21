@@ -70,6 +70,7 @@ async function sweepPermissions(guild, { notify = true } = {}) {
   const roles = await guild.roles.fetch();
   const corrections = [];
   const newMemberOverwrites = [];
+  const selfGrants = [];            // member overwrites that GRANTED ViewChannel — reverted on sight
   let unmanagedChannels = 0;
 
   for (const ch of channels) {
@@ -113,11 +114,24 @@ async function sweepPermissions(guild, { notify = true } = {}) {
       }
     }
 
-    // Member overwrites: only flag brand-new ones the manifest never saw. Never auto-remove.
+    // Member overwrites: brand-new ones the manifest never saw. Historically these were only ever
+    // REPORTED, on the reasoning that a one-off member grant is usually a deliberate special case.
+    // That left a real hole (owner-reported 2026-08-21, "a mod built a logger that gives them access to
+    // channels they're not in"): anyone who could edit overwrites could grant THEMSELVES ViewChannel on
+    // a hidden channel, read it, and delete the overwrite again — and a report nobody reads is not a
+    // control. So a new member overwrite that GRANTS ViewChannel is now auto-reverted immediately and
+    // alerted loudly; everything else about member overwrites keeps the old report-only behaviour,
+    // since those are the deliberate special cases (e.g. MDNI's minor-staff denies, which only ever
+    // DENY and so never trip this).
     for (const [memberId, live] of liveMember) {
-      if (!goldenMember.has(memberId)) {
-        newMemberOverwrites.push({ channel: ch.name, channelId: ch.id, memberId });
-      }
+      if (goldenMember.has(memberId)) continue;
+      const grantsView = live.allow.has(PermissionsBitField.Flags.ViewChannel);
+      if (!grantsView) { newMemberOverwrites.push({ channel: ch.name, channelId: ch.id, memberId }); continue; }
+      let reverted = false;
+      try { await guild.client.rest.delete(Routes.channelPermission(ch.id, memberId)); reverted = true; }
+      catch (err) { console.error(`[permguard] self-grant revert ${ch.name}/${memberId}: ${err.message}`); }
+      selfGrants.push({ channel: ch.name, channelId: ch.id, memberId, reverted });
+      console.error(`[permguard] SELF-GRANT ${reverted ? 'REVERTED' : 'DETECTED (revert FAILED)'}: ${memberId} given ViewChannel on #${ch.name}`);
     }
   }
 
@@ -131,11 +145,21 @@ async function sweepPermissions(guild, { notify = true } = {}) {
       });
     }
   }
+  // Loudest alert permguard emits: someone handed a specific member visibility into a channel the
+  // baseline says they shouldn't see. Sent even when notify=false (the boot sweep) — this is exactly the
+  // case that must never be swallowed.
+  if (selfGrants.length) {
+    const lines = selfGrants.slice(0, 10).map(g => `• **#${g.channel}** — <@${g.memberId}> was granted **View Channel**${g.reverted ? ' — reverted' : ' — ⚠️ REVERT FAILED, fix by hand'}`).join('\n');
+    await ownerlog.log(guild, {
+      emoji: '🚨', title: `Channel self-grant detected (${selfGrants.length}) — access revoked`, color: 0xED4245,
+      detail: `${lines}\n\n_Someone added a per-member override letting them see a channel they aren't meant to. Check the audit log for who did it._`,
+    }).catch(() => {});
+  }
   if (newMemberOverwrites.length && notify) {
     const lines = newMemberOverwrites.slice(0, 10).map(m => `• **#${m.channel}** — new member-specific override for <@${m.memberId}> (not auto-reviewed, check it's intentional)`).join('\n');
     await ownerlog.log(guild, { emoji: '🔍', title: `New per-member channel override(s) detected (${newMemberOverwrites.length})`, color: 0x99AAB5, detail: lines });
   }
-  return { fixed: corrections.length, corrections, newMemberOverwrites, unmanagedChannels };
+  return { fixed: corrections.length, corrections, newMemberOverwrites, selfGrants, unmanagedChannels };
 }
 
 // ---- auto-adopt trusted (owner) permission changes -------------------------------------------------
