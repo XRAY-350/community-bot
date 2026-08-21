@@ -56,7 +56,7 @@ function punishment(member, config) {
   const ids = config.strikeRoleIds || [];
   let strikeUnits = 0;
   for (let i = ids.length - 1; i >= 0; i--) if (roles.has(ids[i])) { strikeUnits = i + 1; break; }
-  const cornered = config.cornerRoleId && roles.has(config.cornerRoleId);
+  const cornered = (config.cornerRoleId && roles.has(config.cornerRoleId)) || (config.adultCornerRoleId && roles.has(config.adultCornerRoleId));
   const watchlisted = watchlist.isWatched(member.id);
   const points = -(strikeUnits * 2) - (watchlisted ? 3 : 0) - (cornered ? 1 : 0);
   const parts = [];

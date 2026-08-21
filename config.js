@@ -61,6 +61,15 @@ const config = {
   cornerRoleId: opt('CORNER_ROLE_ID', '1529459820795789382'),
   cornerChannelId: opt('CORNER_CHANNEL_ID', '1529552895262068846'),
   adultCornerChannelId: opt('ADULT_CORNER_CHANNEL_ID', ''),  // 18+/MDNI adult corner channel
+  // Separate role for Adult Corner (owner, 2026-08-21: "what about an adult corner role? seems more
+  // simple to me" — replaced an earlier per-member-overwrite fix with this). The two corner roles are
+  // MUTUALLY EXCLUSIVE by design: a member holds ONE, never both. This isn't just tidiness — Discord
+  // combines a member's role overwrites by unioning denies from every held role, then applying allows
+  // from every held role ON TOP (allow beats deny across different roles). So if a member held BOTH
+  // corner roles, cornerRoleId's SendMessages:true on the regular channel would silently override
+  // adultCornerRoleId's SendMessages:false there — the whole point of separate roles only holds if
+  // membership in the two is exclusive. corner.js enforces that on every corner()/uncorner() call.
+  adultCornerRoleId: opt('ADULT_CORNER_ROLE_ID', ''),
   cornerLogChannelId: opt('CORNER_LOG_CHANNEL_ID', '1531004789025013982'),  // public read-only audit log
   cornerVcId: opt('CORNER_VC_ID', '1531113277776724189'),  // corner voice channel: public see, cornered+mods join+talk
   // --- Welcome / Goodbye (native replacement for Carl-bot + Mimu, 2026-08-19: their embed-title mention

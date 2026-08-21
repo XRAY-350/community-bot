@@ -50,7 +50,7 @@ function systemRoleIds(config) {
   // bracket, and on top of that MDNI) — never grantable by request, since the bot's own sweep would just
   // strip a manually-approved grant right back off the next time it re-checks the real prerequisites.
   return new Set([...STAFF, ...CHATTER, ...tribeRoles, config.modRoleId, config.verifiedRoleId, config.unverifiedRoleId,
-    config.cornerRoleId, config.adultVerifiedRoleId, config.mdniVerifiedRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
+    config.cornerRoleId, config.adultCornerRoleId, config.adultVerifiedRoleId, config.mdniVerifiedRoleId, ...(config.strikeRoleIds || [])].filter(Boolean));
 }
 // Why a role can't be requested (null = it's fine).
 function whyNotRequestable(role, guild, me, config) {

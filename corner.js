@@ -149,10 +149,29 @@ function overwriteMatches(channel, id, desired) {
 // it. In the corner channel, non-cornered members (@everyone) can ONLY see + react — they can view,
 // read history, and add reactions, but NOT send messages or use threads; the corner role + mods can
 // text. Drift-correcting: only edits overwrites that don't already match (fast when nothing changed).
+// Apply (or clear) ONE role's overwrite on a channel, self-healing style: no-op if it already matches,
+// edits if a specific shape is desired, deletes outright if desired is null (the role should have NO
+// special access here at all — used to retire the old shared-role grant off the adult corner channel).
+async function applyRoleOverwrite(ch, roleId, desired, reason) {
+  if (!roleId) return 0;
+  if (desired === null) {
+    if (!ch.permissionOverwrites.cache.has(roleId)) return 0;
+    await ch.permissionOverwrites.delete(roleId, reason);
+    return 1;
+  }
+  if (overwriteMatches(ch, roleId, desired)) return 0;
+  await ch.permissionOverwrites.edit(roleId, desired, { reason });
+  return 1;
+}
+
 async function ensureCornerPerms(guild) {
   const everyone = guild.roles.everyone.id;
   let fixed = 0;
   const chans = [...(await guild.channels.fetch()).values()].filter(Boolean);
+  // The two corner roles are mutually exclusive (see config.js's comment on adultCornerRoleId) — each
+  // channel below grants full corner access to exactly ONE of them, never both, so Discord's own
+  // permission resolution keeps a member out of the corner channel they aren't actually in, with no
+  // per-member overwrite bookkeeping needed anywhere.
   for (const ch of chans) {
     try {
       if (ch.id === config.cornerChannelId) {
@@ -162,20 +181,16 @@ async function ensureCornerPerms(guild) {
           SendMessages: false, SendMessagesInThreads: false,
           CreatePublicThreads: false, CreatePrivateThreads: false,
         };
-        if (!overwriteMatches(ch, everyone, everyoneDesired)) {
-          await ch.permissionOverwrites.edit(everyone, everyoneDesired, { reason: 'corner self-heal' }); fixed++;
-        }
+        fixed += await applyRoleOverwrite(ch, everyone, everyoneDesired, 'corner self-heal');
         const cornerDesired = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, EmbedLinks: true, AddReactions: true };
-        if (!overwriteMatches(ch, config.cornerRoleId, cornerDesired)) {
-          await ch.permissionOverwrites.edit(config.cornerRoleId, cornerDesired, { reason: 'corner self-heal' }); fixed++;
-        }
-        if (config.modRoleId && !overwriteMatches(ch, config.modRoleId, { ViewChannel: true, SendMessages: true })) {
-          await ch.permissionOverwrites.edit(config.modRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'corner self-heal' }); fixed++;
-        }
+        fixed += await applyRoleOverwrite(ch, config.cornerRoleId, cornerDesired, 'corner self-heal');
+        // adultCornerRoleId gets NO overwrite here on purpose — they fall through to @everyone's grant
+        // above (ViewChannel:true, SendMessages:false), which is exactly "can see the public corner,
+        // can't talk in it". Explicitly retire any leftover grant from before the roles were split.
+        fixed += await applyRoleOverwrite(ch, config.adultCornerRoleId, null, 'corner self-heal: adult-corner role should not speak here');
+        if (config.modRoleId) fixed += await applyRoleOverwrite(ch, config.modRoleId, { ViewChannel: true, SendMessages: true }, 'corner self-heal');
         // Trial mods can speak in the corner too (talk to / moderate cornered members).
-        if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true })) {
-          await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'corner self-heal' }); fixed++;
-        }
+        if (config.trialModRoleId) fixed += await applyRoleOverwrite(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true }, 'corner self-heal');
         // The corner is PUBLIC — everyone (including verified members) can see it. Clear any VERIFIED
         // view-deny that would otherwise hide the corner from the general verified population.
         if (config.verifiedRoleId) {
@@ -187,66 +202,53 @@ async function ensureCornerPerms(guild) {
         continue;
       }
       if (config.adultCornerChannelId && ch.id === config.adultCornerChannelId) {
-        // Adult Corner: @everyone denied view; 16-17 role explicitly denied; corner role + staff allowed
-        const everyoneDesired = { ViewChannel: false };
-        if (!overwriteMatches(ch, everyone, everyoneDesired)) {
-          await ch.permissionOverwrites.edit(everyone, everyoneDesired, { reason: 'adult corner self-heal' }); fixed++;
-        }
+        // Adult Corner: @everyone denied view; 16-17 role explicitly denied; the ADULT corner role +
+        // staff allowed. The regular corner role gets NO overwrite here — retire any leftover grant.
+        fixed += await applyRoleOverwrite(ch, everyone, { ViewChannel: false }, 'adult corner self-heal');
         const minorRoleId = '1516185172213628989';   // ✰ • 16-17 role
         const minorDesired = { ViewChannel: false, SendMessages: false, ReadMessageHistory: false };
-        if (!overwriteMatches(ch, minorRoleId, minorDesired)) {
-          await ch.permissionOverwrites.edit(minorRoleId, minorDesired, { reason: 'adult corner minor deny self-heal' }).catch(() => {}); fixed++;
-        }
+        fixed += await applyRoleOverwrite(ch, minorRoleId, minorDesired, 'adult corner minor deny self-heal').catch(() => 0);
         const cornerDesired = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, EmbedLinks: true, AddReactions: true };
-        if (!overwriteMatches(ch, config.cornerRoleId, cornerDesired)) {
-          await ch.permissionOverwrites.edit(config.cornerRoleId, cornerDesired, { reason: 'adult corner self-heal' }); fixed++;
-        }
-        if (config.modRoleId && !overwriteMatches(ch, config.modRoleId, { ViewChannel: true, SendMessages: true })) {
-          await ch.permissionOverwrites.edit(config.modRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'adult corner self-heal' }); fixed++;
-        }
-        if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true })) {
-          await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, SendMessages: true }, { reason: 'adult corner self-heal' }); fixed++;
-        }
+        fixed += await applyRoleOverwrite(ch, config.adultCornerRoleId, cornerDesired, 'adult corner self-heal');
+        fixed += await applyRoleOverwrite(ch, config.cornerRoleId, null, 'adult corner self-heal: regular-corner role should not speak here');
+        if (config.modRoleId) fixed += await applyRoleOverwrite(ch, config.modRoleId, { ViewChannel: true, SendMessages: true }, 'adult corner self-heal');
+        if (config.trialModRoleId) fixed += await applyRoleOverwrite(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true }, 'adult corner self-heal');
         continue;
       }
       if (ch.id === config.cornerVcId) {
-        // Corner VC: @everyone can SEE but not join; cornered can join + talk (no screen-share/soundboard);
-        // mods get full voice moderation. (This channel sits IN the view category, so it needs its own
-        // case — the generic view-only rule below would grant View but not Connect.)
-        const eDesired = { ViewChannel: true, Connect: false };
-        if (!overwriteMatches(ch, everyone, eDesired)) { await ch.permissionOverwrites.edit(everyone, eDesired, { reason: 'corner self-heal' }); fixed++; }
+        // Corner VC: shared by both corner types (there's no separate adult VC) — @everyone can SEE but
+        // not join; either corner role can join + talk (no screen-share/soundboard); mods get full voice
+        // moderation. (This channel sits IN the view category, so it needs its own case — the generic
+        // view-only rule below would grant View but not Connect.)
+        fixed += await applyRoleOverwrite(ch, everyone, { ViewChannel: true, Connect: false }, 'corner self-heal');
         const rDesired = { ViewChannel: true, Connect: true, Speak: true, SendMessages: true, ReadMessageHistory: true, AddReactions: true, EmbedLinks: true, Stream: false, UseSoundboard: false, UseExternalSounds: false };
-        if (!overwriteMatches(ch, config.cornerRoleId, rDesired)) { await ch.permissionOverwrites.edit(config.cornerRoleId, rDesired, { reason: 'corner self-heal' }); fixed++; }
+        fixed += await applyRoleOverwrite(ch, config.cornerRoleId, rDesired, 'corner self-heal');
+        fixed += await applyRoleOverwrite(ch, config.adultCornerRoleId, rDesired, 'corner self-heal');
         if (config.modRoleId) {
           const mDesired = { ViewChannel: true, Connect: true, Speak: true, MuteMembers: true, MoveMembers: true, DeafenMembers: true };
-          if (!overwriteMatches(ch, config.modRoleId, mDesired)) { await ch.permissionOverwrites.edit(config.modRoleId, mDesired, { reason: 'corner self-heal' }); fixed++; }
+          fixed += await applyRoleOverwrite(ch, config.modRoleId, mDesired, 'corner self-heal');
         }
         // Trial mods can join + speak in the corner VC (participate, not full voice-mod: no mute/move/deafen).
-        if (config.trialModRoleId && !overwriteMatches(ch, config.trialModRoleId, { ViewChannel: true, Connect: true, Speak: true })) {
-          await ch.permissionOverwrites.edit(config.trialModRoleId, { ViewChannel: true, Connect: true, Speak: true }, { reason: 'corner self-heal' }); fixed++;
-        }
+        if (config.trialModRoleId) fixed += await applyRoleOverwrite(ch, config.trialModRoleId, { ViewChannel: true, Connect: true, Speak: true }, 'corner self-heal');
         continue;
       }
       if (ch.id === config.cornerLogChannelId) {
         // The corner-log is PUBLIC read-only: everyone can SEE it (view + history + react) but only
-        // staff/the bot post. Cornered members keep the same view-only access.
+        // staff/the bot post. Both corner roles keep the same view-only access.
         const readOnly = { ViewChannel: true, ReadMessageHistory: true, AddReactions: true, SendMessages: false };
-        if (!overwriteMatches(ch, everyone, readOnly)) {
-          await ch.permissionOverwrites.edit(everyone, readOnly, { reason: 'corner self-heal: log is public' }); fixed++;
-        }
+        fixed += await applyRoleOverwrite(ch, everyone, readOnly, 'corner self-heal: log is public');
         if (config.verifiedRoleId) {
           const vOw = ch.permissionOverwrites.cache.get(config.verifiedRoleId);
           if (vOw && vOw.deny.has(PermissionsBitField.Flags.ViewChannel)) {
             await ch.permissionOverwrites.edit(config.verifiedRoleId, { ViewChannel: null }, { reason: 'corner self-heal: log is public' }); fixed++;
           }
         }
-        if (!overwriteMatches(ch, config.cornerRoleId, readOnly)) {
-          await ch.permissionOverwrites.edit(config.cornerRoleId, readOnly, { reason: 'corner self-heal' }); fixed++;
-        }
+        fixed += await applyRoleOverwrite(ch, config.cornerRoleId, readOnly, 'corner self-heal');
+        fixed += await applyRoleOverwrite(ch, config.adultCornerRoleId, readOnly, 'corner self-heal');
         continue;
       }
-      // Cornered members get view-only on the verify-and-rules category (so they can read the rules).
-      // Everything else stays hidden from them.
+      // Cornered members (either role) get view-only on the verify-and-rules category (so they can read
+      // the rules). Everything else stays hidden from them.
       const viewOnly = ch.id === config.cornerViewCategoryId || ch.parentId === config.cornerViewCategoryId;
       // View-only channels (verify/rules + corner-log): let cornered SEE past messages (ReadMessageHistory
       // — the fix for "can't see the log", since the category denies history by default) and react, but
@@ -254,9 +256,8 @@ async function ensureCornerPerms(guild) {
       const desired = viewOnly
         ? { ViewChannel: true, ReadMessageHistory: true, AddReactions: true, SendMessages: false }
         : { ViewChannel: false };
-      if (!overwriteMatches(ch, config.cornerRoleId, desired)) {
-        await ch.permissionOverwrites.edit(config.cornerRoleId, desired, { reason: 'corner self-heal' }); fixed++;
-      }
+      fixed += await applyRoleOverwrite(ch, config.cornerRoleId, desired, 'corner self-heal');
+      fixed += await applyRoleOverwrite(ch, config.adultCornerRoleId, desired, 'corner self-heal');
     } catch (err) {
       console.error(`[corner] perm self-heal on #${ch.name}: ${err.message}`);
     }
@@ -284,7 +285,7 @@ function rolesToStrip(guild, member) {
   if (config.unverifiedRoleId) keep.add(config.unverifiedRoleId);
   return [...member.roles.cache.values()]
     .filter(r => r.id !== guild.roles.everyone.id && !r.managed
-      && r.id !== config.cornerRoleId && !keep.has(r.id))
+      && r.id !== config.cornerRoleId && r.id !== config.adultCornerRoleId && !keep.has(r.id))
     .map(r => r.id);
 }
 
@@ -386,27 +387,18 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member, slowm
   }
 }
 
-// The regular corner and the Adult Corner share ONE Discord role (config.cornerRoleId) — that role's own
-// channel overwrites grant SendMessages in BOTH channels, so a member cornered in either one could
-// previously also talk in the other (owner, 2026-08-21: "people in the adult corner shouldn't be able to
-// talk in the regular corner"). The two channels are otherwise correctly separated (Adult Corner denies
-// ViewChannel to everyone but the corner role + staff; minors additionally denied outright) — it was only
-// ever the SHARED role's SendMessages grant that leaked across. Applies symmetrically: whichever corner a
-// member is actually IN, they're denied SendMessages (root + threads) in the OTHER one, via a per-member
-// overwrite alongside the shared role's — same mechanism thread imprisonment already uses to lock the
-// root channel while leaving the jail thread open.
-function otherCornerChannelId(targetChannelId) {
-  if (!config.adultCornerChannelId) return null;   // adult corner not configured on this server — nothing to separate
-  return targetChannelId === config.adultCornerChannelId ? config.cornerChannelId : config.adultCornerChannelId;
-}
-async function lockOutOtherCorner(guild, memberId, targetChannelId) {
-  const otherId = otherCornerChannelId(targetChannelId);
-  if (!otherId) return;
-  const ch = await guild.channels.fetch(otherId).catch(() => null);
-  if (!ch) return;
-  await ch.permissionOverwrites.edit(memberId, { SendMessages: false, SendMessagesInThreads: false },
-    { reason: 'Cornered in the other corner — can’t speak here too' }).catch(e => console.error('[corner] cross-corner lockout error:', e.message));
-}
+// The regular corner and the Adult Corner used to share ONE Discord role, whose channel overwrites
+// granted SendMessages in BOTH channels — a member cornered in either one could also talk in the other
+// (owner, 2026-08-21: "people in the adult corner shouldn't be able to talk in the regular corner").
+// First fix was a per-member overwrite locking the "other" channel; owner's follow-up ("what about an
+// adult corner role? seems more simple") replaced that with a SECOND, mutually-exclusive Discord role —
+// ensureCornerPerms above now grants each corner channel to exactly one role, so Discord's own
+// permission resolution keeps the separation with no per-member bookkeeping at all. These two helpers
+// are what keep the roles genuinely exclusive (never both held at once — see config.js's comment on why
+// that specifically matters for how Discord combines multiple roles' overwrites).
+function cornerRoleFor(adult) { return adult ? config.adultCornerRoleId : config.cornerRoleId; }
+function isCorneredRole(roleId) { return roleId === config.cornerRoleId || (!!config.adultCornerRoleId && roleId === config.adultCornerRoleId); }
+function memberIsCornered(member) { return !!member?.roles?.cache && (member.roles.cache.has(config.cornerRoleId) || (!!config.adultCornerRoleId && member.roles.cache.has(config.adultCornerRoleId))); }
 
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
@@ -488,9 +480,12 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     const res = attemptSeverityChange(state, member.id, byId, actorTier, newReleaseAt);
     if (!res.ok) return { ok: false, error: 'gated', needsOverride: res.needsOverride, have: res.have, need: res.need };
     armTimer(guild, member.id, newReleaseAt);   // re-arm on a re-corner / duration change
-    // AWAITED, not fire-and-forget: this overwrite IS the security boundary just closed — a race window
-    // where they could still post in the other corner right after corner() returns would defeat it.
-    await lockOutOtherCorner(guild, member.id, targetChannelId);
+    // A re-corner can flip `adult` from what it was — swap the exclusive role to match (AWAITED: this
+    // role membership IS the security boundary, a race window here would defeat it). No-op the common
+    // case where it's unchanged; role.remove()/add() on a role already absent/present is a harmless no-op.
+    const wantRole = cornerRoleFor(adult), otherRole = cornerRoleFor(!adult);
+    if (otherRole) await member.roles.remove(otherRole, 'Corner: switched corner type').catch(() => {});
+    if (wantRole) await member.roles.add(wantRole, 'Corner: switched corner type').catch(() => {});
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     let threadId = existing.threadId || null;
     if (thread && !threadId) {
@@ -557,7 +552,7 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     // stripped nor fully cornered.
     const stripSet = new Set(strip);
     const keptIds = member.roles.cache.filter(r => r.id !== guild.id && !stripSet.has(r.id)).map(r => r.id);
-    const targetRoles = [...new Set([...keptIds, config.cornerRoleId])];
+    const targetRoles = [...new Set([...keptIds, cornerRoleFor(adult)].filter(Boolean))];
     await member.roles.set(targetRoles, 'Sent to the corner');
   } catch (err) {
     await restoreTimeout();
@@ -571,8 +566,6 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   // talking in a space they're no longer supposed to have any presence in at all.
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
-  // AWAITED — see the comment on the other call site above.
-  await lockOutOtherCorner(guild, member.id, targetChannelId);
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
   stripThreadMemberships(guild, member.id, threadId).catch(() => {});   // fire-and-forget: don't hold up the announcement on a guild-wide thread sweep
   return { ok: true, stripped: strip.length, repeatCount, joke, threadId, targetChannelId };
@@ -591,18 +584,6 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
       const entry = [...list].reverse().find(e => e.at === rec.at);
       if (entry && entry.servedMs == null) { entry.servedMs = servedMs; state.setMeta('cornerLog', all); }
     }
-  }
-  if (rec) {
-    try {
-      // Clear any per-member overwrite this member could be carrying on EITHER corner channel — their own
-      // (thread-imprisonment root lockout, if any) and the other one (the cross-corner talk lockout added
-      // above, if the adult corner is configured). A delete on a channel where they never had an overwrite
-      // is a harmless no-op, so this is safe to run unconditionally rather than tracking which case applied.
-      for (const chId of [config.cornerChannelId, config.adultCornerChannelId].filter(Boolean)) {
-        const ch = await guild.channels.fetch(chId).catch(() => null);
-        if (ch) await ch.permissionOverwrites.delete(userId, 'Released from the corner').catch(() => {});
-      }
-    } catch (e) { console.error('[corner] release overwrite cleanup:', e.message); }
   }
   if (rec && rec.threadId) {
     try {
@@ -633,7 +614,9 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
   };
   const missed = [];   // stored roles we could NOT put back (deleted / above the bot / add failed)
   try {
-    await member.roles.remove(config.cornerRoleId, reason).catch(() => {});
+    for (const r of [config.cornerRoleId, config.adultCornerRoleId].filter(Boolean)) {
+      await member.roles.remove(r, reason).catch(() => {});
+    }
     if (rec && Array.isArray(rec.roles) && rec.roles.length) {
       const me = await guild.members.fetchMe();
       const botTop = me.roles.highest.position;
@@ -692,6 +675,8 @@ function setJoke(state, userId, joke) {
 
 module.exports = { parseDuration, rolesToStrip, corner, uncorner, releaseExpired, ensureCornerPerms,
   logCornerHistory,   // exported for verification: the corner->strike repeat counter
+
+  cornerRoleFor, isCorneredRole, memberIsCornered,
 
   setReleaseHandler, armTimer, clearTimer, rearmAll, setJoke,
   RANK, canBypassCornerTier, OVERRIDE_THRESHOLD, OVERRIDE_WINDOW_MS, LOWER_FLOOR_MS, isLowering, canActSolo, registerOverrideVote, bumpAppliedRank, attemptSeverityChange };

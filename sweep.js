@@ -107,7 +107,7 @@ async function sweep(client, state, ctx) {
       // Cornered members have their roles stripped (incl. Verified) and stored for restore on
       // release. Skip them entirely: don't backfill Unverified onto them (they'd wrongly show as
       // unverified) and don't reap them (a jailed member isn't an unverified one).
-      if (config.cornerRoleId && m.roles.cache.has(config.cornerRoleId)) continue;
+      if ((config.cornerRoleId && m.roles.cache.has(config.cornerRoleId)) || (config.adultCornerRoleId && m.roles.cache.has(config.adultCornerRoleId))) continue;
       if (isConflict(m)) continue;   // dual-role → leave for mod resolution (Pass 5)
       if (isVerified(m)) continue;
       const st = state.member(m.id);

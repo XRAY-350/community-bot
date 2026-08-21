@@ -113,7 +113,7 @@ function systemicRoleIds(guild) {
   const s = new Set([guild.id]);
   const add = (...ids) => ids.forEach(id => { if (id) s.add(id); });
   add(opspanel.ADMIN_ROLE_ID, opspanel.MOD_ROLE_ID, opspanel.OWNER_DISPLAY_ROLE_ID, ...(opspanel.OWNER_ROLE_IDS || []));
-  add(config.verifiedRoleId, config.unverifiedRoleId, config.cornerRoleId, config.trialModRoleId, config.mdniRoleId, config.langMiniModRoleId, config.minorAgeRoleId);
+  add(config.verifiedRoleId, config.unverifiedRoleId, config.cornerRoleId, config.adultCornerRoleId, config.trialModRoleId, config.mdniRoleId, config.langMiniModRoleId, config.minorAgeRoleId);
   (config.adultAgeRoleIds || []).forEach(add);
   (config.strikeRoleIds || []).forEach(add);
   (config.identifyingRoleIds || []).forEach(add);
@@ -447,8 +447,7 @@ async function buildTribe(guild, opts, config) {
   // automatically (owner, 2026-08-03). Sits just below the leader role in the hierarchy.
   const staffRankRole = await guild.roles.create({ name: `${emoji} ${rankLabel(`${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`)}`, colors: roleColors, mentionable: false, reason: `Tribe staff rank: ${opts.name}` })
     .catch(() => guild.roles.create({ name: `${emoji} ${rankLabel(`${opts.shortName || opts.name} ${tribes.DEFAULT_STAFF_RANK_TITLE}`)}`, color: opts.color, mentionable: false, reason: `Tribe staff rank: ${opts.name}` }).catch(() => null));
-  const corner = config.cornerRoleId;
-  const deny = corner ? [{ id: corner, deny: [P.ViewChannel] }] : [];
+  const deny = [config.cornerRoleId, config.adultCornerRoleId].filter(Boolean).map(id => ({ id, deny: [P.ViewChannel] }));
   const leaderAllow = leaderRole ? [{ id: leaderRole.id, allow: [P.ViewChannel] }] : [];
   // Admins (ADMINS-★) and mods (MODS-✰) can see + moderate every tribe's land, not just ones they belong
   // to — oversight, not membership. Trial mods deliberately excluded (owner: "trial mods can stay restricted").
@@ -3188,7 +3187,7 @@ function tribeChannelCount(tribe) { return [tribe.throneId, tribe.hallId, tribe.
 async function applyTribeUnlock(guild, tribe, u) {
   const P = PermissionsBitField.Flags;
   const staffAllow = perms => [opspanel.ADMIN_ROLE_ID, opspanel.MOD_ROLE_ID].filter(Boolean).map(id => ({ id, allow: perms }));
-  const deny = config.cornerRoleId ? [{ id: config.cornerRoleId, deny: [P.ViewChannel] }] : [];
+  const deny = [config.cornerRoleId, config.adultCornerRoleId].filter(Boolean).map(id => ({ id, deny: [P.ViewChannel] }));
   if (u.key === 'text2') {
     const ch = await guild.channels.create({ name: `${tribe.emoji || '🏴'}┆${toSmallCaps('hall-ii')}`, type: ChannelType.GuildText, parent: tribe.categoryId, permissionOverwrites: [
       { id: guild.id, deny: [P.ViewChannel] },
@@ -5333,7 +5332,7 @@ client.on('guildMemberAdd', async (member) => {
     // so a later /uncorner still restores exactly what they had before they were first cornered.
     const cornerRec = state.getCornered(member.id);
     if (cornerRec && (cornerRec.releaseAt == null || cornerRec.releaseAt > Date.now())) {
-      await member.roles.add(config.cornerRoleId, 'Rejoined while still cornered').catch(e => console.error('[corner] rejoin re-apply:', e.message));
+      await member.roles.add(corner.cornerRoleFor(cornerRec.isAdult), 'Rejoined while still cornered').catch(e => console.error('[corner] rejoin re-apply:', e.message));
       await logCorner(member.guild, { emoji: '⛓️', title: 'REJOINED WHILE CORNERED', color: CORNER_RED,
         desc: `<@${member.id}> left the server while cornered and just rejoined — sent straight back to the corner.` });
       console.log(`[corner] ${member.id} rejoined while cornered, re-applied corner role`);
@@ -6581,7 +6580,7 @@ async function enforceTribeMembership(member) {
   // MDNI) and owns their roles until release. Without this check, this guard would see hasRole=false but
   // authorized=true (a corner strip isn't a /tribe banish) and immediately re-add it, undoing the strip on
   // every subsequent guildMemberUpdate — which is exactly what was happening.
-  if (config.cornerRoleId && member.roles.cache.has(config.cornerRoleId)) return;
+  if (corner.memberIsCornered(member)) return;
   for (const t of tribes.all()) {
     const authorized = tribes.isAuthorized(t.key, member.id);
     const hasRole = member.roles.cache.has(t.roleId);

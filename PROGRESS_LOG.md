@@ -28,7 +28,75 @@ itself was explicitly declined ("don't flip yet") and has not happened since.
 **No em dashes in member-facing text** (announcements, panels, embeds). Code comments/commits are
 fine — this rule is about copy real members read.
 
+**Corner roles are two, and must stay mutually exclusive.** `cornerRoleId` (regular) and
+`adultCornerRoleId` (18+) are separate Discord roles as of 2026-08-21 — never assign both to the same
+member. Discord unions DENIES from every held role then applies ALLOWS from every held role on top,
+so allow beats deny across roles: holding both would let the regular role's `SendMessages: true`
+silently override the adult role's `SendMessages: false` on the regular channel. Always assign via
+`corner.cornerRoleFor(adult)`, never `config.cornerRoleId` directly, and check cornered status via
+`corner.memberIsCornered(member)`, not a single-role `.has()` check.
+
 ---
+
+## 2026-08-21 23:02 — Adult Corner redesigned onto its own Discord role (supersedes the per-member-overwrite fix)
+
+Owner, after the per-member-overwrite fix above shipped and was verified working: "what about ana
+dult corner role? seems more simple to me" (typo for "an adult corner role") — asking whether a
+second, dedicated role for Adult Corner would be architecturally cleaner than per-member overwrites.
+Presented the tradeoff via AskUserQuestion (cleaner long-term vs. touching ~7 files keyed off one
+shared role); owner confirmed: "Yes, do the two-role redesign."
+
+**Discovery driving the whole design**: Discord combines a member's channel permissions by unioning
+DENIES from every held role first, then applying ALLOWS from every held role ON TOP — allow beats
+deny *across different roles*. This means the two corner roles (existing `cornerRoleId` and new
+`adultCornerRoleId`) MUST be mutually exclusive — a member can only ever hold one, never both — or
+the regular role's `SendMessages: true` on the regular channel would silently override the adult
+role's `SendMessages: false` there the moment a member held both. Every code path that assigns either
+role (new corner, re-corner, rejoin-while-cornered) now explicitly removes the other role first.
+
+**New role**: created live on FUBU, "The Adult Corner" (id `1540492779304656896`), styled identically
+to "The Corner" (color `#8799ae`, not hoisted, not mentionable, positioned next to it). `config.js`
+gained `adultCornerRoleId` (env `ADULT_CORNER_ROLE_ID`) alongside the existing `adultCornerChannelId`.
+
+**corner.js rewrite**: `ensureCornerPerms()` now grants each corner role full access on its OWN
+channel and explicitly deletes any leftover grant of the OTHER role on that channel (self-healing —
+no per-member overwrite bookkeeping needed anywhere anymore). New helpers `cornerRoleFor(adult)`,
+`isCorneredRole(roleId)`, `memberIsCornered(member)` replace the old single-role checks everywhere.
+`rolesToStrip()` excludes both roles. The new-corner and re-corner branches in `corner()` compute the
+correct role via `cornerRoleFor(adult)` and (on re-corner, since `adult` can flip) explicitly swap
+roles rather than just adding — this swap is `await`ed, not fire-and-forget, since role membership IS
+the security boundary now (learned from the `.catch()`-without-`await` bug caught in the previous
+fix). `uncorner()` removes both roles unconditionally (idempotent) and the now-dead per-member
+overwrite cleanup block (leftover from the superseded fix) was deleted along with it.
+
+**Removed**: `lockOutOtherCorner()` / `otherCornerChannelId()` (the per-member-overwrite mechanism
+from the fix directly above this entry) — fully replaced by role-based separation. Found and fixed a
+stale call site that would have thrown `ReferenceError` at runtime (leftover from an incomplete first
+pass at the rewrite) before it ever shipped.
+
+**7 external call sites updated** to be aware of both roles instead of just `cornerRoleId`:
+`index.js` (systemic-role list, tribe-land channel denies ×2, rejoin-while-cornered role pick, tribe-
+membership guard — now via `corner.memberIsCornered()`), `sweep.js` (skip cornered members in the
+unverified-backfill sweep), `contest.js` (deny both corner roles from contest channels), `modapps.js`
+(punishment-handicap scoring), `rolereq.js` (not-self-requestable role set).
+
+**Live migration turned out to be a non-issue**: checked bots-vm's real `cornered` state before
+deploying — 12 records total, but only 2 correspond to members still actually on the server
+(`chillzistuff`, thread-imprisoned; `jerataay`, plain regular-corner), and neither has `isAdult: true`
+— the one real adult-cornered member from earlier testing (`food_d_luffy`, 1518772698791153674) had
+already been released before this deploy (confirmed via boot-time logs: a `corner_rel` button click at
+22:51, right before this restart). No member needed a role swap.
+
+Deployed all 7 files, `node --check` clean on all of them locally and on bots-vm, restarted both
+bots clean (`[corner] perm self-heal on boot: 141 overwrite(s) corrected` on FUBU — the bulk
+correction from every channel getting the new role's overwrite for the first time; `0` on Melanin,
+which has no Adult Corner configured at all, confirming the feature is fully inert there as intended).
+Verified live post-deploy: `cornerRoleId` now carries zero overwrite on the Adult Corner channel and
+`adultCornerRoleId` zero on the regular channel (clean split, no leftover cross-grants); walked both
+real cornered members' actual `permissionsFor()` results — `jerataay` can send in regular corner, not
+Adult Corner; `chillzistuff` (thread-imprisoned) can't send in either root channel, matching the
+existing thread-lockout design untouched by this change. No violations found. Scratch verification
+scripts removed from bots-vm afterward.
 
 ## 2026-08-21 20:45 — Cross-corner talk leak fixed: adult-cornered members can no longer speak in regular corner (and vice versa)
 

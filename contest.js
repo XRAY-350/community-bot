@@ -39,6 +39,7 @@ const ORGANIZER_CHAT_ID= process.env.FUBU_ORGANIZER_CHAT_ID  || '152998147933182
 const ORGANIZER_ROLE_ID= process.env.FUBU_EVENT_ORGANIZER_ROLE_ID || '1529976148706984110';
 const UNVERIFIED_ROLE_ID = config.unverifiedRoleId || '1500983204293906683';
 const CORNER_ROLE_ID   = config.cornerRoleId || '1529459820795789382';
+const ADULT_CORNER_ROLE_ID = config.adultCornerRoleId || '';
 const MOD_ROLE_ID      = opspanel.MOD_ROLE_ID;
 const OWNER_ROLE_IDS   = opspanel.OWNER_ROLE_IDS;
 
@@ -87,6 +88,7 @@ function channelOverwrites(guild) {
   ];
   if (UNVERIFIED_ROLE_ID) ow.push({ id: UNVERIFIED_ROLE_ID, deny: [P.ViewChannel] });
   if (CORNER_ROLE_ID) ow.push({ id: CORNER_ROLE_ID, deny: [P.ViewChannel, P.SendMessages] });
+  if (ADULT_CORNER_ROLE_ID) ow.push({ id: ADULT_CORNER_ROLE_ID, deny: [P.ViewChannel, P.SendMessages] });
   return ow;
 }
 
