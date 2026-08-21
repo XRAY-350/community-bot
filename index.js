@@ -5,7 +5,7 @@
 // guildMemberUpdate so we can see the Verified role being assigned). The GuildMembers intent
 // must also be enabled in the Discord Developer Portal for this application.
 
-const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType, MessageType, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContextMenuCommandBuilder, ApplicationCommandType, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, AuditLogEvent, ChannelType, MessageType, AttachmentBuilder, Options } = require('discord.js');
 const { statePath } = require('./statepath');
 const { MessageFlags } = require('discord.js');
 const config = require('./config');
@@ -3994,6 +3994,28 @@ const client = new Client({
   // GuildMember partial lets guildMemberUpdate fire even when the old member wasn't cached.
   // Message/Reaction partials let messageReactionAdd fire for the (old, uncached) weekly message.
   partials: [Partials.GuildMember, Partials.Message, Partials.Reaction, Partials.User],
+  // Cache bounds — bots-vm has only ~970MB of RAM shared with melanin-bot, bubble-girl, tailscaled and
+  // cloudflared. With discord.js's defaults (200 messages PER CHANNEL, never expired) this process grew to
+  // ~300MB / 30% of the box in 11.5 hours, pushed the machine 1GB into swap, and drove iowait to 97% — at
+  // which point it could no longer ack a Discord interaction inside the 3s window and users just saw
+  // "the application did not respond" on unrelated commands (owner-reported 2026-08-21, on /uncorner and
+  // the media filter). It was never a bug in those commands; the process was stuck waiting on disk.
+  makeCache: Options.cacheWithLimits({
+    ...Options.DefaultMakeCacheSettings,
+    MessageManager: 60,               // per channel, down from 200
+    ReactionManager: 20,
+    GuildInviteManager: 0,
+    PresenceManager: 0,               // no GuildPresences intent anyway
+  }),
+  // Time-based eviction on top of the per-channel cap, so quiet channels don't hoard stale messages
+  // forever. NOTE the tradeoff: #deletion-log only logs a delete when the message was still cached
+  // (msg.partial → it can't know the content), so a message deleted more than ~3h after it was posted
+  // now goes unlogged. In a busy channel the old 200-message cap already evicted sooner than that.
+  // Members/roles are deliberately NOT swept — role.members and ensureMembers() depend on that cache.
+  sweepers: {
+    messages: { interval: 1800, lifetime: 10800 },   // every 30m, drop messages older than 3h
+    threads: { interval: 3600, lifetime: 14400 },    // every 1h, drop threads untouched for 4h
+  },
 });
 
 // --- Throne message auto-expiry (owner: each transient throne message gets its own 24h timer) -----------

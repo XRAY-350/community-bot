@@ -30,6 +30,42 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 12:45 — "Application did not respond": bots-vm was thrashing, not a command bug
+
+Owner: media-filter add gave "the application did not respond", then `/uncorner` said it didn't respond
+in time. Two unrelated commands failing the same way is a process-level symptom, not a per-command bug,
+so I went to machine health before touching any command code — which was right.
+
+**Diagnosis: the box was in swap thrash.** bots-vm has **969 MB of RAM total**, shared between fubu-bot,
+melanin-bot, bubble-girl, mod-saves, nginx, cloudflared, tailscaled and three SSHFS fleet mounts. State
+at the time: 82 MB free, **1023 MB of swap in use**, `vmstat` showing **97% iowait** with 9-10 processes
+blocked on I/O, and load average 9.18. fubu-bot alone was **300 MB RSS — 30.6% of the entire box**. A
+process paging that hard cannot ack a Discord interaction inside the 3-second window, so Discord shows
+"the application did not respond" on whatever the user happened to click. Nothing was wrong with the
+media filter or /uncorner.
+
+**Immediate relief** — restarted both bots and measured the delta rather than assuming:
+fubu RSS 300 MB → **87 MB**; free 82 → 296 MB; swap 1023 → 339 MB; iowait 97% → 0-1%; blocked procs
+9-10 → 0.
+
+**Root cause of the growth: discord.js's default caches are unbounded in the ways that matter.** 200
+messages PER CHANNEL with no expiry, across 133 channels, plus reactions and threads — it had climbed to
+300 MB in 11.5 hours of uptime and would have done it again. Added explicit bounds to the Client:
+`makeCache` caps MessageManager at 60/channel (from 200), ReactionManager 20, and zeroes the invite and
+presence caches (there's no GuildPresences intent anyway); `sweepers` then evicts messages older than 3h
+every 30 min and threads untouched for 4h every hour.
+
+**Tradeoff named rather than buried:** #deletion-log can only report a deletion when the message was
+still cached (`msg.partial` means the content was never seen), so a message deleted more than ~3h after
+posting now goes unlogged. In a busy channel the old 200-message cap already evicted sooner than that,
+so this mostly costs quiet channels. Members and roles are deliberately NOT swept — `role.members` and
+`ensureMembers()` depend on that cache, and sweeping it would silently break role counts, the mod-manage
+scoping sweep, and the @everyone audits.
+
+Worth flagging for later: this is a ~1 GB box running two full Discord bots plus a third, and the real
+fix is more RAM rather than shaving caches forever. The cache bounds buy headroom; they don't change the
+fact that fubu-bot at a healthy 87 MB is still ~9% of the machine.
+
 ## 2026-08-21 01:10 — Mafia: fixed a total role leak, made the start manual, added a role-reveal phase
 
 Owner, three problems at once: "we can see who is deafened and who is muted so there's actually no
