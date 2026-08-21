@@ -30,6 +30,46 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 01:10 — Mafia: fixed a total role leak, made the start manual, added a role-reveal phase
+
+Owner, three problems at once: "we can see who is deafened and who is muted so there's actually no
+secret. the game starts too fast it should be manual. and the my role should happen before the game
+starts."
+
+**1. The mute/deafen leak — this broke the entire game.** The original voice design left living Mafia
+unmuted at Night so they could talk it out in the shared VC. But Discord renders mute/deafen icons in
+the member list, so "the people who aren't muted" WAS the Mafia roster, in plain sight of everyone
+including the dead. A hidden-role game with a visible role list is not a game. Fixed by making Night
+uniform: **every living player is muted+deafened identically, Mafia included.** Secrecy now lives
+entirely in the Mafia's private thread, which is consequently created in **both** voice and text mode
+(it used to be text-only, which is exactly what forced the leaky unmuted-Mafia design). The VC now only
+ever expresses the phase, never who anyone is. Dead players stay locked in all phases — that leaks
+nothing, deaths are announced publicly anyway.
+
+**2. Manual start.** The lobby no longer auto-starts on a 60s timer; `lobbyDeadline` is null and the
+sweep skips lobby/reveal entirely, so it waits on a human indefinitely. Staff press **Deal Roles**
+(disabled until MIN_PLAYERS is met). Night/Day now also advance on a staff **End Night / End Day**
+button, with the deadline timers demoted to a generous fallback (5 min night, 10 min day, up from
+90s/120s) purely so a game can't hang forever if the host disappears mid-round.
+
+**3. Role reveal before the game.** New `reveal` phase between lobby and Night 1: roles are dealt, the
+Mafia thread opens, the VC locks, and everyone reads their own role via **My Role** — then staff press
+**Begin Night 1**. Nothing resolves during reveal and no timer runs on it.
+
+Lifecycle is now: `lobby → reveal → night → day → …` with both transitions out of lobby/reveal
+host-driven. Removed the now-dead `roleRow` helper and `LOBBY_MS`; `closeLobby` split into
+`dealRoles` (→ reveal) and `beginNight` (→ night). My Role also stays available on the night and day
+panels.
+
+Verified with a harness driving the real per-member lock decision: at reveal and at night every living
+player resolves to locked=true **identically** (mafia and villager indistinguishable — the explicit
+regression guard), at day every living player is free while the dead stay locked, and non-players are
+never touched. Plus a **control** running the OLD logic, which correctly shows mafia≠villager at night —
+proving the test can actually detect the leak rather than passing vacuously. ALL PASS.
+
+`node --check` + `require()` clean local+remote, both bots restarted clean, scratch script removed.
+Still needs a real multi-account playtest; the timer values are first-guess and meant to be tuned.
+
 ## 2026-08-21 00:45 — Gave mods ManageChannels back, scoped so it can never reach a channel they can't see
 
 Owner, after the emergency strip: "give mods manage channels but scoped to channels they have access to.

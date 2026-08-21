@@ -28,7 +28,11 @@ const EPH = MessageFlags.Ephemeral;
 const COLOR = 0x6E1423;
 
 const MIN_PLAYERS = 5, MAX_PLAYERS = 15;
-const LOBBY_MS = 60 * 1000, NIGHT_MS = 90 * 1000, DAY_MS = 120 * 1000;
+// The lobby NEVER auto-starts — the host presses Start when everyone's actually ready (owner,
+// 2026-08-21: "the game starts too fast it should be manual"). Night/Day likewise advance when the host
+// says so; these timers are only a FALLBACK so a game can't hang forever if the host disappears
+// mid-round, which is why they're generous rather than snappy.
+const NIGHT_MS = 5 * 60 * 1000, DAY_MS = 10 * 60 * 1000;
 const SWEEP_MS = 15 * 1000;
 
 const ROLE_LABEL = { mafia: '🔪 Mafia', villager: '🧑‍🌾 Villager', doctor: '💉 Doctor', detective: '🔎 Detective', jester: '🃏 Jester' };
@@ -162,17 +166,25 @@ async function setVoiceState(member, mute, deaf) {
 async function releaseVoice(member) {
   try { if (member?.voice) { await member.voice.setMute(false, 'Mafia mode ended'); await member.voice.setDeaf(false, 'Mafia mode ended'); } } catch { /* best-effort */ }
 }
+// At NIGHT every living player is muted+deafened IDENTICALLY — the Mafia included.
+//
+// The original design left living Mafia unmuted so they could talk it out in the shared VC. That was a
+// total information leak (owner, 2026-08-21: "we can see who is deafened and who is muted so there's
+// actually no secret"): Discord shows mute/deafen icons in the member list, so "the four people who
+// aren't muted" IS the Mafia roster, visible to everyone including the dead. Nothing about a hidden-role
+// game survives that. Secrecy now lives entirely in the Mafia's private thread, which is created in BOTH
+// voice and text mode; the VC only ever expresses the phase, never who anyone is.
+//
+// Dead players stay locked in every phase. That leaks nothing — deaths are announced publicly anyway.
 async function applyVoicePhase(guild, game) {
   if (game.mode !== 'voice') return;
   const vc = guild.channels.cache.get(game.vcId) || await guild.channels.fetch(game.vcId).catch(() => null);
   if (!vc || !vc.members) return;
-  const mafiaAlive = new Set(livingMafiaIds(game));
   const tasks = [];
   for (const m of vc.members.values()) {
     const p = game.players[m.id];
-    const isDead = p && !p.alive;
-    const isLivingMafia = p && p.alive && mafiaAlive.has(m.id);
-    const shouldLock = isDead || (game.phase === 'night' && !isLivingMafia && !!p);
+    if (!p) continue;                                   // spectators/non-players are left alone entirely
+    const shouldLock = !p.alive || game.phase === 'night' || game.phase === 'reveal';
     tasks.push(setVoiceState(m, shouldLock, shouldLock));
   }
   await Promise.allSettled(tasks);
@@ -189,19 +201,31 @@ async function releaseAllVoices(guild, game) {
 }
 
 // ---- panels --------------------------------------------------------------------------------------------
-const roleRow = vcId => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId(`mafia_role:${vcId}`).setEmoji('🎭').setLabel('My Role').setStyle(ButtonStyle.Secondary));
-
 function lobbyPanel(game) {
   const names = game.joinOrder.map(id => `<@${id}>`).join('\n') || '_nobody yet_';
+  const enough = game.joinOrder.length >= MIN_PLAYERS;
   const e = new EmbedBuilder().setColor(COLOR).setTitle('🔪 Mafia — Lobby')
     .setDescription(`Starting in <#${game.vcId}>. Tap **Join** to play.\n\n**Roles:** ${describeSettings()}\n\n**Players (${game.joinOrder.length}/${MAX_PLAYERS}):**\n${names}`)
-    .setFooter({ text: `Need at least ${MIN_PLAYERS} to start · auto-starts <t:${Math.floor(game.lobbyDeadline / 1000)}:R>` });
+    .setFooter({ text: enough ? 'Staff press Deal Roles when everyone is in — nothing starts on a timer.' : `Need at least ${MIN_PLAYERS} to start.` });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`mafia_join:${game.vcId}`).setEmoji('✅').setLabel('Join / Leave').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`mafia_startnow:${game.vcId}`).setEmoji('⏩').setLabel('Start Now').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`mafia_startnow:${game.vcId}`).setEmoji('🎴').setLabel('Deal Roles').setStyle(ButtonStyle.Primary).setDisabled(!enough),
     new ButtonBuilder().setCustomId(`mafia_settings:${game.vcId}`).setEmoji('⚙️').setLabel('Roles').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`mafia_end:${game.vcId}`).setEmoji('⏹️').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
+  return { embeds: [e], components: [row] };
+}
+
+// Roles are dealt and everyone reads their own BEFORE the first Night (owner, 2026-08-21: "the my role
+// should happen before the game starts"). Nothing is resolved in this phase and no timer runs on it —
+// the host opens Night 1 once people have actually looked.
+function revealPanel(game) {
+  const e = new EmbedBuilder().setColor(COLOR).setTitle('🎴 Roles are dealt')
+    .setDescription(`Everyone press **My Role** below and read it before the game begins. Nobody else sees your answer.\n\n**Playing (${game.joinOrder.length}):** ${game.joinOrder.map(id => `<@${id}>`).join(', ')}`)
+    .setFooter({ text: 'Staff press Begin Night 1 when everyone has read their role.' });
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`mafia_role:${game.vcId}`).setEmoji('🎭').setLabel('My Role').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`mafia_beginnight:${game.vcId}`).setEmoji('🌙').setLabel('Begin Night 1').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`mafia_end:${game.vcId}`).setEmoji('⏹️').setLabel('End Game').setStyle(ButtonStyle.Secondary));
   return { embeds: [e], components: [row] };
 }
 
@@ -239,16 +263,17 @@ function settingsPanel(vcId) {
 function nightPanel(game) {
   const alive = livingIds(game);
   const e = new EmbedBuilder().setColor(0x1B1F3B).setTitle(`🌙 Night ${game.dayNum} falls`)
-    .setDescription(game.mode === 'voice'
-      ? `Mafia can still talk in <#${game.vcId}> — everyone else is muted and can't hear a thing. If you have a Night action, use the buttons below.`
-      : `Mafia, coordinate in your private thread. If you have a Night action, use the buttons below.`)
+    .setDescription(`Everyone is silenced${game.mode === 'voice' ? ` in <#${game.vcId}>` : ''}. Mafia, agree in your private thread. If you have a Night action, use the buttons below.`)
     .addFields({ name: 'Living', value: String(alive.length), inline: true })
-    .setFooter({ text: `Resolves <t:${Math.floor(game.phaseDeadline / 1000)}:R>` });
+    .setFooter({ text: `Staff end the night when everyone's acted · auto-resolves <t:${Math.floor(game.phaseDeadline / 1000)}:R>` });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`mafia_act:${game.vcId}:kill`).setEmoji('🔪').setLabel('Mafia: Kill').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`mafia_act:${game.vcId}:save`).setEmoji('💉').setLabel('Doctor: Save').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`mafia_act:${game.vcId}:investigate`).setEmoji('🔎').setLabel('Detective: Investigate').setStyle(ButtonStyle.Primary));
-  return { embeds: [e], components: [row, roleRow(game.vcId)] };
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`mafia_role:${game.vcId}`).setEmoji('🎭').setLabel('My Role').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`mafia_advance:${game.vcId}`).setEmoji('☀️').setLabel('End Night (staff)').setStyle(ButtonStyle.Secondary));
+  return { embeds: [e], components: [row, row2] };
 }
 
 function dayPanel(game, resultLine) {
@@ -260,11 +285,14 @@ function dayPanel(game, resultLine) {
   const e = new EmbedBuilder().setColor(0xE8B923).setTitle(`☀️ Day ${game.dayNum}`)
     .setDescription(`${resultLine}\n\nDiscuss, then vote to eliminate someone.${voteLines ? `\n\n**Votes:**\n${voteLines}` : ''}`)
     .addFields({ name: 'Living', value: String(alive.length), inline: true })
-    .setFooter({ text: `Vote closes <t:${Math.floor(game.phaseDeadline / 1000)}:R>` });
+    .setFooter({ text: `Staff end the day when the vote's settled · auto-closes <t:${Math.floor(game.phaseDeadline / 1000)}:R>` });
   const sel = new StringSelectMenuBuilder().setCustomId(`mafia_vote:${game.vcId}`).setPlaceholder('🗳️ Vote to eliminate…')
     .addOptions(alive.slice(0, 25).map(id => ({ label: game.players[id]?.name || id, value: id })));
   const row = new ActionRowBuilder().addComponents(sel);
-  return { embeds: [e], components: [row, roleRow(game.vcId)] };
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`mafia_role:${game.vcId}`).setEmoji('🎭').setLabel('My Role').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`mafia_advance:${game.vcId}`).setEmoji('🌙').setLabel('End Day (staff)').setStyle(ButtonStyle.Secondary));
+  return { embeds: [e], components: [row, row2] };
 }
 
 function revealLines(game) {
@@ -322,14 +350,16 @@ async function startLobby(client, guild, vc, hostId) {
   const g = update(vc.id, {
     vcId: vc.id, guildId: guild.id, textChannelId: vc.id, hostId,
     mafiaThreadId: null, phase: 'lobby', dayNum: 0, mode: null,
-    lobbyDeadline: Date.now() + LOBBY_MS, phaseDeadline: null,
+    lobbyDeadline: null, phaseDeadline: null,   // lobby never expires; staff open the game by hand
     players: {}, joinOrder: [], night: { mafiaVotes: {}, doctorPick: null, detectivePick: null, resolved: false },
     day: { votes: {}, resolved: false }, deathLog: [], mutedIds: [], panelMessageId: null,
   });
   await postPanel(client, g, lobbyPanel(g));
 }
 
-async function closeLobby(client, guild, game) {
+// LOBBY -> REVEAL. Deals roles and opens the Mafia thread, but resolves nothing: players read their own
+// role first, and the host opens Night 1 separately.
+async function dealRoles(client, guild, game) {
   if (game.joinOrder.length < MIN_PLAYERS) {
     await announce(client, game, `🔪 Not enough players joined (need ${MIN_PLAYERS}, got ${game.joinOrder.length}) — Mafia game cancelled.`);
     return endGame(client, guild, game, null);
@@ -344,23 +374,34 @@ async function closeLobby(client, guild, game) {
   const vc = guild.channels.cache.get(game.vcId) || await guild.channels.fetch(game.vcId).catch(() => null);
   const connected = new Set(vc?.members ? [...vc.members.keys()] : []);
   const mode = game.joinOrder.every(id => connected.has(id)) ? 'voice' : 'text';
-  update(game.vcId, { players, mode, phase: 'night', dayNum: 1, phaseDeadline: Date.now() + NIGHT_MS });
-  const fresh = get(game.vcId);
+  update(game.vcId, { players, mode, phase: 'reveal', dayNum: 0, phaseDeadline: null });
+  let fresh = get(game.vcId);
 
-  if (mode === 'text') {
-    const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
-    if (ch) {
-      const thread = await ch.threads.create({ name: 'Mafia', type: ChannelType.PrivateThread, invitable: false, reason: 'Mafia mode: private team chat' }).catch(() => null);
-      if (thread) {
-        for (const id of livingMafiaIds(fresh)) await thread.members.add(id).catch(() => {});
-        await thread.send({ content: `🔪 ${livingMafiaIds(fresh).map(id => `<@${id}>`).join(', ')} — this is your private line. Talk it over, then submit your kill on the Night Actions panel in the main channel.`, allowedMentions: { users: livingMafiaIds(fresh) } }).catch(() => {});
-        update(game.vcId, { mafiaThreadId: thread.id });
-      }
+  // The Mafia thread now exists in BOTH modes — with the VC muted uniformly at Night (see
+  // applyVoicePhase), this thread is the ONLY place the Mafia can coordinate without revealing
+  // themselves. It used to be text-mode only, which is what forced the leaky unmuted-Mafia design.
+  const ch = await client.channels.fetch(game.textChannelId).catch(() => null);
+  if (ch) {
+    const thread = await ch.threads.create({ name: 'Mafia', type: ChannelType.PrivateThread, invitable: false, reason: 'Mafia mode: private team chat' }).catch(e => { console.error('[mafia] thread:', e.message); return null; });
+    if (thread) {
+      const mafiaIds = livingMafiaIds(fresh);
+      for (const id of mafiaIds) await thread.members.add(id).catch(() => {});
+      await thread.send({ content: `🔪 ${mafiaIds.map(id => `<@${id}>`).join(', ')} — this is your private line, and the only place you can talk safely. Agree on a target, then each of you submit it on the Night Actions panel.`, allowedMentions: { users: mafiaIds } }).catch(() => {});
+      update(game.vcId, { mafiaThreadId: thread.id });
+      fresh = get(game.vcId);
     }
-  } else {
-    await applyVoicePhase(guild, fresh);
   }
-  await announce(client, fresh, `🔪 Roles are assigned (**${fresh.mode}** mode). Check yours with **My Role** on the panel below.`);
+  await applyVoicePhase(guild, fresh);   // lock the VC for the reveal so nobody talks over it
+  await announce(client, fresh, `🎴 Roles dealt (**${fresh.mode}** mode). Everyone read yours before we begin.`);
+  await postPanel(client, fresh, revealPanel(fresh));
+}
+
+// REVEAL -> NIGHT 1, on the host's say-so.
+async function beginNight(client, guild, game) {
+  update(game.vcId, { phase: 'night', dayNum: 1, phaseDeadline: Date.now() + NIGHT_MS,
+    night: { mafiaVotes: {}, doctorPick: null, detectivePick: null, resolved: false } });
+  const fresh = get(game.vcId);
+  await applyVoicePhase(guild, fresh);
   await postPanel(client, fresh, nightPanel(fresh));
 }
 
@@ -492,10 +533,26 @@ async function handleInteraction(interaction) {
     return interaction.update(lobbyPanel(get(vcId))).catch(() => {});
   }
   if (action === 'mafia_startnow') {
-    if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can start early.', flags: EPH });
-    if (game.phase !== 'lobby') return interaction.reply({ content: 'Already started.', flags: EPH });
+    if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can deal roles.', flags: EPH });
+    if (game.phase !== 'lobby') return interaction.reply({ content: 'Roles are already dealt.', flags: EPH });
+    if (game.joinOrder.length < MIN_PLAYERS) return interaction.reply({ content: `Need at least ${MIN_PLAYERS} players — ${game.joinOrder.length} so far.`, flags: EPH });
     await interaction.deferUpdate().catch(() => {});
-    return closeLobby(interaction.client, guild, game);
+    return dealRoles(interaction.client, guild, game);
+  }
+  if (action === 'mafia_beginnight') {
+    if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can begin the night.', flags: EPH });
+    if (game.phase !== 'reveal') return interaction.reply({ content: 'The game is already under way.', flags: EPH });
+    await interaction.deferUpdate().catch(() => {});
+    return beginNight(interaction.client, guild, game);
+  }
+  // Host-driven phase advance. The deadline timers still exist as a fallback, but a host should never
+  // have to wait one out (owner: the game ran too fast on rails — pacing belongs to a person).
+  if (action === 'mafia_advance') {
+    if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can advance the phase.', flags: EPH });
+    await interaction.deferUpdate().catch(() => {});
+    if (game.phase === 'night') return resolveNight(interaction.client, guild, game);
+    if (game.phase === 'day') return resolveDay(interaction.client, guild, game);
+    return;
   }
   if (action === 'mafia_settings') {
     if (!opspanel.meets(opspanel.tierOf(interaction), 'mod')) return interaction.reply({ content: 'Only staff can change the role setup.', flags: EPH });
@@ -577,7 +634,8 @@ async function sweepExpiredPhases(client) {
   for (const game of allActive()) {
     const guild = client.guilds.cache.get(game.guildId) || await client.guilds.fetch(game.guildId).catch(() => null);
     if (!guild) { clear(game.vcId); continue; }
-    if (game.phase === 'lobby') { if (Date.now() >= game.lobbyDeadline) await closeLobby(client, guild, game).catch(e => console.error('[mafia] closeLobby:', e.message)); continue; }
+    // lobby and reveal have NO deadline by design — they wait on the host, forever if need be.
+    if (game.phase === 'lobby' || game.phase === 'reveal') continue;
     if (game.phase === 'night') { if (Date.now() >= game.phaseDeadline) await resolveNight(client, guild, game).catch(e => console.error('[mafia] resolveNight:', e.message)); continue; }
     if (game.phase === 'day') { if (Date.now() >= game.phaseDeadline) await resolveDay(client, guild, game).catch(e => console.error('[mafia] resolveDay:', e.message)); continue; }
   }
@@ -600,7 +658,7 @@ async function bootResume(client) {
       if (guild) await releaseAllVoices(guild, g).catch(() => {});
       clear(g.vcId); dropped++; continue;
     }
-    if (g.mode === 'voice' && (g.phase === 'night' || g.phase === 'day')) await applyVoicePhase(guild, g).catch(e => console.error('[mafia] resume voice:', e.message));
+    if (g.mode === 'voice' && ['reveal', 'night', 'day'].includes(g.phase)) await applyVoicePhase(guild, g).catch(e => console.error('[mafia] resume voice:', e.message));
     resumed++;
   }
   if (resumed || dropped) console.log(`[mafia] boot: resumed ${resumed} game(s)${dropped ? `, dropped ${dropped} (VC gone)` : ''}`);
