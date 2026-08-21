@@ -30,6 +30,34 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 20:15 — Admins now act solo on ANY corner release/lowering, no 3-admin vote ever
+
+Owner: "i thought i asked for the ⅓ limit to be removed from admins?" Took a couple of rounds to
+place — nothing in the repo is literally called a "⅓ limit"; confirmed via AskUserQuestion it means
+`corner.js`'s `OVERRIDE_THRESHOLD.admin = 3` (3 admins acting together within 5 minutes to
+lower/release a corner below the tier that applied it).
+
+The 2026-08-14 fix (`289027c`) already carved out the common case — admins act solo specifically on
+an **owner**-applied corner. What it left standing: because `canActSolo`'s general rule is "your rank
+outranks-or-matches whoever applied it," an admin (rank 2) already could act solo against mod (1) or
+admin (2) applied corners on that rule alone — the 3-admin vote was ONLY ever reachable for admins
+against a **botowner**-applied corner, the one case the 2026-08-14 carve-out didn't cover. That's the
+literal "⅓ limit" still active for admins, just a narrower edge than it looked.
+
+Removed it entirely: `canActSolo` now returns true unconditionally for `actorTier === 'admin'`,
+replacing the owner-applied-specific check (now redundant — the broader admin case subsumes it).
+Dropped the now-dead `admin: 3` entry from `OVERRIDE_THRESHOLD` and updated its comment; every
+`res.need`-driven message in index.js/opspanel.js is dynamic off that object, so no hardcoded "3
+admins" string needed hunting down elsewhere. Mod tier's threshold (3, unchanged) is untouched.
+
+Verified against the real functions: admin acts solo on mod-, admin-, owner-, AND
+**botowner-applied** corners (the last is the case that mattered — confirmed false→true), a control
+proving mod tier is still correctly blocked solo on a higher-applied corner (regression guard), and a
+full `attemptSeverityChange` call releasing a botowner-applied corner in one shot with
+`needsOverride: false`. ALL PASS.
+
+`node --check` clean local+remote, both bots restarted clean, scratch script removed from bots-vm.
+
 ## 2026-08-21 16:35 — Reverted an anon-corner logging change — the existing fix was already fine
 
 Earlier tonight, changed `logCorner()` so an anon corner skipped the public `#corner-log` entirely,

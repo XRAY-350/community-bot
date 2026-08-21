@@ -20,10 +20,11 @@ function canBypassCornerTier(actorId, targetId, actorTier = null) {
   return overridesManager.canBypassTier(actorId, targetId, actorTier);
 }
 // Multi-person override: a group of SAME-TIER staff can force a release/lowering through even below the
-// tier that applied it — 1 owner/botowner solo, 3 admins together, or 3 mods together, acting within a
-// 5-minute window of each other. Trial mods (and anyone with no recognized tier) have NO override path —
-// no number of them unlocks it; provisional, revisit once there's a sense of how often this comes up.
-const OVERRIDE_THRESHOLD = { botowner: 1, owner: 1, admin: 3, mod: 3 };
+// tier that applied it — 1 owner/botowner solo, or 3 mods together, acting within a 5-minute window of
+// each other. Admins act solo unconditionally (see canActSolo) — no threshold entry needed for them.
+// Trial mods (and anyone with no recognized tier) have NO override path — no number of them unlocks it;
+// provisional, revisit once there's a sense of how often this comes up.
+const OVERRIDE_THRESHOLD = { botowner: 1, owner: 1, mod: 3 };
 const OVERRIDE_WINDOW_MS = 5 * 60 * 1000;
 // Setting a defined release time sooner than this counts as a "lowering" (gated), not a neutral
 // "defining" of an indefinite corner (ungated) — closes the obvious bypass (define it 10 seconds out to
@@ -41,14 +42,15 @@ function isLowering(rec, newReleaseAt) {
 }
 
 // Can this actor act SOLO on a lowering/release, no override needed? Either they're the ORIGINAL
-// corner-er (always gets a solo override on their own case, any tier), their current tier outranks — or
-// matches — whatever tier last touched this corner's severity (rec.appliedByRank), OR they're an admin
-// acting on an owner-applied corner specifically (owner, 2026-08-14: admins no longer need a 3-admin
-// override vote to act on an owner's corner — botowner-applied corners are unaffected, still gated).
+// corner-er (always gets a solo override on their own case, any tier), they're an ADMIN (owner,
+// 2026-08-14: admins no longer need a 3-admin override vote on an owner's corner; owner, 2026-08-21:
+// "i thought i asked for the ⅓ limit to be removed from admins" — that first pass only covered
+// owner-applied corners, this removes the threshold for admins entirely, including botowner-applied
+// ones), or their current tier outranks/matches whatever tier last touched this corner's severity.
 function canActSolo(rec, actorId, actorTier) {
   if (rec.joke) return true;   // joke corner — release/lowering gate is waived entirely, any tier can act solo
   if (rec.by === actorId) return true;
-  if (actorTier === 'admin' && (rec.appliedByRank || 0) === RANK.owner) return true;
+  if (actorTier === 'admin') return true;
   return (RANK[actorTier] || 0) >= (rec.appliedByRank || 0);
 }
 
