@@ -30,6 +30,31 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 15:55 — Tribe Games were auto-starting; turned off, they're manual only
+
+Owner: "Is something triggering tribe games automatically?" — then "It's supposed to be manual only."
+
+Yes, and it was mine-adjacent history, not a mystery: `maybeAutoStartTribeGame()` runs on a 15-minute
+interval and fires a random catalog game every 4-8h during peak hours. It was added 2026-08-17 off the
+note "they just weren't running automatically", with `TRIBE_GAMES_AUTO_START` defaulting to **true** and
+no env override on either bot — so it was on everywhere by default.
+
+Confirmed from the logs rather than inferred: it had auto-started **3 times in 24h** — amongus_classic
+(08-20 19:55), amongus_hs (08-21 08:02), other (08-21 15:15). The game live at the time of asking was
+started by the bot's own user id with `entrants: {}` — a lobby nobody joined, which is the whole problem:
+a Tribe Game needs leaders to set a rep AND staff to report the result afterwards, so an auto-started one
+just posts a lobby into every tribe Hall and dies.
+
+Flipped the `config.js` default to **false** so it's manual-only by design on both bots and any future
+deploy, rather than papering over it with an env var on one host. Staff still launch games from
+`/tribe panel`; the env var can re-enable it if that's ever wanted. **Left `arenaAutoStart` alone** —
+Arena is bot-scored end to end and genuinely works unattended, so the same reasoning doesn't apply.
+
+Also cleared the dead auto-started lobby. Did that with the bots STOPPED, because `tribegames.js` keeps
+its state in a module-level `_cache` and a live process would have overwritten the edit on its next save
+(the statepath caching trap that's bitten this repo before). Backed the file up first, then verified
+after restart: `tribeGamesAutoStart = false` on FUBU and Melanin, `isActive() = false`.
+
 ## 2026-08-21 12:45 — "Application did not respond": bots-vm was thrashing, not a command bug
 
 Owner: media-filter add gave "the application did not respond", then `/uncorner` said it didn't respond

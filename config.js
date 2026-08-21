@@ -183,7 +183,11 @@ const config = {
   // Arena auto-start: the bot randomly launches arena challenges through the active day (up to the daily
   // cap, respecting the cooldown) so activity happens without a leader manually starting one.
   arenaAutoStart: bool('ARENA_AUTO_START', true),
-  tribeGamesAutoStart: bool('TRIBE_GAMES_AUTO_START', true),
+  // Tribe Games are MANUAL ONLY (owner, 2026-08-21: "it's supposed to be manual only"). Unlike Arena,
+  // a Tribe Game needs tribe leaders to set a rep AND staff to report the result afterwards, so an
+  // auto-started one just posts a lobby nobody fills — it had fired 3 times in 24h with zero entrants
+  // before this was turned off. Staff launch them from /tribe panel. Flip the env var to re-enable.
+  tribeGamesAutoStart: bool('TRIBE_GAMES_AUTO_START', false),
   // Active window is in this timezone (majority of the server is Central Europe, so default there, not US).
   arenaAutoTimezone: opt('ARENA_AUTO_TIMEZONE', 'Europe/Berlin'),
   arenaAutoStartHour: num('ARENA_AUTO_START_HOUR', 10),  // PEAK window: earliest local hour (full events, all types)
