@@ -167,6 +167,12 @@ async function onChannelUpdate(oldChannel, newChannel) {
         .filter(e => (e.action === AuditLogEvent.ChannelOverwriteCreate || e.action === AuditLogEvent.ChannelOverwriteUpdate) && e.target?.id === newChannel.id)
         .sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1) : [];
       const entry = matches[matches.length - 1];
+      // The BOT'S OWN edits are never a raid signal — they're this codebase's own deliberate permission
+      // work (corner self-heal, tribe builds, permguard corrections, the scoped mod-manage sweep). Left
+      // unexempted it alarms on itself: the mod-manage rollout alone fired 90 "Dangerous permission
+      // granted" alerts into #mod-announcements in one pass (owner had to have them purged, 2026-08-21),
+      // and an alert channel that cries wolf 90 times is worse than no alert channel at all.
+      if (entry?.executorId === guild.client.user.id) return;
       if (entry?.executorId && await permguard.isTrustedOwner(guild, entry.executorId)) return;
     } catch { /* best-effort, fall through to alert */ }
     for (const { id, type, newlyGranted } of flagged) {

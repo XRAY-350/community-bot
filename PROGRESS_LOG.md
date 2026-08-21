@@ -30,6 +30,68 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 00:45 — Gave mods ManageChannels back, scoped so it can never reach a channel they can't see
+
+Owner, after the emergency strip: "give mods manage channels but scoped to channels they have access to.
+no mod gets it on [hidden ones]" — then "i was thinking moreso per category."
+
+**Per-category alone does not work, and I verified that rather than assuming it.** Discord does NOT
+propagate a category's permission overwrites to children that have their own overwrites; only fully
+inheriting (synced) channels pick them up. Test: granted ManageChannels to the MODS role on a category,
+then checked a child with its own overwrites — the child stayed at `ManageChannels=false` while the
+category itself flipped to true. So a category-only grant would have looked applied while silently
+giving mods nothing on most channels.
+
+**The first version of that test was worthless and I caught it.** It picked `s_bemorechill` as the
+probe, who also holds `ADMINS - ★` (which still grants ManageChannels at guild level), so the BEFORE
+state was already `true` — the check literally could not fail, and "AFTER: true" would have "proven"
+propagation that wasn't happening. Re-ran with a mod who genuinely lacked the permission and got a
+clean false→false. Worth remembering: on this server, filtering probes by `!Administrator` is not
+enough, `ADMINS - ★` carries these perms without it.
+
+Resolution: keep the owner's per-CATEGORY mental model for deciding, but WRITE the overwrites
+per-channel where Discord actually needs them. New `syncModManageChannels(guild)` in index.js grants
+ManageChannels to the MODS role on a channel only when **every holder of the MODS role can already view
+it**. That strict invariant is deliberate — anything weaker ("the MODS role alone can see it", or "some
+mod can") would hand ManageChannels to mods who can't view the channel, which is exactly the hole just
+closed. It revokes as well as grants, so a channel that later becomes hidden loses it on the next pass
+(fail-closed), and it runs at boot + hourly so newly-created channels are covered without anyone
+remembering to.
+
+Dry-ran it first, grouped by category: **109 granted, 24 withheld**. Withheld is precisely the right
+set — `#owner-log`, `#admin-discussion`, `#admin-announcements`, `#application-archive`, the whole
+🔞 ADULTS category, `#adult-corner`, the per-language VCs (only that language's mini-mods see them),
+and one private tribe's channels. Invariant check confirmed nothing slated for a grant is invisible to
+any mod.
+
+**Race found on the first live run and fixed.** The initial version blessed all touched channels into
+permguard's baseline in one batch at the END. A full pass is 100+ sequential rate-limited edits taking
+minutes, so permguard's own sweep landed mid-pass and reverted every grant not yet blessed — only
+**36 of 109** survived. Changed to bless immediately after each edit, closing the window. After the
+fix the second pass granted the missing 23 and the live count settled at exactly **109/133**, matching
+the dry run.
+
+**Verified after rollout:** a plain mod (g4zz44) sees 110 channels and can manage 109 of them, and has
+ManageChannels on **none** of the 23 hidden from them. Ran the real permguard sweep afterwards and the
+count held at 109→109 with 0 corrections, proving the grants are genuinely blessed rather than
+surviving on luck between sweeps.
+
+**One real gap remains, and it is NOT from this scoping.** 6 members can still manage channels they
+can't see: s_bemorechill, kayena07, fylesared, beautyinelijah, knylvr, brew.d. Checked each rather than
+assuming — **all 6 hold `ADMINS - ★`, which still grants ManageChannels at GUILD level**, exactly the
+un-actioned item flagged in the previous entry. The mod scoping itself has no leak. Closing this needs
+the same treatment applied to ADMINS-★ (strip guild-level, grant back scoped), which the owner hasn't
+asked for yet.
+
+**Side effect: raidguard alarmed on the bot itself.** Granting on 109 channels fired **90** "Dangerous
+permission granted" alerts into #mod-announcements in a single pass; owner asked for them to be
+deleted. Purged all 90 (dry-run first to confirm the match set and date range 08-14 → 08-21, then
+deleted, then re-scanned to confirm 0 remain). Fixed the cause rather than just the symptom:
+raidguard's `onChannelUpdate` already exempts a trusted owner's own edits but had no exemption for
+**the bot's own** edits — so every deliberate permission action this codebase takes (corner self-heal,
+tribe builds, permguard corrections, this sweep) alarmed on itself. Added `entry.executorId ===
+guild.client.user.id → return`. An alert channel that cries wolf 90 times is worse than none.
+
 ## 2026-08-21 00:33 — URGENT: mods could read any hidden channel via ManageChannels. Closed + auto-revert added
 
 Owner, urgent: "someone (a mod) supposedly built a logger that allows them access to channels they're

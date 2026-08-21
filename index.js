@@ -4335,6 +4335,49 @@ async function healPermissions() {
   if (conflictChannel && conflictChannel.id !== verifyChannel.id) await ensurePosting(conflictChannel, false);
 }
 
+// Mods get channel management ONLY where they can already see (owner, 2026-08-21). ManageChannels was
+// removed from the MODS role guild-wide because it survives into channels a mod CAN'T see and lets them
+// rewrite the overwrites to let themselves in. This grants it back per-channel, scoped so it can never
+// reach a channel they aren't already in.
+//
+// Decided at CATEGORY granularity (owner's preference) but WRITTEN per-channel, because Discord does not
+// propagate a category's overwrites to children that have their own — verified live: granting
+// ManageChannels on a category left a child with its own overwrites still at ManageChannels=false. So a
+// category-only grant would silently fail to give mods anything on most channels.
+//
+// The invariant is deliberately strict: grant only where EVERY holder of the MODS role can view the
+// channel. Anything weaker (e.g. "the MODS role alone can see it", or "some mod can") would hand
+// ManageChannels to mods who can't view that channel — which is the exact hole being closed. Runs on a
+// schedule so newly-created channels are covered automatically, and it revokes as well as grants, so a
+// channel that later becomes hidden loses the grant on the next pass (fail-closed).
+const MOD_MANAGE_REASON = 'Mods manage channels only where every mod can already see them (security scoping)';
+async function syncModManageChannels(guild) {
+  const modRole = guild.roles.cache.get(opspanel.MOD_ROLE_ID) || await guild.roles.fetch(opspanel.MOD_ROLE_ID).catch(() => null);
+  if (!modRole) return { granted: 0, revoked: 0, skipped: true };
+  await ensureMembers(guild);
+  const mods = [...modRole.members.values()].filter(m => !m.user.bot);
+  if (!mods.length) return { granted: 0, revoked: 0, skipped: true };   // never blanket-grant off an empty roster
+  const chans = [...(await guild.channels.fetch()).values()].filter(Boolean);
+  let granted = 0, revoked = 0;
+  const touched = [];
+  for (const ch of chans) {
+    if (!ch.permissionOverwrites) continue;
+    const allCanSee = mods.every(m => ch.permissionsFor(m)?.has(PermissionsBitField.Flags.ViewChannel));
+    const has = !!ch.permissionOverwrites.cache.get(modRole.id)?.allow.has(PermissionsBitField.Flags.ManageChannels);
+    try {
+      let changed = false;
+      if (allCanSee && !has) { await ch.permissionOverwrites.edit(modRole.id, { ManageChannels: true }, { reason: MOD_MANAGE_REASON }); granted++; changed = true; }
+      else if (!allCanSee && has) { await ch.permissionOverwrites.edit(modRole.id, { ManageChannels: null }, { reason: `${MOD_MANAGE_REASON} — revoked, not all mods can see this channel` }); revoked++; changed = true; }
+      // Bless IMMEDIATELY, not in a batch at the end: a full pass is 100+ sequential rate-limited edits
+      // and takes minutes, so a permguard sweep landing mid-pass would revert every grant not yet
+      // blessed (observed on the first live run — only 36 of 109 survived).
+      if (changed) { touched.push(ch.id); await permguard.blessChannel(guild, ch.id).catch(() => {}); }
+    } catch (e) { console.error(`[mod-manage] ${ch.name}: ${e.message}`); }
+  }
+  if (granted || revoked) console.log(`[mod-manage] scoped ManageChannels: +${granted} granted, -${revoked} revoked (${mods.length} mods, ${chans.length} channels)`);
+  return { granted, revoked };
+}
+
 // Keep the mod-dashboard channel tidy (weekly): delete non-pinned messages; the pinned panel stays.
 // Discord's bulkDelete only removes messages < 14 days old; older ones are left (rare for weekly).
 async function cleanDashboard(guild) {
@@ -5116,6 +5159,10 @@ client.once('ready', async () => {
   if (dguild) await awardsReminderIfDue(dguild).catch(e => console.error(`[awards] boot reminder check: ${e.message}`));
   if (dguild) await awardsResultsIfDue(dguild).catch(e => console.error(`[awards] boot results check: ${e.message}`));
   if (dguild) await ensureAwardsVotePanel(dguild).catch(e => console.error(`[awards] panel boot: ${e.message}`));
+  // Re-scope mods' channel management on boot (picks up any channel created while the bot was down),
+  // then hourly. Not awaited into the boot critical path — it can touch 100+ channels on a first run.
+  if (dguild) syncModManageChannels(dguild).catch(e => console.error(`[mod-manage] boot: ${e.message}`));
+  setInterval(() => client.guilds.fetch(config.guildId).then(g => syncModManageChannels(g)).catch(() => {}), 60 * 60 * 1000);
   setInterval(() => client.guilds.fetch(config.guildId).then(async g => { await awardsReminderIfDue(g); await awardsResultsIfDue(g); }).catch(() => {}), 3600000);
   if (dguild) await reconcileTribeRoles(dguild).catch(e => console.error(`[tribe reconcile] boot sweep: ${e.message}`));
   if (dguild) await backfillDefaultPaths(dguild).catch(e => console.error(`[tribe-paths] boot backfill: ${e.message}`));
