@@ -30,31 +30,6 @@ fine — this rule is about copy real members read.
 
 ---
 
-## 2026-08-21 16:20 — Anon corners no longer post to the public corner-log at all
-
-Owner: "the anon corner should only report to the owner log not to the corner log."
-
-There was already a 2026-08-19 fix in this exact direction — mask the actor as "🎭 Anonymous Staff" in
-the public corner-log while the owner-log mirror kept the real identity — but that only masked WHO,
-it still posted THAT a corner happened and to whom, publicly. The owner's ask goes further: an
-anonymous corner shouldn't leave a public trace at all, only the private owner-log record.
-
-Changed `logCorner()` (index.js) to skip the public `#corner-log` send entirely when `entry.anon` is
-true, falling straight through to the unconditional `ownerlog.log()` mirror — so anon corners now
-exist in exactly one place, the owner-only log, with their real actor. Threaded `anon`/`isAnon`
-through to the `entry` object at both call sites that actually carry the flag: the bulk `cornerMany`
-path and the single `/corner` handler. No other `logCorner` call site needed a change — checked all
-26 sites; only these two ever pass an anon flag, since `anon` is an option unique to `/corner` and its
-bulk `also=`/`sweep=` variant, not release/uncorner or any of the filter/strike logging paths.
-
-Verified against the real logic (reproduced inline, since `logCorner` isn't exported from the index.js
-monolith) on live channels: an anon entry left `#corner-log`'s latest message completely unchanged
-(confirmed by id, not just "no error"), while a non-anon control entry still posted there as before —
-proving the branch is actually gated on `anon`, not a global regression. Both test entries in
-owner-log (harmless, labelled TEST) were then deleted for cleanliness.
-
-`node --check` clean local+remote, both bots restarted clean, scratch scripts removed from bots-vm.
-
 ## 2026-08-21 15:55 — Tribe Games were auto-starting; turned off, they're manual only
 
 Owner: "Is something triggering tribe games automatically?" — then "It's supposed to be manual only."
