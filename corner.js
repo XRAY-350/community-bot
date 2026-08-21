@@ -386,6 +386,28 @@ async function getOrCreateCornerJailThread(guild, targetChannelId, member, slowm
   }
 }
 
+// The regular corner and the Adult Corner share ONE Discord role (config.cornerRoleId) — that role's own
+// channel overwrites grant SendMessages in BOTH channels, so a member cornered in either one could
+// previously also talk in the other (owner, 2026-08-21: "people in the adult corner shouldn't be able to
+// talk in the regular corner"). The two channels are otherwise correctly separated (Adult Corner denies
+// ViewChannel to everyone but the corner role + staff; minors additionally denied outright) — it was only
+// ever the SHARED role's SendMessages grant that leaked across. Applies symmetrically: whichever corner a
+// member is actually IN, they're denied SendMessages (root + threads) in the OTHER one, via a per-member
+// overwrite alongside the shared role's — same mechanism thread imprisonment already uses to lock the
+// root channel while leaving the jail thread open.
+function otherCornerChannelId(targetChannelId) {
+  if (!config.adultCornerChannelId) return null;   // adult corner not configured on this server — nothing to separate
+  return targetChannelId === config.adultCornerChannelId ? config.cornerChannelId : config.adultCornerChannelId;
+}
+async function lockOutOtherCorner(guild, memberId, targetChannelId) {
+  const otherId = otherCornerChannelId(targetChannelId);
+  if (!otherId) return;
+  const ch = await guild.channels.fetch(otherId).catch(() => null);
+  if (!ch) return;
+  await ch.permissionOverwrites.edit(memberId, { SendMessages: false, SendMessagesInThreads: false },
+    { reason: 'Cornered in the other corner — can’t speak here too' }).catch(e => console.error('[corner] cross-corner lockout error:', e.message));
+}
+
 // Send a member to the corner. durationMs null = indefinite. ruleIndex (optional, from /corner's rule
 // dropdown) drives the repeat-history count above. Returns {ok, ..., repeatCount}.
 async function corner(guild, member, durationMs = null, state, byId = null, ruleIndex = null, actorTier = null, opts = {}) {
@@ -466,6 +488,9 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
     const res = attemptSeverityChange(state, member.id, byId, actorTier, newReleaseAt);
     if (!res.ok) return { ok: false, error: 'gated', needsOverride: res.needsOverride, have: res.have, need: res.need };
     armTimer(guild, member.id, newReleaseAt);   // re-arm on a re-corner / duration change
+    // AWAITED, not fire-and-forget: this overwrite IS the security boundary just closed — a race window
+    // where they could still post in the other corner right after corner() returns would defeat it.
+    await lockOutOtherCorner(guild, member.id, targetChannelId);
     const repeatCount = logCornerHistory(state, member.id, ruleIndex, durationMs, now);
     let threadId = existing.threadId || null;
     if (thread && !threadId) {
@@ -546,6 +571,8 @@ async function corner(guild, member, durationMs = null, state, byId = null, rule
   // talking in a space they're no longer supposed to have any presence in at all.
   if (member.voice?.channelId) await member.voice.disconnect('Sent to the corner').catch(e => console.error('[corner] vc disconnect:', e.message));
   armTimer(guild, member.id, durationMs ? now + durationMs : null);   // precise auto-release at exactly the set time
+  // AWAITED — see the comment on the other call site above.
+  await lockOutOtherCorner(guild, member.id, targetChannelId);
   const repeatCount = logCornerHistory(state, member.id, ruleIndex);
   stripThreadMemberships(guild, member.id, threadId).catch(() => {});   // fire-and-forget: don't hold up the announcement on a guild-wide thread sweep
   return { ok: true, stripped: strip.length, repeatCount, joke, threadId, targetChannelId };
@@ -565,13 +592,20 @@ async function uncorner(guild, userId, state, reason = 'Released from the corner
       if (entry && entry.servedMs == null) { entry.servedMs = servedMs; state.setMeta('cornerLog', all); }
     }
   }
+  if (rec) {
+    try {
+      // Clear any per-member overwrite this member could be carrying on EITHER corner channel — their own
+      // (thread-imprisonment root lockout, if any) and the other one (the cross-corner talk lockout added
+      // above, if the adult corner is configured). A delete on a channel where they never had an overwrite
+      // is a harmless no-op, so this is safe to run unconditionally rather than tracking which case applied.
+      for (const chId of [config.cornerChannelId, config.adultCornerChannelId].filter(Boolean)) {
+        const ch = await guild.channels.fetch(chId).catch(() => null);
+        if (ch) await ch.permissionOverwrites.delete(userId, 'Released from the corner').catch(() => {});
+      }
+    } catch (e) { console.error('[corner] release overwrite cleanup:', e.message); }
+  }
   if (rec && rec.threadId) {
     try {
-      const targetChId = rec.channelId || (rec.isAdult && config.adultCornerChannelId ? config.adultCornerChannelId : config.cornerChannelId);
-      const ch = await guild.channels.fetch(targetChId).catch(() => null);
-      if (ch) {
-        await ch.permissionOverwrites.delete(userId, 'Released from corner thread imprisonment').catch(() => {});
-      }
       const th = await guild.channels.fetch(rec.threadId).catch(() => null);
       if (th && th.isThread()) {
         // Drop any slowmode the corner set (owner, 2026-08-20: "the slowmode on a corner should turn off

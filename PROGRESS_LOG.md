@@ -30,6 +30,48 @@ fine — this rule is about copy real members read.
 
 ---
 
+## 2026-08-21 20:45 — Cross-corner talk leak fixed: adult-cornered members can no longer speak in regular corner (and vice versa)
+
+Owner: "people in the adult corner shouldn't be able to talk in the regular corner."
+
+Root cause: the regular corner and the Adult Corner are two different CHANNELS but share ONE Discord
+role (`config.cornerRoleId`) — whoever gets cornered, anywhere, gets that same role, and the role's
+own channel overwrite grants `SendMessages: true` in BOTH channels. The two channels are otherwise
+correctly separated (Adult Corner denies ViewChannel to everyone but the corner role + staff, minors
+additionally hard-blocked) — it was only ever the shared role's send grant that leaked across.
+
+Fixed the class, not just the reported instance: applies symmetrically — a regular-cornered member is
+now equally denied SendMessages in the Adult Corner, which is arguably the more sensitive direction
+and wasn't mentioned but is the same bug. New `lockOutOtherCorner()` in corner.js adds a per-member
+`SendMessages: false, SendMessagesInThreads: false` overwrite on whichever corner channel the member
+is NOT in — the same mechanism thread imprisonment already uses to lock the root channel while leaving
+their jail thread open, just aimed at the other corner instead. Wired into both the new-corner and
+re-corner paths in `corner()`. `uncorner()`'s cleanup was broadened from "delete the per-member
+overwrite on their own channel, only if they were thread-imprisoned" to "delete on BOTH corner
+channels, unconditionally" — a delete on a channel where no overwrite exists is a harmless no-op, so
+this covers the new cross-corner lockout without needing to track which case applied.
+
+**Caught and fixed a bug in my own first pass before it shipped**: the lockout call was written
+fire-and-forget (`.catch(() => {})`, not awaited) — but this overwrite IS the security boundary being
+closed, so a race window between `corner()` returning and the lockout landing would have partially
+defeated the point. My own live test caught it (the check ran before the async call had finished) —
+changed both call sites to `await` it directly.
+
+Verified against the real `corner()`/`uncorner()` on the live server, both directions, using genuine
+non-staff volunteers (excluding minors, who are already blocked from Adult Corner by an earlier
+guard) and the bot's real state file so nothing diverged from production: adult-cornered → denied
+SendMessages in regular corner, not denied in their own; regular-cornered → denied in Adult Corner,
+not denied in their own; released → overwrite cleared from both channels in both directions. ALL PASS
+on all 3 checks, twice.
+
+Confirmed this can't collide with existing self-heal sweeps: `ensureCornerPerms` only ever edits
+ROLE-level overwrites (cornerRoleId/modRoleId/etc.), never touches arbitrary member overwrites; and
+permguard's newer self-grant auto-revert only fires on a member overwrite that ALLOWS ViewChannel —
+this is a DENY on SendMessages, a different permission entirely, so it's untouched by either.
+
+`node --check` clean local+remote, both bots restarted clean, scratch test scripts removed from
+bots-vm, confirmed gone.
+
 ## 2026-08-21 20:15 — Admins now act solo on ANY corner release/lowering, no 3-admin vote ever
 
 Owner: "i thought i asked for the ⅓ limit to be removed from admins?" Took a couple of rounds to
