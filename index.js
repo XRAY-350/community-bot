@@ -3488,24 +3488,33 @@ async function announceCorner(guild, memberId, durationMs, actorId, reasonText, 
 // allowedMentions parse:[] renders the @names without pinging anyone on every line.
 async function logCorner(guild, entry) {
   try {
-    const ch = await guild.channels.fetch(config.cornerLogChannelId).catch(() => null);
-    if (ch) {
-      // Back-compat: a bare string still posts as a plain line.
-      if (typeof entry === 'string') await ch.send({ content: entry, allowedMentions: { parse: [] } });
-      else {
-        const { emoji, title, color, desc, pingRoleIds } = entry;
-        // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone —
-        // embed mentions only resolve from the viewer's cache and show "@unknown-user" in this restricted log.
-        // Content-only: the ## header + emoji carry the signal; a color-only embed would render as an empty box.
-        // pingRoleIds is opt-in per call (e.g. a jail-thread notify) — everything else stays a silent @mention,
-        // same as before, since this channel logs every corner and shouldn't ping staff on each one.
-        await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: pingRoleIds?.length ? { parse: [], roles: pingRoleIds } : { parse: [] } });
+    // Anonymous corners don't post to the PUBLIC corner-log at all anymore (owner, 2026-08-21: "the anon
+    // corner should only report to the owner log not to the corner log") — tightened from the 2026-08-19
+    // fix, which still posted a masked "🎭 Anonymous Staff" entry there. Masking wasn't enough: the point
+    // of anon is that staff acted without it being attributable, and a public log entry — even an
+    // unattributed one — still tells every member watching #corner-log that a corner just happened and
+    // who received it, which a truly anonymous action shouldn't broadcast. The real actor still goes to
+    // the owner-only log below, unconditionally.
+    const skipPublicLog = typeof entry !== 'string' && entry.anon;
+    if (!skipPublicLog) {
+      const ch = await guild.channels.fetch(config.cornerLogChannelId).catch(() => null);
+      if (ch) {
+        // Back-compat: a bare string still posts as a plain line.
+        if (typeof entry === 'string') await ch.send({ content: entry, allowedMentions: { parse: [] } });
+        else {
+          const { emoji, title, color, desc, pingRoleIds } = entry;
+          // desc's @mentions live in CONTENT (not the embed) so they resolve to clickable @names for everyone —
+          // embed mentions only resolve from the viewer's cache and show "@unknown-user" in this restricted log.
+          // Content-only: the ## header + emoji carry the signal; a color-only embed would render as an empty box.
+          // pingRoleIds is opt-in per call (e.g. a jail-thread notify) — everything else stays a silent @mention,
+          // same as before, since this channel logs every corner and shouldn't ping staff on each one.
+          await ch.send({ content: `## ${emoji} ${title}\n${desc}`, allowedMentions: pingRoleIds?.length ? { parse: [], roles: pingRoleIds } : { parse: [] } });
+        }
       }
     }
-    // Mirror to the owner-only log too — covers every corner/uncorner call site in one place. Anonymous
-    // cornering (owner, 2026-08-19: identity should show ONLY in the owner log, never the public corner
-    // log — it showed in both before this) — ownerDesc, when a caller supplies it, carries the REAL actor
-    // for this mirror only; entry.desc (posted to the public corner log above) stays masked.
+    // Mirror to the owner-only log too — covers every corner/uncorner call site in one place, and is the
+    // ONLY place an anon corner is ever recorded. ownerDesc, when a caller supplies it, carries the REAL
+    // actor for this mirror; entry.desc (what would have gone to the public corner log) is unused for anon.
     if (typeof entry !== 'string') await ownerlog.log(guild, { emoji: entry.emoji, title: entry.title, detail: entry.ownerDesc || entry.desc, color: entry.color });
   } catch (e) { console.error(`[corner-log] ${e.message}`); }
 }
@@ -3808,7 +3817,7 @@ async function cornerMany(guild, actorId, actorRank, members, durationMs, { rule
     await logCorner(guild, { emoji: '⛓️', title: `SENT TO THE CORNER (×${done.length})`, color: CORNER_RED,
       desc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** ${anon ? '🎭 Anonymous Staff' : `<@${actorId}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}${threadLines}`,
       ownerDesc: `${done.map(id => `<@${id}>`).join(', ')}: cornered ${bulkWhenPhrase}.\n**By:** <@${actorId}>${anon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
-      pingRoleIds: threadIds.length && config.modRoleId ? [config.modRoleId] : undefined });
+      anon, pingRoleIds: threadIds.length && config.modRoleId ? [config.modRoleId] : undefined });
   }
   // No per-target ephemeral prompt for bulk — could be dozens of targets — but a joke default (staff-on-
   // staff, allowNamedStaff only) is still surfaced as a plain text note so it isn't silently invisible.
@@ -11123,7 +11132,7 @@ client.on('interactionCreate', async (interaction) => {
       await logCorner(guild, { emoji: '⛓️', title: 'SENT TO THE CORNER', color: CORNER_RED,
         desc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** ${isAnon ? '🎭 Anonymous Staff' : `<@${interaction.user.id}>`}${reasonText ? `\n**Reason:** ${reasonText}` : ''}${threadNotifyLine(r.threadId)}`,
         ownerDesc: `<@${user.id}> was cornered ${cornerWhenPhrase}.\n**By:** <@${interaction.user.id}>${isAnon ? ' _(anon corner)_' : ''}${reasonText ? `\n**Reason:** ${reasonText}` : ''}`,
-        pingRoleIds: r.threadId && config.modRoleId ? [config.modRoleId] : undefined });
+        anon: isAnon, pingRoleIds: r.threadId && config.modRoleId ? [config.modRoleId] : undefined });
       // Joke check-in (staff corners only — not the member-corner or hit-squad paths, where a joke flag on
       // the uncorner tier lock is meaningless): staff-on-staff defaulted to joke (waiving the release tier
       // lock) and asks if it's actually serious; staff-on-a-regular-member defaulted to real and asks the
