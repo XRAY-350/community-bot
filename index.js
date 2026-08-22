@@ -4108,10 +4108,34 @@ async function reconcileTribeRoles(guild) {
       const holdsLeaderGen = (t.leaderRoleId && m.roles.cache.has(t.leaderRoleId)) || (t.staffRankRoleId && m.roles.cache.has(t.staffRankRoleId));
       return holdsRank || holdsLeaderGen;
     });
+    // Ledger-only backfill: a rank/leader holder who ALREADY carries the correct base role too, but whose
+    // membership ledger entry is still missing (the same root gap as the restore path below, just without
+    // ever hitting the "missing role" branch, so it silently never got backfilled — found live 2026-08-22
+    // right after fixing the restore path: one member had roleId held + isAuthorized false, sitting there
+    // as a live time bomb since the NEXT unrelated role change would trigger enforceTribeMembership's guard
+    // to see hasRole=true/authorized=false and wrongly strip a role they're legitimately supposed to hold).
+    // No conflict risk here unlike the restore branch below: each tribe in rankOf is backfilled on its own
+    // terms (role already held = no ambiguous "which tribe gets the role" choice to make).
+    for (const t of rankOf) {
+      if (m.roles.cache.has(t.roleId) && !tribes.isAuthorized(t.key, m.id)) tribes.setMembership(t.key, m.id, true);
+    }
     const missing = rankOf.filter(t => !m.roles.cache.has(t.roleId));
     if (!missing.length) continue;
     if (rankOf.length >= 2) { conflicts++; continue; }   // leftover rank roles from 2 tribes — needs a human call, don't guess a tribe
-    try { await m.roles.add(missing[0].roleId, 'Tribe reconcile: restore lost base membership role (held a rank role)'); restored++; }
+    try {
+      await m.roles.add(missing[0].roleId, 'Tribe reconcile: restore lost base membership role (held a rank role)');
+      // MUST also register them in tribes.js's own membership ledger, not just fix the Discord role — the
+      // ledger (tribes.isAuthorized) is what enforceTribeMembership's guard treats as ground truth. Skipping
+      // this left a fight: reconcile adds the role every sweep because the ledger still says "not a member",
+      // then the guard immediately strips it right back off as an unsanctioned manual add, over and over
+      // (found live 2026-08-22 — the audit log showed FUBU Bot re-adding then re-removing the SAME role for
+      // the SAME member on every 10-minute cycle: "restore lost base membership role" followed seconds later
+      // by "manual add reverted — join via #roles / request / invite"). A rank/leader role holder IS supposed
+      // to count as a member (see the comment above this function), so setMembership(true) here is the
+      // correct fourth "sanctioned flow", not a workaround.
+      tribes.setMembership(missing[0].key, m.id, true);
+      restored++;
+    }
     catch (e) { failed++; console.error(`[tribe reconcile] restore ${missing[0].key} base for ${m.id} failed: ${e.message}`); }
   }
   if (restored || failed || conflicts) console.log(`[tribe reconcile] restored ${restored} base role(s)${failed ? `, ${failed} FAILED` : ''}${conflicts ? `, ${conflicts} multi-tribe conflict(s) skipped (need manual resolution)` : ''}`);
@@ -7338,7 +7362,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (interaction.isStringSelectMenu?.() && interaction.customId === 'modapp_accept_grant') {
     // Same gate as accept/deny/undo (index.js ~7909) — picking what to grant is as consequential as accepting.
-    const approvers = modapps.loadConfig().approvers || [];
+    const approvers = modapps.getApprovers();
     if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can accept mod applications.', flags: MessageFlags.Ephemeral });
     try { return await modapps.handleButton(interaction, config); }
@@ -9029,7 +9053,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       if (id.startsWith('promote_')) {
         if (id === 'promote_confirm' || id === 'promote_reject') {
-          const approvers = modapps.loadConfig().approvers || [];
+          const approvers = modapps.getApprovers();
           if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
             return interaction.reply({ content: 'Only the **server owner** can confirm or reject a promotion.', flags: MessageFlags.Ephemeral });
         } else if (!canBan(interaction)) {
@@ -9043,7 +9067,7 @@ client.on('interactionCreate', async (interaction) => {
           // The ACTUAL server owner (guild.ownerId, dynamic) — plus any temporary approvers in config
           // (used while the real owner is inactive; clear the list once they're back). Undoing a decision
           // is as consequential as making one, so it takes the same tier.
-          const approvers = modapps.loadConfig().approvers || [];
+          const approvers = modapps.getApprovers();
           if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
             return interaction.reply({ content: `Only the **server owner** can ${id === 'modapp_undo' ? 'undo' : 'accept or deny'} mod applications.`, flags: MessageFlags.Ephemeral });
         }
@@ -10140,7 +10164,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'demote-trial') {
     // Owner/approver only — the inverse of accepting an application, so it takes the same tier.
-    const approvers = modapps.loadConfig().approvers || [];
+    const approvers = modapps.getApprovers();
     if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can demote a trial mod.', flags: MessageFlags.Ephemeral });
     const roleId = modapps.loadConfig().trialModRoleId;
@@ -10157,7 +10181,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'demote-mod') {
     // Owner/approver only — same tier bar as demote-trial.
-    const approvers = modapps.loadConfig().approvers || [];
+    const approvers = modapps.getApprovers();
     if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can demote a mod.', flags: MessageFlags.Ephemeral });
     if (!config.modRoleId) return interaction.reply({ content: 'No Mod role is configured.', flags: MessageFlags.Ephemeral });
@@ -10191,7 +10215,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (name === 'demote-admin') {
     // Owner/approver only — same tier bar as demote-trial.
-    const approvers = modapps.loadConfig().approvers || [];
+    const approvers = modapps.getApprovers();
     if (interaction.user.id !== interaction.guild.ownerId && !approvers.includes(interaction.user.id) && !opspanel.isBotOwner(interaction))
       return interaction.reply({ content: 'Only the **server owner** can demote an admin.', flags: MessageFlags.Ephemeral });
     if (!config.adminRoleId) return interaction.reply({ content: 'No Admin role is configured.', flags: MessageFlags.Ephemeral });

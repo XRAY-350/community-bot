@@ -48,6 +48,21 @@ const loadState = () => _load(STATE_FILE, { posts: {}, cooldown: {} });
 const saveState = s => _save(STATE_FILE, s);
 function isConfigured() { const c = loadConfig(); return !!(c.forumId && c.appsChannelId && c.tags); }
 
+// ---- approvers: who besides the server owner can accept/deny/undo mod applications ------------------
+// Every accept/deny/undo gate (index.js) already checks guild.ownerId + bot-owner + this list — that part
+// shipped 2026-08-14 as "temporary approvers while the real owner is inactive". What never shipped was a
+// way to actually EDIT this list without hand-editing the JSON config file on the server, which is exactly
+// the kind of agent-only capability this project avoids (owner, 2026-08-22: "I need to be able to choose
+// who can accept mod applications from the dashboard"). These three are the missing write path.
+function getApprovers() { return loadConfig().approvers || []; }
+function addApprover(userId) {
+  const c = loadConfig(); const list = new Set(c.approvers || []); list.add(userId);
+  c.approvers = [...list]; saveConfig(c); return c.approvers;
+}
+function removeApprover(userId) {
+  const c = loadConfig(); c.approvers = (c.approvers || []).filter(id => id !== userId); saveConfig(c); return c.approvers;
+}
+
 // ---- punishment handicap: read straight off the member's roles -------------------------------------
 function punishment(member, config) {
   const roles = member.roles.cache;
@@ -849,4 +864,5 @@ async function setApplicationsOpen(guild, open, message, track = 'both') {
 }
 
 module.exports = { setup, buildModal, positionRow, submitFromModal, handleButton, handlePositionSelect, handleAskModal, isConfigured, loadConfig, migrateLegacy, rerender, upgradeLegacyVotes, relayApplicantReply, backfillUndoButtons, sealOwnApplication, archiveOwnApplication, restoreArchived,
-  enforceReviewThreadMembers, enforceApplicantThreadMembers, removeDemotedFromReviewThreads, sweepReviewThreadMembers, applicationsOpen, closedNotice, setApplicationsOpen };
+  enforceReviewThreadMembers, enforceApplicantThreadMembers, removeDemotedFromReviewThreads, sweepReviewThreadMembers, applicationsOpen, closedNotice, setApplicationsOpen,
+  getApprovers, addApprover, removeApprover };

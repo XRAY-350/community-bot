@@ -161,8 +161,9 @@ function markVeteran(userId) { const s = load(); if (!s.veterans) s.veterans = {
 function isVeteran(userId) { return !!(load().veterans || {})[userId]; }
 
 // Authoritative tribe membership — the SOURCE OF TRUTH for who is legitimately in a tribe. Set ONLY by
-// sanctioned flows (picker first-join / invite / request-approve / banish). The guildMemberUpdate guard
-// reverts any manual role add/strip that disagrees with this. Joining also stamps veteran + join-time.
+// sanctioned flows (picker first-join / invite / request-approve / banish / reconcileTribeRoles restoring
+// a rank-holder's lost base role — index.js). The guildMemberUpdate guard reverts any manual role add/strip
+// that disagrees with this. Joining also stamps veteran + join-time.
 function setMembership(key, userId, isMember) {
   const s = load(); const t = s.tribes && s.tribes[key]; if (!t) return;
   if (!t.members) t.members = {};

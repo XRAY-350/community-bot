@@ -384,12 +384,14 @@ function buildActions() {
     '**⭐ Needs Admin.** (Mods can read this page, but the buttons will show 🔒.)\n\n' +
     '🧹 **Run housekeeping now**: the bot normally tidies up once an hour; this makes it run **right now**: warn or remove overdue unverified members, delete dead verification threads, and flag anyone with both roles. ⚠️ It can **actually remove people**, unless Test Mode is on (see the ⚠️ Danger page).\n' +
     '🔨 **Ban a member**: permanently removes them and blocks them from rejoining. Can\'t be undone here.\n' +
-    `📋 **Mod applications (Moderator track)**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime. Mini-mod applications open/close separately — use \`/mod-applications\` for that track.`)
+    `📋 **Mod applications (Moderator track)**: currently **${appsOpen ? '🟢 OPEN' : '🔴 CLOSED'}**. Close intake when the team is full (applications already under review still finish); reopen anytime. Mini-mod applications open/close separately — use \`/mod-applications\` for that track.\n` +
+    `👥 **Approvers** (⭐ **Needs Owner**, not just Admin): accepting/denying/undoing a mod application is normally owner-only — this lets the owner temporarily hand that same power to specific people (e.g. while away). ${modapps.getApprovers().length} set right now.`)
     .setFooter({ text: copy.guards.needsAdmin });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('fops_sweep').setEmoji('🧹').setLabel('Run housekeeping now').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('fops_modapps_toggle').setEmoji(appsOpen ? '🚫' : '✅').setLabel(appsOpen ? 'Close Moderator applications' : 'Reopen Moderator applications').setStyle(appsOpen ? ButtonStyle.Danger : ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('fops_ban').setEmoji('🔨').setLabel('Ban a member').setStyle(ButtonStyle.Danger));
+    new ButtonBuilder().setCustomId('fops_ban').setEmoji('🔨').setLabel('Ban a member').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('fops_modapps_approvers').setEmoji('👥').setLabel('Manage approvers').setStyle(ButtonStyle.Secondary));
   return { content: '## 🔨 FUBU Ops · Actions', embeds: [embed], components: [row, navRow(pageIdx('Actions'))] };
 }
 
@@ -1299,6 +1301,43 @@ async function handlePanel(interaction) {
       await modapps.setApplicationsOpen(interaction.guild, nowOpen, null, 'mod');
       try { require('./ownerlog').log(interaction.guild, { emoji: nowOpen ? '✅' : '🚫', title: nowOpen ? 'Mod applications REOPENED (Moderator)' : 'Mod applications CLOSED (Moderator)', color: nowOpen ? 0x57F287 : 0xED4245, detail: `${nowOpen ? 'Reopened' : 'Closed'} via dashboard by <@${interaction.user.id}>.${nowOpen ? '' : ' In-flight applications still finish.'}` }); } catch { /* ownerlog best-effort */ }
       await interaction.editReply(nowOpen ? '✅ **Moderator** applications are now **OPEN**. Members can `/apply-mod`.' : '🚫 **Moderator** applications are now **CLOSED** (team full). Applications already under review still finish.');
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_modapps_approvers') {
+      // Owner-only even though the page itself is admin-tier (same "one stricter button on a looser
+      // page" shape as promote_confirm/reject in index.js) — accepting/denying a mod app is already
+      // gated to owner + this list, so letting an admin add themselves here would defeat that gate.
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const modapps = require('./modapps');
+      const list = modapps.getApprovers();
+      const rows = [new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder().setCustomId('fops_modapps_approvers_add').setPlaceholder('➕ Add approver(s)…').setMinValues(1).setMaxValues(10))];
+      if (list.length) {
+        const opts = list.slice(0, 25).map(id2 => ({ label: interaction.guild.members.cache.get(id2)?.user.tag || id2, value: id2 }));
+        rows.push(new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder().setCustomId('fops_modapps_approvers_remove').setPlaceholder('➖ Remove an approver…').addOptions(opts)));
+      }
+      return interaction.editReply({
+        content: `### 👥 Mod application approvers\nCan accept/deny/undo mod applications, same as the server owner: **you** (always), plus:\n${list.length ? list.map(id2 => `• <@${id2}>`).join('\n') : '_none set_'}`,
+        components: rows, allowedMentions: { parse: [] },
+      });
+    }
+    if (id === 'fops_modapps_approvers_add' && interaction.isUserSelectMenu?.()) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const modapps = require('./modapps');
+      const added = interaction.values;
+      let approvers; for (const uid of added) approvers = modapps.addApprover(uid);
+      try { require('./ownerlog').log(interaction.guild, { emoji: '👥', title: 'Mod app approver(s) added', color: 0x57F287, detail: `${added.map(id2 => `<@${id2}>`).join(', ')} — via dashboard by <@${interaction.user.id}>.` }); } catch { /* best-effort */ }
+      await interaction.editReply({ content: `✅ Added ${added.map(id2 => `<@${id2}>`).join(', ')}. Current approvers:\n${approvers.map(id2 => `• <@${id2}>`).join('\n')}`, components: [], allowedMentions: { parse: [] } });
+      return refreshPanel(interaction.client);
+    }
+    if (id === 'fops_modapps_approvers_remove' && interaction.isStringSelectMenu?.()) {
+      if (!isBotOwner(interaction) && !meets(tier, 'owner')) return deny('owner');
+      const modapps = require('./modapps');
+      const removedId = interaction.values[0];
+      const approvers = modapps.removeApprover(removedId);
+      try { require('./ownerlog').log(interaction.guild, { emoji: '👥', title: 'Mod app approver removed', color: 0xED4245, detail: `<@${removedId}> — via dashboard by <@${interaction.user.id}>.` }); } catch { /* best-effort */ }
+      await interaction.editReply({ content: `➖ Removed <@${removedId}>. Current approvers:\n${approvers.length ? approvers.map(id2 => `• <@${id2}>`).join('\n') : '_none set_'}`, components: [], allowedMentions: { parse: [] } });
       return refreshPanel(interaction.client);
     }
     if (id === 'fops_freshmodal') {

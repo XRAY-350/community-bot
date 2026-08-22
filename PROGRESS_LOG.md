@@ -54,6 +54,46 @@ staff-floor roles from MDNI-style protections even when that role holds real cha
 
 ---
 
+## 2026-08-22 17:00 — Dashboard control for mod-app approvers; fixed a tribe reconcile/guard flap loop hitting 6 members
+
+**Part 1 — mod app approvers dashboard control.** Owner: "I need to be able to choose who can accept
+mod applications from the dashboard." `modapps.js`'s accept/deny/undo gate (index.js, 6 call sites)
+already checked `guild.ownerId` + bot-owner + a `config.approvers` list — built 2026-08-14 as
+"temporary approvers while the real owner is inactive" — but nothing anywhere ever wrote to that
+list; it was only editable by hand-editing the JSON config file on the server, exactly the kind of
+agent-only capability [[feedback_no_agent_only_capabilities]] flags. Added `modapps.getApprovers()` /
+`addApprover()` / `removeApprover()` and refactored all 6 read call sites in index.js onto
+`getApprovers()`. New "👥 Manage approvers" button on the dashboard's Actions page (`opspanel.js`
+`buildActions()`) — visible on the admin-tier page but gated to **owner only to click** (same
+"stricter button on a looser page" shape as `promote_confirm`/`reject` in index.js), since letting an
+admin add themselves would defeat the whole point of the gate sitting above admin tier. Opens a
+UserSelectMenu to add (up to 10 at once) and, when any exist, a StringSelectMenu to remove one.
+Verified the three modapps.js functions directly (add/idempotent-add/remove/idempotent-remove) and
+confirmed the config file was left clean afterward; both bots restarted with no errors.
+
+**Part 2 — tribe reconcile vs. tribe guard flap loop**, found via a screenshot of the Discord audit
+log showing FUBU Bot repeatedly adding then removing the SAME role for the SAME member
+(`almonee`, Woeful Vagabonds) every ~10 minutes: `reconcileTribeRoles()` (boot + hourly — restores a
+tribe's base role to anyone holding a rank/leader role but missing it) was adding the role, and
+`enforceTribeMembership()` (the `guildMemberUpdate` guard) was immediately treating that same add as
+an unsanctioned manual grant and reverting it, because `reconcileTribeRoles` only fixed the Discord
+ROLE but never updated `tribes.js`'s own membership ledger (`tribes.setMembership`/`isAuthorized`) —
+which the guard treats as ground truth. Scanned every tribe and found **6 real members** across 4
+tribes in this state (not just almonee), confirming a systemic gap rather than one flapping case.
+Fixed by having `reconcileTribeRoles` call `tribes.setMembership(key, userId, true)` whenever it
+restores a role. Found and fixed a **sibling case** the same pass: a 7th member (`.4nqel`, tribe
+`trib`) already correctly held their base role, so the "restore missing role" branch never touched
+them — but their ledger entry was just as absent, a live time bomb where the next unrelated role
+change would trigger the guard to wrongly strip a role they legitimately hold. Added a second,
+ledger-only backfill loop (no Discord role change, just registers the ones already correct). Verified
+live: 6 → 1 → 0 gap members across 2 redeploys, no further "manual add reverted" activity, scratch
+scripts cleaned up.
+
+`node --check` clean on all touched files (index.js, tribes.js, modapps.js, opspanel.js) at every
+step; both bots restarted clean throughout.
+
+---
+
 ## 2026-08-22 14:11 — permguard silently reverted the Adult Corner role split; found + fixed a real minor-staff exposure gap while chasing it
 
 Owner: "Back to the breach with .newclover." Started by checking `.newclover`'s (1104985745917231134)
