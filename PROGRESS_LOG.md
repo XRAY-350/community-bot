@@ -36,6 +36,83 @@ silently override the adult role's `SendMessages: false` on the regular channel.
 `corner.cornerRoleFor(adult)`, never `config.cornerRoleId` directly, and check cornered status via
 `corner.memberIsCornered(member)`, not a single-role `.has()` check.
 
+**Any function that edits a channel's ROLE-level permission overwrites must call
+`permguard.blessChannel(guild, channelId)` after, or permguard's own boot sweep (which can run
+within seconds of the edit) silently reverts it back to the last golden snapshot.** Confirmed live
+2026-08-21/22: the Adult Corner role split got wiped by permguard 40s after landing because
+`ensureCornerPerms` never blessed the channels it changed. `ensureCornerPerms` now blesses any
+channel it actually corrects; follow the same pattern in any new self-heal/enforcement function.
+
+**Minor-staff exposure checks (`isMinor && [tier list]`) exist in TWO places in index.js —
+`enforceMdniStaffLock`'s `needsLock` and `sweepMdniStaffLock`'s cleanup-loop condition — and they
+MUST list the exact same tiers, or the cleanup loop deletes the lock the first loop just created in
+the same sweep.** Hit live 2026-08-22 fixing a minor-trial-mod leak: fixed the tier list in one spot,
+redeployed, and the fix still didn't hold because the sibling check 12 lines down still had the old
+list. `opspanel.memberTier()` returns `'staff'` for trial mods/language-mini-mods/event-organizers —
+distinct from `'mod'`/`'admin'` — so a tier list that only says `['mod','admin']` silently excludes
+staff-floor roles from MDNI-style protections even when that role holds real channel access.
+
+---
+
+## 2026-08-22 14:11 — permguard silently reverted the Adult Corner role split; found + fixed a real minor-staff exposure gap while chasing it
+
+Owner: "Back to the breach with .newclover." Started by checking `.newclover`'s (1104985745917231134)
+live state: she holds MODS-✰ AND the ✰ • 16-17 (minor) role, with a manual per-member ViewChannel
+deny on the Adult Corner channel from before this session — currently fine, but that's a one-off
+patch, not a systemic guarantee. Widened the check to every minor holding the minor role, and found
+the real, live problem: `permguard`'s boot sweep had reverted almost the ENTIRE two-role redesign
+from the prior entry back to its pre-redesign snapshot, 40 seconds after it landed (`[permguard]
+corrected 139 drifted overwrite(s)` right after `[corner] perm self-heal on boot: 141 overwrite(s)
+corrected` — the exact "bless after edit" gotcha already in project memory, which `ensureCornerPerms`
+never did). Root cause: `ensureCornerPerms` edits channel-level role overwrites but never called
+`permguard.blessChannel()`, so permguard's drift sweep treated every one of its changes as
+unauthorized drift and reverted them on its own very next pass — and kept re-reverting them on every
+20-min sweep since, meaning the redesign had been silently dead since minutes after it shipped.
+
+**Fix 1**: `ensureCornerPerms` now tracks per-channel corrections and calls `permguard.blessChannel()`
+for any channel it actually changed (not unconditionally — only touched channels, so drift detection
+stays live everywhere else). Verified: permguard's boot sweep dropped from 139 corrections to 3, then
+to 0 on the next restart — stable.
+
+**While re-verifying, found a second, deeper bug**: scanned all 774 minor-role holders against the
+Adult Corner's live `permissionsFor()` and found 2 actually exposed (could view/post in an 18+
+channel) — `.newclover` was NOT one of them (her manual patch held), but `cookingwithsincity.` (a
+minor holding TRIAL MODS + a display OWNER role) was, plus 2 more (`chillzistuff`,
+`everydayweeatgoood`) once the real scope was found. Root cause: Discord's allow-beats-deny-across-
+roles rule (the same class as the two-role corner redesign) also defeats a ROLE-level minor deny —
+any minor who holds ANY OTHER role with its own ViewChannel allow on that channel (trial mod, mod,
+admin via category inheritance) sees straight through the minor block. There's an existing, already-
+correct, already-wired system for exactly this — `enforceMdniStaffLock`/`sweepMdniStaffLock`
+(index.js, built for the original MDNI channels, generalized 2026-08-16 to cover Adult Corner too) —
+which pins a MEMBER-level deny (the only overwrite kind that beats every role). Its bug: `needsLock`
+only checked `['mod','admin']` tiers, omitting `'staff'` (trial mod / language mini-mod / event
+organizer) — a tier that only exists since 2026-08-20 and evidently was never back-filled into this
+check once trial mods got a role-level Adult Corner grant.
+
+**First attempted a NEW fix directly in `corner.js`** (a computed-exposure member-overwrite pass) —
+this actually worked in isolation but immediately started FIGHTING the existing mdni-lock system:
+both pin member-level overwrites on the same channel using a similar shape, and mdni-lock's own
+cleanup pass (built to lift stale locks) saw my overwrite as something to delete because its holder
+didn't match mdni-lock's own (buggy) tier list — confirmed via Discord audit log: the bot created the
+overwrite via my code, then deleted it via `[mdni-lock] ... cleanup` 22 seconds later, both in the
+same boot. **Reverted that approach** and instead fixed it at the actual root: one-line tier-list fix
+in `enforceMdniStaffLock`'s `needsLock`. Redeployed, and the SAME bug bit again — `sweepMdniStaffLock`
+has a SECOND, independent copy of the identical `['mod','admin']` tier check in its own stale-lock
+cleanup loop (never updated in sync), so the cleanup pass kept deleting what the lock pass had just
+created, ~200ms later, in the same sweep — caught via audit log again (create → delete, both same
+sweep). Fixed the sibling check too (now both read `['staff','mod','admin']`), redeployed, and
+confirmed stable this time: 3 real minor-staff members locked across all 4 MDNI-gated channels
+(general, general-nsfw, nsfw-vc, Adult Corner) — a broader fix than the single instance first found,
+consistent with the class of bug rather than one member. Final scan: 0/774 minors exposed on any of
+the 4 channels, confirmed via direct audit-log check (create events only, no follow-up deletes).
+
+Removed the redundant corner.js code entirely rather than leaving two overlapping systems — mdni-lock
+is the correct, already-live-reactive (fires on every `guildMemberUpdate`, not just boot) mechanism;
+corner.js's job stays scoped to role-level overwrites only.
+
+`node --check` clean on all 3 touched files (corner.js, index.js) at every step, both bots restarted
+clean at each deploy, all scratch verification scripts removed from bots-vm.
+
 ---
 
 ## 2026-08-21 23:02 — Adult Corner redesigned onto its own Discord role (supersedes the per-member-overwrite fix)

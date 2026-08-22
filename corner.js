@@ -8,6 +8,7 @@ const config = require('./config');
 const hitsquad = require('./hitsquad');
 const opspanel = require('./opspanel');
 const overridesManager = require('./overridesManager');
+const permguard = require('./permguard');
 
 // ---- severity tiering (owner, 2026-08-13) ---------------------------------------------------------
 // /corner already refuses to corner someone of a HIGHER tier than the actor. This closes the mirror
@@ -167,12 +168,14 @@ async function applyRoleOverwrite(ch, roleId, desired, reason) {
 async function ensureCornerPerms(guild) {
   const everyone = guild.roles.everyone.id;
   let fixed = 0;
+  let blessed = 0;
   const chans = [...(await guild.channels.fetch()).values()].filter(Boolean);
   // The two corner roles are mutually exclusive (see config.js's comment on adultCornerRoleId) — each
   // channel below grants full corner access to exactly ONE of them, never both, so Discord's own
   // permission resolution keeps a member out of the corner channel they aren't actually in, with no
   // per-member overwrite bookkeeping needed anywhere.
   for (const ch of chans) {
+    const before = fixed;
     try {
       if (ch.id === config.cornerChannelId) {
         // Non-cornered members: see + react ONLY — view, read history, add reactions; no send, no threads.
@@ -213,6 +216,15 @@ async function ensureCornerPerms(guild) {
         fixed += await applyRoleOverwrite(ch, config.cornerRoleId, null, 'adult corner self-heal: regular-corner role should not speak here');
         if (config.modRoleId) fixed += await applyRoleOverwrite(ch, config.modRoleId, { ViewChannel: true, SendMessages: true }, 'adult corner self-heal');
         if (config.trialModRoleId) fixed += await applyRoleOverwrite(ch, config.trialModRoleId, { ViewChannel: true, SendMessages: true }, 'adult corner self-heal');
+        // The role-level minor deny above is NOT enough by itself (Discord unions denies-then-allows
+        // ACROSS a member's held roles, so a minor who also holds mod/trial-mod/admin has that role's
+        // ViewChannel allow win over the minor role's deny). That's the exact class index.js's
+        // enforceMdniStaffLock()/sweepMdniStaffLock() already exists to close, and it's already wired to
+        // this channel (boot sweep + live on every guildMemberUpdate) via a member-level deny, which DOES
+        // beat every role. Do not duplicate that here — a second system pinning its own member-overwrite
+        // on the same channel fights the first one's cleanup pass and each deletes the other's fix (hit
+        // live 2026-08-22, see PROGRESS_LOG). If a minor-staff leak shows up on THIS channel specifically,
+        // the fix belongs in enforceMdniStaffLock's tier check, not here.
         continue;
       }
       if (ch.id === config.cornerVcId) {
@@ -260,8 +272,21 @@ async function ensureCornerPerms(guild) {
       fixed += await applyRoleOverwrite(ch, config.adultCornerRoleId, desired, 'corner self-heal');
     } catch (err) {
       console.error(`[corner] perm self-heal on #${ch.name}: ${err.message}`);
+    } finally {
+      // permguard's drift sweep only knows a channel's overwrites are correct if they match its golden
+      // manifest snapshot — anything we just changed here but never bless() into that manifest gets
+      // silently reverted on permguard's next pass (its OWN boot sweep can run within seconds of this
+      // one). Found live 2026-08-22: the whole two-role split got wiped back to the old shared-role grant
+      // by permguard 40s after this function first applied it, because nothing here ever blessed the
+      // channels it touched — see PROGRESS_LOG. Bless only channels we actually changed this pass, not
+      // every channel unconditionally, so untouched channels' drift detection stays live.
+      if (fixed > before) {
+        const ok = await permguard.blessChannel(guild, ch.id).catch(() => false);
+        if (ok) blessed++;
+      }
     }
   }
+  if (blessed) console.log(`[corner] blessed ${blessed} channel(s) into permguard's baseline after self-heal`);
   return fixed;
 }
 

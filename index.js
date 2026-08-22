@@ -5417,7 +5417,12 @@ async function enforceMdniStaffLock(member, { bless = true, channelId = config.m
   if (!ch) return null;
   const VIEW = PermissionsBitField.Flags.ViewChannel;
   const isMinor = member.roles.cache.has(config.minorAgeRoleId);
-  const needsLock = isMinor && ['mod', 'admin'].includes(opspanel.memberTier(member));   // minor mods/admins only — owner-tier exempt (owner ruling 2026-08-01)
+  // 'staff' (trial mod / language mini-mod / event organizer) included alongside mod/admin: found live
+  // 2026-08-22 that a minor TRIAL mod still saw the Adult Corner via trialModRoleId's role-level allow —
+  // that role sits at memberTier() 'staff', which this check omitted, so needsLock was false for her even
+  // though she was actively exposed. Any tier holding a role with its own ViewChannel allow on a locked
+  // channel needs this same protection; owner-tier stays exempt (owner ruling 2026-08-01).
+  const needsLock = isMinor && ['staff', 'mod', 'admin'].includes(opspanel.memberTier(member));
   const ow = ch.permissionOverwrites.cache.get(member.id);
   const botLocked = !!(ow && ow.type === 1 && ow.deny.has(VIEW) && ow.allow.bitfield === 0n);
   let changed = null;
@@ -5449,7 +5454,11 @@ async function sweepMdniStaffLock(guild, channelId = config.mdniChannelId) {
   for (const o of [...ch.permissionOverwrites.cache.values()]) {
     if (o.type !== 1 || !o.deny.has(VIEW) || o.allow.bitfield !== 0n) continue;   // only our pure View-denies
     const m = await guild.members.fetch(o.id).catch(() => null);
-    if (!m || !(m.roles.cache.has(config.minorAgeRoleId) && ['mod', 'admin'].includes(opspanel.memberTier(m))))
+    // Same tier list as needsLock in enforceMdniStaffLock above — MUST stay in sync, or this cleanup pass
+    // deletes the lock the loop just above it created in the same sweep (hit live 2026-08-22: the tier
+    // fix landed here but not here, so every boot/hourly sweep locked minor-staff out then immediately
+    // unlocked them again, ~200ms later, in the same run).
+    if (!m || !(m.roles.cache.has(config.minorAgeRoleId) && ['staff', 'mod', 'admin'].includes(opspanel.memberTier(m))))
       await ch.permissionOverwrites.delete(o.id, 'MDNI minor-staff lock cleanup').catch(() => {});
   }
   await permguard.blessChannel(guild, channelId).catch(() => {});
