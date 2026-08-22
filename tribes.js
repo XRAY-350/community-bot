@@ -569,11 +569,13 @@ function agreeToDisband(key, userId) {
 }
 function clearDisbandRequest(key) { const s = load(); if (s.disbandRequests) delete s.disbandRequests[key]; save(s); }
 
-// ---- Member-founded tribe (owner 2026-08-05): ONE regular member may found ONE tribe, backed by 9 cosigns
-// from members (or trial mods) — no mod/admin/owner. Only one such petition, and one such tribe, at a time
-// server-wide. Kept in its OWN state (single object, not keyed by founder) so it never touches the mod path.
-const MEMBER_FOUND_COSIGNS = 9;                        // cosigns needed on top of the founder (10 founders total)
-const MEMBER_FOUND_EXPIRY_MS = 48 * 60 * 60 * 1000;    // petition lapses if it doesn't reach 9 in 48h
+// ---- Member-founded tribe (owner 2026-08-05, cosign count lowered 2026-08-22): ONE regular member may
+// found ONE tribe, backed by 3 cosigns from members (or trial mods) — no mod/admin/owner. Only one such
+// petition, and one such tribe, at a time server-wide. Kept in its OWN state (single object, not keyed by
+// founder) so it never touches the mod path. 3 cosigns + the founder = 4 total, matching MIN_MEMBER_LEADERS
+// below — the tribe founds at exactly the floor it has to maintain afterward, not above it.
+const MEMBER_FOUND_COSIGNS = 3;                        // cosigns needed on top of the founder (4 founders total)
+const MEMBER_FOUND_EXPIRY_MS = 48 * 60 * 60 * 1000;    // petition lapses if it doesn't reach 3 in 48h
 function getMemberFounding() { return load().memberFounding || null; }
 function getMemberFoundedTribeKey() { return load().memberFoundedTribeKey || null; }
 // Returns the new request, or null if one is already open / a member-founded tribe already exists (one-at-a-time).
@@ -826,23 +828,29 @@ function breakAlliance(keyA, keyB) {
 }
 
 // ── Mod-tribe leadership requirement (owner, 2026-08-04: "a tribe of mods requires three leaders, it's not
-// a suggestion") ──────────────────────────────────────────────────────────────────────────────────────
+// a suggestion"; floor lowered 2026-08-22) ──────────────────────────────────────────────────────────────
 // A tribe FOUNDED BY MODS must keep MIN_MOD_LEADERS staff-leaders at all times. Admin-founded tribes (an
 // admin can lead solo) are exempt — flagged by tribe.foundedByMod. Enforcement is an escalation ladder
 // (owner picked all three tiers): a shortfall first ALERTS with a grace window, then FREEZES the tribe's
 // perks (war/alliances/shop) if unfixed, then queues DISBAND. State lives on tribe.leaderEnforce so it
 // survives restarts; the sweep in index.js drives the transitions and clears it instantly on recovery.
 // Configurable per-deployment (owner, 2026-08-17: Melanin already lets a mod found a tribe solo — see
-// config.modFoundingCosignsRequired — so requiring 3 leaders to KEEP it standing afterward made a
-// solo-founded tribe start the freeze/disband countdown immediately. FUBU keeps the original 3; Melanin's
-// env overrides this down to 1 (just the founder) to match its own founding rule.
-const MIN_MOD_LEADERS = Number(process.env.MIN_MOD_LEADERS) || 3;
+// config.modFoundingCosignsRequired — so requiring the floor leaders to KEEP it standing afterward made a
+// solo-founded tribe start the freeze/disband countdown immediately. FUBU's own env can override this too.
+const MIN_MOD_LEADERS = Number(process.env.MIN_MOD_LEADERS) || 2;
+// Member-founded tribe's own floor (owner, 2026-08-22: "set the member min to 4. Founder + 3 co-signs") —
+// same escalation ladder as MIN_MOD_LEADERS above, just a separate constant since a member tribe's founding
+// cohort (MEMBER_FOUND_COSIGNS below) and floor are a different number from a mod tribe's. Deliberately set
+// equal to MEMBER_FOUND_COSIGNS + 1 (the founder) — see that constant's comment.
+const MIN_MEMBER_LEADERS = Number(process.env.MIN_MEMBER_LEADERS) || 4;
 // One grace window from the moment a shortfall is detected. Perks FREEZE at the HALFWAY point (owner,
-// 2026-08-04) and the tribe goes disband-pending at the end if still short.
+// 2026-08-04) and the tribe goes disband-pending at the end if still short. Shared by both floors above.
 const LEADER_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 function isModFounded(tribe) { return !!(tribe && tribe.foundedByMod); }
 // Member-founded tribe: led by regular-member co-leaders (the founder + cosigners), so it's EXEMPT from the
-// "a tribe leader must be a mod/admin" sweep AND the mod-leader-count requirement.
+// "a tribe leader must be a mod/admin" sweep AND the MOD-tribe leader-count requirement — it has its own
+// floor instead (MIN_MEMBER_LEADERS), same escalation ladder, just a different number and a different way
+// of counting leaders (every leader-role holder, not just staff-tier ones).
 function isMemberFounded(tribe) { return !!(tribe && tribe.foundedByMember); }
 function getLeaderEnforce(key) { const t = get(key); return (t && t.leaderEnforce) || null; }
 function setLeaderEnforce(key, obj) { return update(key, { leaderEnforce: obj }); }
@@ -860,7 +868,7 @@ function hasFreeRetheme(tribe) { return !!(tribe && (tribe.freeRethemes || 0) > 
 function consumeFreeRetheme(key) { const t = get(key); if (!t || !(t.freeRethemes > 0)) return false; update(key, { freeRethemes: t.freeRethemes - 1 }); return true; }
 
 module.exports = { load, save, all, get, getByRole, resolve, memberTribe, inAnyTribe, isMember, isLeader, leaderTribe, myTribe,
-  MIN_MOD_LEADERS, LEADER_GRACE_MS, isModFounded, isMemberFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
+  MIN_MOD_LEADERS, MIN_MEMBER_LEADERS, LEADER_GRACE_MS, isModFounded, isMemberFounded, getLeaderEnforce, setLeaderEnforce, clearLeaderEnforce, isFrozen, removeTribe,
   grantFreeRetheme, hasFreeRetheme, consumeFreeRetheme,
   addNote, getNotes, register, update, setMotto, roster, standings, RANK_LADDER, DEFAULT_LEADER_TITLE, leaderTitle, setRankNames,
   DEFAULT_STAFF_RANK_TITLE, staffRankTitle,

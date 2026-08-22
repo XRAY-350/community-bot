@@ -1402,9 +1402,13 @@ async function removePromotedFromMemberTribe(guild, member, tribe) {
   await refreshThronePanel(guild, freshTribe).catch(() => {});
   return { wasLeader, stillLed };
 }
-// Enforce the mod-tribe 3-leader requirement (owner: "not a suggestion"). Escalation ladder, driven boot +
-// hourly: ok → grace (alert) → frozen (perks blocked) → disband_pending (staff-confirmed dissolution). Any
-// return to full strength clears it instantly. Only touches tribes flagged foundedByMod.
+// Enforce each tribe TYPE's leader-count floor (owner: "not a suggestion") — MIN_MOD_LEADERS for a
+// mod-founded tribe, MIN_MEMBER_LEADERS for the member-founded one (owner, 2026-08-22: "there's no disband
+// timer for the member tribe" — it previously only got a one-time "no leader left" alert with nothing
+// forcing resolution, so it could sit leaderless indefinitely). Same escalation ladder for both, driven
+// boot + hourly: ok → grace (alert) → frozen (perks blocked) → disband_pending (staff-confirmed
+// dissolution). Any return to full strength clears it instantly. Admin-founded tribes (an admin can lead
+// solo) have neither floor and are skipped entirely, same as always.
 async function sweepLeaderRequirement(guild) {
   await ensureMembers(guild);
   const now = Date.now();
@@ -1433,16 +1437,23 @@ async function sweepLeaderRequirement(guild) {
       await alertModTribe(guild, `🎨 ${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}** lost a leader — it's been granted a **free retheme** (usable on \`/tribe retheme\` even without the Shop unlock).`, tribe.leaderRoleId);
     }
     if (holderCount !== tribe.lastLeaderCount) tribes.update(tribe.key, { lastLeaderCount: holderCount });
-    if (!tribes.isModFounded(tribe)) continue;
-    const { count } = countModLeaders(guild, tribe);
-    const short = tribes.MIN_MOD_LEADERS - count;
+    // Which floor (if any) applies to this tribe type, and how to count its leaders: a mod tribe's count is
+    // STAFF-tier holders only (countModLeaders — stripNonStaffLeaders above already keeps this in sync with
+    // holderCount in practice, but the mod-tribe rule has always measured itself this way); a member tribe's
+    // leaders are all regular members by design, so every leader-role holder counts (currentTribeLeaders).
+    const isMod = tribes.isModFounded(tribe), isMember = tribes.isMemberFounded(tribe);
+    if (!isMod && !isMember) continue;
+    const minLeaders = isMod ? tribes.MIN_MOD_LEADERS : tribes.MIN_MEMBER_LEADERS;
+    const count = isMod ? countModLeaders(guild, tribe).count : currentTribeLeaders(guild, tribe).length;
+    const kind = isMod ? 'mod-founded' : 'member-founded';
+    const short = minLeaders - count;
     const enf = tribe.leaderEnforce || null;
     const name = `${tribe.emoji || '🏴'} **${tribe.shortName || tribe.name}**`;
     // Recovered (back to full strength) — clear any enforcement and announce it.
     if (short <= 0) {
       if (enf) {
         tribes.clearLeaderEnforce(tribe.key);
-        await alertModTribe(guild, `✅ ${name} is back to **${tribes.MIN_MOD_LEADERS} leaders** — leadership requirement satisfied, any freeze on its perks is lifted.`, tribe.leaderRoleId);
+        await alertModTribe(guild, `✅ ${name} is back to **${minLeaders} leaders** — leadership requirement satisfied, any freeze on its perks is lifted.`, tribe.leaderRoleId);
         await refreshThronePanel(guild, tribes.get(tribe.key)).catch(() => {});
       }
       continue;
@@ -1453,7 +1464,7 @@ async function sweepLeaderRequirement(guild) {
       const freezeAt = now + Math.floor(tribes.LEADER_GRACE_MS / 2);
       tribes.setLeaderEnforce(tribe.key, { stage: 'grace', since: now, freezeAt, graceUntil });
       tribes.grantFreeRetheme(tribe.key);   // lost a leader → free retheme (owner), even without the Shop unlock
-      await alertModTribe(guild, `⚠️ ${name} is **${short} leader(s) short** (has ${count}/${tribes.MIN_MOD_LEADERS}). A mod-founded tribe must keep ${tribes.MIN_MOD_LEADERS} leaders. Add one with \`/tribe-admin set-leader\`: its perks (war, alliances, shop) **freeze** <t:${Math.floor(freezeAt / 1000)}:R> if unfixed, and it's disband-pending <t:${Math.floor(graceUntil / 1000)}:R>. It's also been granted a **free retheme**. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
+      await alertModTribe(guild, `⚠️ ${name} is **${short} leader(s) short** (has ${count}/${minLeaders}). A ${kind} tribe must keep ${minLeaders} leaders. Add one with \`/tribe-admin set-leader\`: its perks (war, alliances, shop) **freeze** <t:${Math.floor(freezeAt / 1000)}:R> if unfixed, and it's disband-pending <t:${Math.floor(graceUntil / 1000)}:R>. It's also been granted a **free retheme**. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
     } else if (enf.stage === 'grace' && now >= (enf.freezeAt || 0)) {
       tribes.setLeaderEnforce(tribe.key, { ...enf, stage: 'frozen', frozenAt: now });
       await alertModTribe(guild, `🧊 ${name} is still **${short} leader(s) short** — its perks (war, alliances, shop) are now **frozen**. Fix it with \`/tribe-admin set-leader\` before <t:${Math.floor((enf.graceUntil || now) / 1000)}:R>, or it will be queued for **disband**. <@&${config.adminRoleId || ''}>`, config.adminRoleId);
@@ -1463,7 +1474,7 @@ async function sweepLeaderRequirement(guild) {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`tribedisband_confirm:${tribe.key}`).setEmoji('💥').setLabel('Disband now').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`tribedisband_extend:${tribe.key}`).setEmoji('⏳').setLabel('Give 7 more days').setStyle(ButtonStyle.Secondary));
-      await sendModTribeButtons(guild, `💥 ${name} has gone **${tribes.MIN_MOD_LEADERS} leaders short for the full grace + freeze window** and is now **pending disband**. Per the mod-tribe rule it should be dissolved — an admin must confirm (this deletes its roles + channels and cannot be undone), or grant an extension. <@&${config.adminRoleId || ''}>`, [row], config.adminRoleId);
+      await sendModTribeButtons(guild, `💥 ${name} has gone **${minLeaders} leaders short for the full grace + freeze window** and is now **pending disband**. Per the ${kind} tribe rule it should be dissolved — an admin must confirm (this deletes its roles + channels and cannot be undone), or grant an extension. <@&${config.adminRoleId || ''}>`, [row], config.adminRoleId);
     }
     // stage 'disband_pending' with the confirm still outstanding → nothing to do; wait on the human click.
   }
@@ -4799,7 +4810,7 @@ client.once('ready', async () => {
       new SlashCommandBuilder().setName('tribe').setDescription('Your tribe: info, roster, standings, and (leaders) set the motto')
         .addSubcommand(s => s.setName('info').setDescription('A tribe’s overview (yours by default)')
           .addStringOption(o => o.setName('tribe').setDescription('Which tribe (default: yours)').setRequired(false).setAutocomplete(true)))
-        .addSubcommand(s => s.setName('found').setDescription('Rally members to found a brand-new tribe (needs 9 cosigns)'))
+        .addSubcommand(s => s.setName('found').setDescription(`Rally members to found a brand-new tribe (needs ${tribes.MEMBER_FOUND_COSIGNS} cosigns)`))
         .addSubcommand(s => s.setName('banner').setDescription('Set your tribe’s banner image (leaders; members make the art)')
           .addAttachmentOption(o => o.setName('image').setDescription('A banner image (PNG/JPG). Leave blank to clear it.').setRequired(false)))
         .addSubcommand(s => s.setName('retheme').setDescription('Recolour and/or rename your tribe (needs the Re-theme unlock; leaders only)')
@@ -7660,7 +7671,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!updated) return interaction.reply({ content: 'You already cosigned this.', flags: MessageFlags.Ephemeral });
     return interaction.update(renderMemberFounding(updated));
   }
-  // ---- Member-founded tribe: the founder raises it once 9 cosigns are reached ----
+  // ---- Member-founded tribe: the founder raises it once MEMBER_FOUND_COSIGNS cosigns are reached ----
   if (interaction.isButton?.() && interaction.customId.startsWith('tribemfound_create:')) {
     const founderId = interaction.customId.split(':')[1];
     if (interaction.user.id !== founderId) return interaction.reply({ content: 'Only the founder can raise the tribe.', flags: MessageFlags.Ephemeral });
@@ -7672,9 +7683,9 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const id = req.identity;
       const b = await buildTribe(interaction.guild, { name: id.name, shortName: id.shortName, emoji: id.emoji, color: id.color, style: 'smallcaps', leaderMember: interaction.member }, config);
-      tribes.update(b.tribe.key, { foundedByMod: false, foundedByMember: true });   // member-led → exempt from the mod-leader requirement (like admin-founded)
+      tribes.update(b.tribe.key, { foundedByMod: false, foundedByMember: true });   // member-led → exempt from the MOD-leader requirement (staff tier isn't the point here); has its own MIN_MEMBER_LEADERS floor instead, enforced the same way
       for (const ch of [b.cat, b.throne, b.hall, b.vc]) await permguard.blessChannel(interaction.guild, ch.id).catch(() => {});
-      // Cosign = join AS A CO-LEADER (owner ruling): the founder + up-to-9 cosigners co-lead the tribe together,
+      // Cosign = join AS A CO-LEADER (owner ruling): the founder + up-to-MEMBER_FOUND_COSIGNS cosigners co-lead the tribe together,
       // so each gets the leader role and thus every existing leader tool (invite/banish/announce/note/rank/motto/
       // retheme/shop/war/alliances + throne hub) with no separate command. Member-founded tribes are exempt from
       // the "leaders must be staff" sweep. Skip any cosigner who slipped into another tribe since signing.
@@ -8638,7 +8649,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     // Confirm disband — delete channels + roles, then drop the record. Best-effort per resource.
     await interaction.deferUpdate();
-    await executeTribeDisband(interaction.guild, tribe, interaction.user.id, '(mod-tribe leader requirement unmet)');
+    await executeTribeDisband(interaction.guild, tribe, interaction.user.id, `(${tribes.isModFounded(tribe) ? 'mod' : 'member'}-tribe leader requirement unmet)`);
     return interaction.editReply({ content: `💥 **${tribe.shortName || tribe.name}** has been disbanded by <@${interaction.user.id}>. Its roles and channels are gone.`, components: [] }).catch(() => {});
   }
   // ---- Manual disband: /tribe-admin disband + the throne's Disband button (owner, 2026-08-17) ----------
@@ -10661,8 +10672,9 @@ client.on('interactionCreate', async (interaction) => {
       // Re-run the requirement sweep immediately so a now-complete tribe clears its shortfall/freeze right away
       // instead of waiting for the hourly tick (owner: "auto-end if you get all of the required members").
       await sweepLeaderRequirement(interaction.guild).catch(() => {});
-      const { count } = countModLeaders(interaction.guild, tribes.get(t.key));
-      const reqNote = tribes.isModFounded(t) ? ` Now **${count}/${tribes.MIN_MOD_LEADERS}** leaders.` : '';
+      const freshT = tribes.get(t.key);
+      const reqNote = tribes.isModFounded(freshT) ? ` Now **${countModLeaders(interaction.guild, freshT).count}/${tribes.MIN_MOD_LEADERS}** leaders.`
+        : tribes.isMemberFounded(freshT) ? ` Now **${currentTribeLeaders(interaction.guild, freshT).length}/${tribes.MIN_MEMBER_LEADERS}** leaders.` : '';
       await ownerlog.log(interaction.guild, { emoji: '👑', title: 'Tribe leader set', color: 0x5865F2,
         detail: `<@${newLeader.id}> made a ${tribes.leaderTitle(t)} of **${t.shortName || t.name}** by <@${interaction.user.id}>.${stepDownNote}${reqNote}` }).catch(() => {});
       if (t.throneId) { const throne = await interaction.guild.channels.fetch(t.throneId).catch(() => null); if (throne) await throneSend(throne, { content: `## ${t.emoji || '🏴'} New ${tribes.leaderTitle(t)}\n<@${newLeader.id}> now leads **${t.shortName || t.name}**.${stepDownNote}`, allowedMentions: { users: [newLeader.id] } }).catch(() => {}); }

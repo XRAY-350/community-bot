@@ -54,6 +54,40 @@ staff-floor roles from MDNI-style protections even when that role holds real cha
 
 ---
 
+## 2026-08-22 17:29 — Member-founded tribe gets its own leader-count disband timer; mod-tribe floor lowered
+
+Owner: "There's no disband timer for the member tribe." Investigation: `sweepLeaderRequirement`'s
+escalation ladder (grace alert → freeze perks → disband-pending, on `tribe.leaderEnforce`) only ever
+ran for `isModFounded` tribes (`if (!tribes.isModFounded(tribe)) continue;`) — a member-founded tribe
+(there's only ever one at a time, `tribes.getMemberFoundedTribeKey()`) going leaderless got exactly
+one alert ("has no leader left, an admin should appoint one") and nothing else; it could sit
+leaderless indefinitely with no forcing function. Scoped via two follow-up questions, then owner gave
+exact numbers directly: **MIN_MOD_LEADERS 3→2**, new **MIN_MEMBER_LEADERS = 4** (founder + 3 cosigns),
+and **MEMBER_FOUND_COSIGNS 9→3** to match — the tribe now founds at exactly the floor it has to
+maintain afterward, not 6 above it.
+
+Generalized `sweepLeaderRequirement`'s ladder to branch on tribe type: mod-founded uses
+`countModLeaders` (staff-tier holders only, unchanged) against `MIN_MOD_LEADERS`; member-founded uses
+`currentTribeLeaders` (every leader-role holder — a member tribe's leaders are regular members by
+design) against `MIN_MEMBER_LEADERS`. Same grace/freeze/disband-pending timing and buttons for both;
+`isFrozen()`'s perk-blocking (war/alliances/shop) and the disband-confirm/extend button handlers were
+already fully type-agnostic (keyed off `tribe.leaderEnforce.stage`, not tribe type), so no changes
+needed there — they just started applying to the member tribe automatically. Also generalized
+`/tribe-admin set-leader`'s "Now X/Y leaders" status note and a stale disband-reason string that
+hardcoded "mod-tribe" to branch on type; updated the `/tribe found` command description and a couple
+of comments that hardcoded the old "9 cosigns" number.
+
+Checked live state before deploying (not just after): `trib` (mod-founded) was already sitting in
+`frozen` with exactly 2 staff leaders — lowering the floor to 2 meant it would auto-clear on this
+deploy rather than get worse, confirmed post-restart (`leaderEnforce` → `null`, no manual action
+needed). The member tribe (`woeful-vagabonds`, coincidentally the same tribe from the reconcile/guard
+flap fix above — its leader `almonee` is its founder) has 8 current leader-role holders, well above
+the new floor of 4, so no immediate shortfall was triggered by shipping this. `node --check` clean on
+both touched files; both bots restarted clean; re-ran the tribe-membership-ledger gap scan from the
+entry above to confirm this deploy didn't reopen it (still 0).
+
+---
+
 ## 2026-08-22 17:00 — Dashboard control for mod-app approvers; fixed a tribe reconcile/guard flap loop hitting 6 members
 
 **Part 1 — mod app approvers dashboard control.** Owner: "I need to be able to choose who can accept
