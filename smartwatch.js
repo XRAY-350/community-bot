@@ -1,0 +1,412 @@
+// smartwatch.js — LLM contextual judge for the watch pipeline.
+//
+// Problem: the watchlist/watch-log is pure keyword matching, so it can't read MEANING — reclaimed
+// in-community language, hyperbole, quotes, and dialect all trip the same wires as a real problem,
+// burying mods in false positives.
+//
+// This adds a contextual judge BEHIND the keyword matcher: when a term matches, the flagged message
+// (plus a little context + who the author is) is read in context by a small, cheap model (Haiku), which
+// decides whether the flag is genuine or a false positive — encoding FUBU's actual rules + norms. The
+// human gate stays; mods just see the ~real flags instead of 100% of keyword noise.
+//
+// Design invariants:
+//   • Runs ONLY on already-keyword-matched messages → cost scales with flag volume, not chat volume.
+//   • FAIL-OPEN: no API key, SDK missing, API error, or unparseable verdict → returns {ran:false} and
+//     the caller keeps today's behavior (post the raw flag). The judge can only ADD precision, never
+//     swallow a flag on a hiccup.
+//   • Feature-flagged ('smartWatch', OFF by default) + shadow-mode-first: even when enabled it only
+//     annotates + logs what it WOULD suppress until SMARTWATCH_LIVE is turned on.
+//   • Community-specific facts live in an owner-editable profile file, NOT hardcoded (demographics drift).
+//   • Hard safety floor: child-safety / threats / doxxing are never auto-suppressed regardless of verdict.
+const fs = require('fs');
+const { statePath } = require('./statepath');
+const config = require('./config');
+const opspanel = require('./opspanel');
+const watchlist = require('./watchlist');
+
+let Anthropic = null;
+try { Anthropic = require('@anthropic-ai/sdk'); } catch { /* SDK not installed yet - feature stays dark */ }
+
+const MODEL = process.env.SMARTWATCH_MODEL || 'claude-haiku-4-5';
+const API_KEY = (process.env.ANTHROPIC_API_KEY || process.env.SMARTWATCH_API_KEY || '').trim();
+const PROFILE_FILE = process.env.FUBU_COMMUNITY_PROFILE_FILE || statePath('community_profile.txt');
+const SHADOW_LOG = process.env.SMARTWATCH_SHADOW_LOG || statePath('smartwatch_shadow.jsonl');
+const CTX_MESSAGES = Number(process.env.SMARTWATCH_CONTEXT_MSGS || 10) || 10;
+// Categories the judge is NEVER allowed to auto-suppress, even at high confidence — belt-and-suspenders
+// beyond the system-prompt instruction.
+const NEVER_SUPPRESS = new Set(['child-safety', 'threat', 'doxxing']);
+
+let client = null;
+function getClient() {
+  if (!Anthropic || !API_KEY) return null;
+  if (!client) { try { client = new Anthropic({ apiKey: API_KEY }); } catch { client = null; } }
+  return client;
+}
+function available() { return !!getClient(); }
+
+// ---- owner-editable community profile (the mutable, drift-prone specifics) ------------------------
+const DEFAULT_PROFILE =
+  'Members span the Black diaspora, so vernacular varies widely - AAVE, European/UK Black slang, and ' +
+  'French or other multilingual code-switching all appear. Don\'t assume a term carries the same meaning ' +
+  'across dialects, and don\'t mistake unfamiliar diaspora slang for hostility.';
+function communityProfile() {
+  try { const t = fs.readFileSync(PROFILE_FILE, 'utf8').trim(); if (t) return t; } catch { /* use default */ }
+  return DEFAULT_PROFILE;
+}
+
+// ---- prompt (stable core in code; the profile is injected) ---------------------------------------
+function systemPrompt(scope) {
+  return [
+    'You are the moderation-context judge for F.U.B.U. ("For Us By Us") - a Black-only community (Rule 1).',
+    'A keyword matcher flagged a message for a watched term. You are NOT the moderator; a human makes every',
+    'real call. Your job: decide whether this flag is a genuine concern worth a mod\'s attention or a false',
+    'positive, so the log stays signal, not noise. Judge MEANING and INTENT in context - never the bare',
+    'presence of a word.',
+    '',
+    'Community norms a naive word list gets wrong:',
+    '- The n-word is normal here. Casual / limited / reclaimed use among members (camaraderie, venting,',
+    '  lyrics) is NOT a violation. What breaks the rules is spamming the hard-R ("-er") form, or aiming a',
+    '  slur AT someone as an attack. Flag the spam or weaponization, not the word\'s presence.',
+    '- ' + communityProfile(),
+    '- Channel matters: sexual/suggestive talk is banned in general channels (Rule 4) but allowed in the',
+    '  MDNI space; debates/arguments belong only in discussion channels (Rule 9). You are told the channel.',
+    '- Judge direction: aimed AT someone as an attack/threat, vs. reclaimed use, a joke, a quote, someone',
+    '  REPORTING another\'s message, or hyperbole. Weigh who is speaking and at whom.',
+    '- Account tenure is NOT a signal: a recent join or "new" member is NOT evidence of bad intent — this',
+    '  community grows in waves, so most members may be new. Judge the message and its intent, never how',
+    '  new or old the account is.',
+    '- Typos & misspellings: a flagged word is often a MISTYPING of an innocent one (e.g. "hoe" for "how",',
+    '  a letter swap, a missing space, autocorrect). Read the INTENDED word from context first — "hoe is',
+    '  the writing" is clearly "how is the writing". Do not treat an obvious typo as deliberate use of the',
+    '  watched term, and do not invent a slang meaning to justify the match.',
+    '- LANGUAGE: this is a multilingual space, but the watched terms are ENGLISH. If the flagged message is',
+    '  NOT in English (French, Spanish, an African language, etc.), an English-keyword match on it is almost',
+    '  always a coincidental false positive - set surface:false, category "non-english" (the non-English',
+    '  channels have their own mini-mods). EXCEPTION: things that transcend language - a credible threat, a',
+    '  child-safety issue, doxxing, or a slur weaponized at someone - still surface with the REAL category.',
+    '',
+    'FUBU rules you map a flag to (1-11): 1 Black-only space; 2 child safety (grooming, or jokes about',
+    'grooming/rape/pedophilia - always a flag); 3 verification; 4 no sexual/suggestive language in general',
+    'channels; 5 respect everyone (harassment, personal attacks, hate speech - hate carries extra weight);',
+    '6 privacy (no doxxing / sharing DMs); 7 respect the space (no intentional disruption/drama); 8 no spam',
+    '(repeated messages, emoji/mention spam, flooding, excessive caps - hard-R spam lands here + rule 5);',
+    '9 right channel right conversation; 10 don\'t weaponize the anon tools; 11 staff decisions final.',
+    '',
+    'When genuinely unsure, SURFACE it (do not suppress). Only mark a false positive when clearly confident',
+    'it is benign. NEVER suppress: a credible threat of violence, a slur weaponized at a specific person,',
+    'hard-R spam, doxxing (Rule 6), or anything touching child safety (Rule 2).',
+    exemplarBlock(scope === 'welfare' ? 'welfare' : 'rule'),
+    '',
+    'Respond with ONLY a JSON object (no prose, no markdown fences) of exactly this shape:',
+    '{"surface": <bool, true=show a mod / false=benign false positive>, "confidence": <0.0-1.0, how sure of surface>,',
+    ' "severity": "none"|"low"|"medium"|"high", "likelyRule": <the FUBU rule 1-11 this message VIOLATES, or 0 if it is not a rule violation - welfare/distress cases and benign false positives are ALWAYS 0 (a member\'s wellbeing is not a rule)>,',
+    ' "category": "reclaimed"|"hostile"|"threat"|"distress"|"quote-report"|"joke-hyperbole"|"sexual"|"doxxing"|"child-safety"|"spam"|"non-english"|"unclear",',
+    ' "reason": "<one plain sentence a mod reads at a glance>"}',
+  ].join('\n');
+}
+
+const SCOPE_RUBRIC = {
+  strict: 'SCOPE - STRICT (watchlisted member): this message is from someone on the WATCHLIST - previously ' +
+    'banned or a repeat problem, being actively monitored. The bar is behavioral, not lexical: is this person ' +
+    'actually being disruptive, hostile, rule-breaking, or resuming what got them watched - or is it ordinary ' +
+    'participation any member could say freely? Surface anything genuinely concerning; do not flag them for ' +
+    'normal in-community talk.',
+  loose: 'SCOPE - LOOSE (day-to-day watch): posts to a mods-only log with NO ping - a "worth a glance", not an ' +
+    'alarm. Surface only genuine rule-tension, escalating conflict, hostility aimed at someone, or content off ' +
+    'for the space. Suppress ordinary chatter, jokes, venting, reclaimed language, and quotes that merely ' +
+    'contain a watched word.',
+  welfare: 'SCOPE - WELFARE (support check): about a member\'s OWN wellbeing, not rule-breaking. Does this person ' +
+    'genuinely seem in distress or reaching for help right now - vs. hyperbole ("kms, I have work tomorrow"), ' +
+    'jokes, or lyrics? Surface genuine distress with a LOW bar (a kind check-in beats missing one), but suppress ' +
+    'obvious hyperbole. NEVER suppress a specific, sincere statement of self-harm intent. severity = urgency.',
+};
+
+function parseVerdict(text) {
+  if (!text) return null;
+  let t = String(text).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const s = t.indexOf('{'), e = t.lastIndexOf('}');
+  if (s < 0 || e <= s) return null;
+  let v; try { v = JSON.parse(t.slice(s, e + 1)); } catch { return null; }
+  if (typeof v.surface !== 'boolean') return null;
+  v.confidence = Math.max(0, Math.min(1, Number(v.confidence) || 0));
+  v.severity = ['none', 'low', 'medium', 'high'].includes(v.severity) ? v.severity : 'low';
+  v.likelyRule = Number.isInteger(v.likelyRule) ? v.likelyRule : 0;
+  v.category = typeof v.category === 'string' ? v.category : 'unclear';
+  v.reason = typeof v.reason === 'string' ? v.reason.slice(0, 300) : '';
+  return v;
+}
+
+// One Haiku call. Returns a validated verdict, or null (→ fail-open) on any error.
+async function callJudge(scope, payload) {
+  const c = getClient();
+  if (!c) return null;
+  const rubric = SCOPE_RUBRIC[scope] || SCOPE_RUBRIC.loose;
+  const ctx = (payload.context || []).map(m => `${m.reply ? '↳ ' : ''}${m.who}: ${m.text}`).join('\n') || '(no prior context)';
+  const user = [
+    rubric, '',
+    `CHANNEL: #${payload.channelName}`,
+    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff}`,
+    `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
+    '', 'RECENT CONTEXT (older → newer; "↳" marks messages in the reply chain the flagged message is answering):', ctx, '',
+    ...(payload.replyingTo ? [`NOTE: the flagged message is a REPLY to ${payload.replyingTo.who}: "${(payload.replyingTo.text || '').slice(0, 300)}"`, ''] : []),
+    '>>> FLAGGED MESSAGE (most recent, from AUTHOR above):',
+    payload.content || '(no text - attachment/embed only)',
+    '', 'Return only the JSON verdict.',
+  ].join('\n');
+  const resp = await c.messages.create({
+    model: MODEL, max_tokens: 300,
+    system: systemPrompt(scope),
+    messages: [{ role: 'user', content: user }],
+  });
+  const textBlock = (resp.content || []).find(b => b.type === 'text');
+  const v = parseVerdict(textBlock && textBlock.text);
+  if (v && resp.usage) v._usage = { in: resp.usage.input_tokens, out: resp.usage.output_tokens };
+  return v;
+}
+
+function logShadow(entry) {
+  try { fs.appendFileSync(SHADOW_LOG, JSON.stringify(entry) + '\n'); }
+  catch (e) { console.error('[smartwatch] shadow log:', e.message); }
+}
+
+// ---- calibration examples (the human-in-the-loop "training") -------------------------------------
+// When an admin grades a lab post (🔨 strike-worthy / ⛓️ corner-only / ⬜ fine), that message + verdict is
+// appended here. We DON'T fine-tune; instead the most recent labels are injected into the judge prompt as
+// few-shot exemplars, so the model learns THIS community's actual bar. Each grade also tells us whether the
+// AI's own would-surface call matched the admin — that's the accuracy tally the lab reports.
+const EXAMPLES_FILE = process.env.SMARTWATCH_EXAMPLES_FILE || statePath('smartwatch_examples.jsonl');
+const EXEMPLARS_IN_PROMPT = Number(process.env.SMARTWATCH_EXEMPLARS || 14) || 14;
+// verdict → (does the community surface it?) + task it belongs to + a short label the prompt shows.
+// task 'rule' = strict/loose harassment calls; task 'welfare' = distress calls (a different axis, so its
+// labels + exemplars are kept separate so distress calibration never bleeds into rule-violation judgments).
+const VERDICT_META = {
+  strike:    { surface: true,  task: 'rule',    label: 'STRIKE-WORTHY (a real violation — surface it)' },
+  corner:    { surface: true,  task: 'rule',    label: 'CORNER-ONLY (minor — surface, a cool-off not a strike)' },
+  glance:    { surface: true,  task: 'rule',    label: 'SURFACE, NO ACTION (worth a mod glance, but not a strike/corner)' },
+  fine:      { surface: false, task: 'rule',    label: 'FINE (benign — a false positive, hide it)' },
+  genuine:   { surface: true,  task: 'welfare', label: 'GENUINE DISTRESS (surface — someone should check in)' },
+  hyperbole: { surface: false, task: 'welfare', label: 'HYPERBOLE (not real distress — hide it)' },
+};
+function loadExamples() {
+  try {
+    return fs.readFileSync(EXAMPLES_FILE, 'utf8').split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+}
+function addExample(e) {
+  try { fs.appendFileSync(EXAMPLES_FILE, JSON.stringify(e) + '\n'); return true; }
+  catch (err) { console.error('[smartwatch] example append:', err.message); return false; }
+}
+
+// ---- card registry: lets a card be graded by a short ID via /grade (works when there are no buttons) ----
+const CARDS_FILE = process.env.SMARTWATCH_CARDS_FILE || statePath('smartwatch_cards.json');
+const CARD_CAP = 400;
+const crypto = require('crypto');
+function genGradeId() { return crypto.randomBytes(3).toString('hex').toUpperCase(); }   // 6 hex chars, e.g. 3F9A1C
+function _loadCards() { try { return JSON.parse(fs.readFileSync(CARDS_FILE, 'utf8')); } catch { return {}; } }
+function registerCard(id, data) {
+  const cards = _loadCards();
+  cards[id] = { ...data, ts: Date.now() };
+  const kept = Object.fromEntries(Object.entries(cards).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0)).slice(0, CARD_CAP));
+  try { fs.writeFileSync(CARDS_FILE, JSON.stringify(kept)); } catch (e) { console.error('[smartwatch] card register:', e.message); }
+}
+function lookupCard(id) { return _loadCards()[String(id || '').trim().toUpperCase()] || null; }
+const taskOf = v => VERDICT_META[v]?.task || 'rule';
+// Few-shot block from the most recent labels for ONE task (rule vs welfare), for injection into the judge
+// prompt — a welfare call only ever sees welfare exemplars, and vice versa.
+function exemplarBlock(task = 'rule') {
+  const ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && taskOf(e.verdict) === task).slice(-EXEMPLARS_IN_PROMPT);
+  if (!ex.length) return '';
+  const lines = ex.map(e => {
+    const base = `- "${String(e.content || '').replace(/\s+/g, ' ').slice(0, 180)}" -> ${VERDICT_META[e.verdict].label}`;
+    return e.note ? `${base} — correct read: ${String(e.note).replace(/\s+/g, ' ').slice(0, 200)}` : base;
+  });
+  const header = task === 'welfare'
+    ? 'ADMIN-LABELED WELFARE EXAMPLES from THIS community (real distress-vs-hyperbole calls the admins made — match this bar):'
+    : 'ADMIN-LABELED EXAMPLES from THIS community (real calls the admins made — match this bar; these override your priors when a new message is similar):';
+  return ['', header, ...lines].join('\n');
+}
+// Accuracy of the AI's own surface/hide call vs. the admin's verdict. Pass a task to scope it (rule/welfare).
+function labStats(task) {
+  let ex = loadExamples().filter(e => e.verdict && VERDICT_META[e.verdict] && typeof e.aiWouldSurface === 'boolean');
+  if (task) ex = ex.filter(e => taskOf(e.verdict) === task);
+  let right = 0;
+  for (const e of ex) if (e.aiWouldSurface === VERDICT_META[e.verdict].surface) right++;
+  const byVerdict = {};
+  for (const e of ex) byVerdict[e.verdict] = (byVerdict[e.verdict] || 0) + 1;
+  return { total: ex.length, right, wrong: ex.length - right, byVerdict };
+}
+function verdictSurfaces(v) { return VERDICT_META[v]?.surface; }
+
+// ---- shared context + payload (used by both evaluate() and evaluateLab() so they can't drift) -----
+// (a) the N messages right before the flagged one, and (b) if it's a reply, the reply chain up to N hops
+// back. Merge + dedupe by id (they can overlap), oldest -> newest; reply-chain messages are marked.
+async function gatherContext(msg) {
+  let context = [], replyingTo = null;
+  try {
+    const byId = new Map();
+    const fmt = m => ({ id: m.id, channelId: m.channelId, ts: m.createdTimestamp, reply: false,
+      who: m.author?.bot ? `${m.author.username}(bot)` : (m.author?.username || 'user'),
+      text: (m.content || '[embed/attachment]').replace(/\s+/g, ' ').slice(0, 300) });
+    const prior = await msg.channel.messages.fetch({ limit: CTX_MESSAGES, before: msg.id }).catch(() => null);
+    if (prior) for (const m of prior.values()) byId.set(m.id, fmt(m));
+    let ref = msg.reference, hops = 0;
+    while (ref && ref.messageId && hops < CTX_MESSAGES) {
+      const rch = ref.channelId === msg.channelId ? msg.channel
+        : await msg.client.channels.fetch(ref.channelId).catch(() => null);
+      const rm = rch && rch.messages ? await rch.messages.fetch(ref.messageId).catch(() => null) : null;
+      if (!rm) break;
+      const e = byId.get(rm.id) || fmt(rm); e.reply = true; byId.set(rm.id, e);
+      if (hops === 0) replyingTo = { who: e.who, text: e.text };
+      ref = rm.reference; hops++;
+    }
+    context = [...byId.values()].sort((a, b) => a.ts - b.ts);
+  } catch { /* context is best-effort */ }
+  return { context, replyingTo };
+}
+function buildPayload(msg, matchedTerms, context, replyingTo) {
+  const member = msg.member;
+  return {
+    content: (msg.content || '').slice(0, 1500),
+    matchedTerms, channelName: msg.channel?.name || 'unknown', replyingTo, context,
+    onWatchlist: watchlist.isWatched(member?.id),
+    isStaff: !!opspanel.memberTier(member),
+  };
+}
+
+// ---- public: evaluate one flagged message --------------------------------------------------------
+// Returns { ran, verdict, suppress, note }. On ANY problem returns { ran:false } so the caller posts
+// the flag exactly as it does today (fail-open).
+async function evaluate(scope, msg, matchedTerms) {
+  try {
+    if (!available()) return { ran: false };
+    const { context, replyingTo } = await gatherContext(msg);
+    const payload = buildPayload(msg, matchedTerms, context, replyingTo);
+    const verdict = await callJudge(scope, payload);
+    if (!verdict) { logShadow({ ts: Date.now(), scope, ran: false, channel: payload.channelName, terms: matchedTerms, content: payload.content }); return { ran: false }; }
+
+    const live = !!config.smartWatchLive;
+    // Non-English messages tripping an English keyword are noise (their channels have own mini-mods); the
+    // judge only tags 'non-english' for benign non-English (real cross-language threats keep the real
+    // category), so skip these regardless of shadow/live mode.
+    const nonEnglishSkip = verdict.category === 'non-english';
+    const wouldSuppress = verdict.surface === false
+      && verdict.confidence >= (config.smartWatchSuppressThreshold || 0.85)
+      && !NEVER_SUPPRESS.has(verdict.category);
+    const suppress = nonEnglishSkip || (live && wouldSuppress);
+    logShadow({ ts: Date.now(), scope, ran: true, mode: live ? 'live' : 'shadow', channel: payload.channelName,
+      author: msg.author?.id, onWatchlist: payload.onWatchlist, terms: matchedTerms,
+      content: payload.content, verdict, wouldSuppress, suppressed: suppress });
+
+    const conf = verdict.confidence.toFixed(2);
+    const rule = verdict.likelyRule ? `, Rule ${verdict.likelyRule}` : '';
+    const wouldTag = (!live && wouldSuppress) ? ' · would auto-suppress when live' : '';
+    const note = `🤖 ${verdict.surface ? 'looks real' : 'likely false positive'}: ${verdict.reason} _(conf ${conf}${rule}${wouldTag})_`;
+    return { ran: true, verdict, suppress, note, wouldSuppress };
+  } catch (e) {
+    console.error('[smartwatch] evaluate:', e.message);
+    return { ran: false };   // fail-open on anything unexpected
+  }
+}
+
+// ---- LAB judge: primary verdict + proposed actions on OTHER context messages ---------------------
+// Prototype (feature 'smartWatchLab', private channel only): besides ruling on the flagged message, the
+// judge scans the read context and may propose strikes/corners on OTHER clearly-violating messages, so
+// admins can evaluate whether that richer read is trustworthy before it ever drives a real action.
+function parseActions(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const a of raw.slice(0, 6)) {
+    if (!a || typeof a !== 'object') continue;
+    const action = (a.action === 'strike' || a.action === 'corner') ? a.action : null;
+    if (!action) continue;
+    const quote = String(a.quote || '').replace(/\s+/g, ' ').slice(0, 300);
+    if (!quote) continue;                                 // an action with no quoted message is unusable
+    out.push({ who: String(a.who || '?').slice(0, 80), quote, action,
+      rule: Number.isInteger(a.rule) ? a.rule : 0, reason: String(a.reason || '').slice(0, 300) });
+  }
+  return out;
+}
+async function callLabJudge(scope, payload) {
+  const c = getClient();
+  if (!c) return null;
+  const rubric = SCOPE_RUBRIC[scope] || SCOPE_RUBRIC.loose;
+  const ctx = (payload.context || []).map(m => `${m.reply ? '↳ ' : ''}${m.who}: ${m.text}`).join('\n') || '(no prior context)';
+  const user = [
+    rubric, '',
+    `CHANNEL: #${payload.channelName}`,
+    `AUTHOR: onWatchlist=${!!payload.onWatchlist} · staff=${!!payload.isStaff}`,
+    `MATCHED TERM(S): ${(payload.matchedTerms || []).join(', ') || '(unspecified)'}`,
+    '', 'RECENT CONTEXT (older → newer; "↳" marks reply-chain messages):', ctx, '',
+    ...(payload.replyingTo ? [`NOTE: the flagged message is a REPLY to ${payload.replyingTo.who}: "${(payload.replyingTo.text || '').slice(0, 300)}"`, ''] : []),
+    '>>> FLAGGED MESSAGE (most recent, from AUTHOR above):',
+    payload.content || '(no text - attachment/embed only)',
+    '',
+    'FIRST: judge the FLAGGED MESSAGE as usual (the top-level fields).',
+    'THEN: scan the RECENT CONTEXT. If any OTHER message (from a non-staff member, named by username) is ITSELF a clear, standalone violation BY ITS OWN AUTHOR, add it to "actions". Be conservative: only clear violations — never ordinary talk, venting, jokes, quotes, or reclaimed language.',
+    'CRITICAL — judge DIRECTION and AUTHORSHIP before proposing: only ever propose an action against the author of the offending content ITSELF. NEVER propose an action against someone who is asking about, accusing, calling out, quoting, reporting, or reacting to another person\'s alleged behavior. Example: "didn\'t you send a death threat?" is a QUESTION/accusation by its speaker — the concern (if any) is about the person being asked, so do NOT action the asker. When you\'re unsure who the real author of the wrongdoing is, propose nothing.',
+    'Empty array if nothing else qualifies. "strike" = a real ladder violation; "corner" = a minor cool-off.',
+    '',
+    'Respond with ONLY this JSON (no fences):',
+    '{"surface":<bool>,"confidence":<0.0-1.0>,"severity":"none|low|medium|high","likelyRule":<0-11>,"category":"reclaimed|hostile|threat|distress|quote-report|joke-hyperbole|sexual|doxxing|child-safety|spam|non-english|unclear","reason":"<one sentence>",',
+    ' "actions":[{"who":"<username from context>","quote":"<short snippet of their offending message>","action":"strike|corner","rule":<1-11>,"reason":"<one sentence>"}]}',
+  ].join('\n');
+  const resp = await c.messages.create({ model: MODEL, max_tokens: 700, system: systemPrompt(scope), messages: [{ role: 'user', content: user }] });
+  const textBlock = (resp.content || []).find(b => b.type === 'text');
+  const raw = textBlock && textBlock.text;
+  const verdict = parseVerdict(raw);
+  let actions = [];
+  try {
+    const t = String(raw || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const s = t.indexOf('{'), e = t.lastIndexOf('}');
+    if (s >= 0 && e > s) actions = parseActions(JSON.parse(t.slice(s, e + 1)).actions);
+  } catch { /* actions are best-effort */ }
+  if (verdict && resp.usage) verdict._usage = { in: resp.usage.input_tokens, out: resp.usage.output_tokens };
+  return { verdict, actions };
+}
+// Resolve each proposed action back to the real context message it quotes, so the lab card can link to it.
+// The judge gives {who, quote}; match that against the gathered context (same author + the quote is a
+// snippet of that message) and attach a jump url. Best-effort: no match → no url → no jump button.
+const _norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function resolveActionUrls(actions, context, guildId) {
+  for (const a of actions) {
+    const q = _norm(a.quote);
+    const sameWho = context.filter(m => m.who && a.who && m.who.toLowerCase() === a.who.toLowerCase());
+    let hit = sameWho.find(m => { const t = _norm(m.text); return q && (t.includes(q) || q.includes(t)); });
+    if (!hit && sameWho.length === 1) hit = sameWho[0];
+    if (!hit) hit = context.find(m => { const t = _norm(m.text); return q && q.length > 6 && t.includes(q); });
+    if (hit && hit.id && hit.channelId) a.url = `https://discord.com/channels/${guildId}/${hit.channelId}/${hit.id}`;
+  }
+  return actions;
+}
+// Lab entry point. Returns { ran, verdict, wouldSuppress, actions }. Fail-open like evaluate().
+async function evaluateLab(scope, msg, matchedTerms) {
+  try {
+    if (!available()) return { ran: false };
+    const { context, replyingTo } = await gatherContext(msg);
+    const payload = buildPayload(msg, matchedTerms, context, replyingTo);
+    const res = await callLabJudge(scope, payload);
+    const verdict = res && res.verdict;
+    if (!verdict) { logShadow({ ts: Date.now(), scope, ran: false, lab: true, channel: payload.channelName, terms: matchedTerms, content: payload.content }); return { ran: false }; }
+    const wouldSuppress = verdict.surface === false
+      && verdict.confidence >= (config.smartWatchSuppressThreshold || 0.85)
+      && !NEVER_SUPPRESS.has(verdict.category);
+    const actions = resolveActionUrls(res.actions || [], context, msg.guild?.id);
+    logShadow({ ts: Date.now(), scope, ran: true, lab: true, mode: 'lab', channel: payload.channelName,
+      author: msg.author?.id, onWatchlist: payload.onWatchlist, terms: matchedTerms,
+      content: payload.content, verdict, wouldSuppress, actions });
+    return { ran: true, verdict, wouldSuppress, actions };
+  } catch (e) {
+    console.error('[smartwatch] evaluateLab:', e.message);
+    return { ran: false };
+  }
+}
+
+// status line for logs / a future dashboard tile
+function status() {
+  return { enabled: config.smartWatchLive !== undefined, sdk: !!Anthropic, key: !!API_KEY, live: !!config.smartWatchLive, model: MODEL };
+}
+
+module.exports = { evaluate, evaluateLab, available, communityProfile, DEFAULT_PROFILE, PROFILE_FILE, status, MODEL, _judge: callJudge, _labjudge: callLabJudge,
+  loadExamples, addExample, exemplarBlock, labStats, verdictSurfaces, EXAMPLES_FILE, VERDICT_META,
+  genGradeId, registerCard, lookupCard };
